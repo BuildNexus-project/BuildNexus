@@ -40,13 +40,17 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__UserDb: >-
         Server=user-db;Port=3306;Database=buildnexus_user_db;User Id=${USER_DB_USER:-buildnexus};Password=${USER_DB_PASSWORD};
-      # Every service that validates BuildNexus tokens - the User Service that
-      # signs them and the API Gateway that checks them - must read the same
-      # three values, so they live here rather than in any one appsettings.json.
-      Jwt__Issuer: ${JWT_ISSUER:-buildnexus-user-service}
-      Jwt__Audience: ${JWT_AUDIENCE:-buildnexus-api}
-      Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in infra/.env (min 32 bytes)}
-      Jwt__AccessTokenLifetimeMinutes: ${JWT_LIFETIME_MINUTES:-60}
+      # The shared convention: every service that validates a BuildNexus token -
+      # the User Service that signs them and the API Gateway that checks them -
+      # must be given these three identical values. The names carry through from
+      # infra/.env unchanged, so there is only ever one name per setting.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # Not part of the shared convention: the lifetime is baked into the token's
+      # exp claim when the User Service issues it, and every other service simply
+      # checks whether exp has passed. User Service only.
+      Jwt__AccessTokenLifetimeMinutes: "60"
     ports:
       - "5001:8080"
     depends_on:

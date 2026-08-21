@@ -53,7 +53,7 @@ public class UserRepository : IUserRepository
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        AddParameter(command, "@id", id.ToString());
+        AddParameter(command, "@id", id);
 
         await using var reader = await command.ExecuteReaderAsync();
         return await reader.ReadAsync() ? MapUser(reader) : null;
@@ -70,7 +70,7 @@ public class UserRepository : IUserRepository
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        AddParameter(command, "@id", user.Id.ToString());
+        AddParameter(command, "@id", user.Id);
         AddParameter(command, "@fullName", user.FullName);
         AddParameter(command, "@email", user.Email);
         AddParameter(command, "@passwordHash", user.PasswordHash);
@@ -101,7 +101,8 @@ public class UserRepository : IUserRepository
 
     private static User MapUser(DbDataReader reader) => new()
     {
-        Id = Guid.Parse(reader.GetString(reader.GetOrdinal("id"))),
+        // MySqlConnector surfaces CHAR(36) as a Guid, not a string.
+        Id = reader.GetGuid(reader.GetOrdinal("id")),
         FullName = reader.GetString(reader.GetOrdinal("full_name")),
         Email = reader.GetString(reader.GetOrdinal("email")),
         PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
