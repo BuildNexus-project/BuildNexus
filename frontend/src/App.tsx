@@ -1,7 +1,12 @@
+import { BrowserRouter } from 'react-router-dom'
+
+import { RegisterPage } from '@/pages/RegisterPage'
+
 export default function App() {
+  // Routes arrive in the routing commit; for now the register page is the app.
   return (
-    <main className="flex min-h-svh items-center justify-center">
-      <p className="text-muted-foreground text-sm">BuildNexus frontend</p>
-    </main>
+    <BrowserRouter>
+      <RegisterPage />
+    </BrowserRouter>
   )
 }
