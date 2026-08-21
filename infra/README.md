@@ -52,7 +52,7 @@ for https://api.nuget.org/v3/index.json`, your machine is intercepting TLS from
 the Docker VM — antivirus HTTPS scanning is the usual cause. Confirm with:
 
 ```bash
-docker run --rm mcr.microsoft.com/dotnet/sdk:8.0   sh -c 'curl -s -o /dev/null -w "%{http_code}
+docker run --rm mcr.microsoft.com/dotnet/sdk:10.0   sh -c 'curl -s -o /dev/null -w "%{http_code}
 " http://example.com;          curl -s -o /dev/null -w "%{http_code}
 " https://example.com'
 ```

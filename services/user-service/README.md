@@ -8,7 +8,7 @@ for the four platform roles (`Client`, `Architect`, `ProjectManager`, `Admin`).
 REST-only — this service does not publish or consume Kafka events.
 
 ## Stack
-- ASP.NET Core 8 Web API
+- ASP.NET Core 10 Web API
 - ADO.NET over MySQL (MySqlConnector) — direct SQL only, no ORM
 - JWT bearer authentication
 
