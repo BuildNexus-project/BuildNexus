@@ -16,8 +16,11 @@ services:
       MYSQL_USER: ${USER_DB_USER:-buildnexus}
       MYSQL_PASSWORD: ${USER_DB_PASSWORD:?set USER_DB_PASSWORD in infra/.env}
     ports:
-      # 3307 on the host: 3306 is usually taken by a locally installed MySQL.
-      - "3307:3306"
+      # Standard MySQL port, matching the default connection string in the
+      # service's appsettings.json. A locally installed MySQL will claim this
+      # port first if its service is running - stop it, or set that service to
+      # start manually.
+      - "3306:3306"
     volumes:
       - user-db-data:/var/lib/mysql
       # Every .sql here runs once, in filename order, when the volume is empty.

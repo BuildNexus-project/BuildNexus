@@ -12,9 +12,19 @@ docker compose up -d
 | Service        | Container                | Host address            |
 |----------------|--------------------------|-------------------------|
 | User Service   | buildnexus-user-service  | http://localhost:5001   |
-| User database  | buildnexus-user-db       | localhost:3307 (MySQL)  |
+| User database  | buildnexus-user-db       | localhost:3306 (MySQL)  |
 
-Port 3307 is deliberate — 3306 is usually taken by a locally installed MySQL.
+The database uses the standard port 3306, matching the default connection
+string the User Service ships with, so `dotnet run` needs no extra configuration.
+
+If a MySQL server is already installed on your machine it will hold that port and
+the container will fail to start with "port is already allocated". Stop it, and
+set it to start manually so it does not reclaim the port after a reboot:
+
+```powershell
+Stop-Service MySQL80
+Set-Service MySQL80 -StartupType Manual
+```
 
 ## Database schema
 
