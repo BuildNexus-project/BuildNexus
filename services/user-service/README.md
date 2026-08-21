@@ -13,17 +13,25 @@ REST-only — this service does not publish or consume Kafka events.
 - JWT bearer authentication
 
 ## Database
-Owns `buildnexus_user_db`. Apply the schema with:
-
-```bash
-mysql -u root -p < db/01_schema.sql
-```
+Owns `buildnexus_user_db`. The schema lives with the rest of the deployment
+config in `infra/db/user-service/` and is applied automatically when the stack
+starts.
 
 ## Run locally
+Through the local stack (recommended — brings up MySQL too):
+
+```bash
+cd ../../infra && docker compose up -d
+```
+
+Or directly against a MySQL you manage yourself:
+
 ```bash
 dotnet run
 ```
-Listens on `http://localhost:5001`; Swagger UI at `/swagger` in Development.
+
+Either way the service listens on `http://localhost:5001`, with Swagger UI at
+`/swagger` in Development.
 
 ## Endpoints
 
@@ -42,9 +50,10 @@ malformed token is rejected with `401`.
 ## Configuration
 - `ConnectionStrings:UserDb` — MySQL connection string
 - `Jwt:Issuer`, `Jwt:Audience`, `Jwt:AccessTokenLifetimeMinutes`
-- `Jwt:SigningKey` — **the value in `appsettings.json` is a development
-  placeholder.** Every real environment must override it with a secret of at
-  least 32 bytes, supplied as the environment variable `Jwt__SigningKey`. The
-  service refuses to start if the key is missing or too short.
+- `Jwt:SigningKey` — **deliberately empty in `appsettings.json`.** The key is
+  supplied per environment as `Jwt__SigningKey`, which `infra/docker-compose.yml`
+  reads from `infra/.env`. The service refuses to start if it is missing or
+  shorter than 32 bytes, so there is no weak default to fall back on. The API
+  Gateway must be given the same key, issuer and audience.
 
 Local overrides go in `appsettings.Development.json`, which is git-ignored.

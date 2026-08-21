@@ -1,0 +1,57 @@
+# BuildNexus local development stack.
+#
+# Secrets are read from infra/.env (git-ignored) — see .env.example.
+# Start with:  docker compose up -d
+
+name: buildnexus
+
+services:
+  user-db:
+    image: mysql:8.0
+    container_name: buildnexus-user-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${USER_DB_ROOT_PASSWORD:?set USER_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_user_db
+      MYSQL_USER: ${USER_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${USER_DB_PASSWORD:?set USER_DB_PASSWORD in infra/.env}
+    ports:
+      # 3307 on the host: 3306 is usually taken by a locally installed MySQL.
+      - "3307:3306"
+    volumes:
+      - user-db-data:/var/lib/mysql
+      # Every .sql here runs once, in filename order, when the volume is empty.
+      - ./db/user-service:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  user-service:
+    build:
+      context: ../services/user-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-user-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__UserDb: >-
+        Server=user-db;Port=3306;Database=buildnexus_user_db;User Id=${USER_DB_USER:-buildnexus};Password=${USER_DB_PASSWORD};
+      # Every service that validates BuildNexus tokens - the User Service that
+      # signs them and the API Gateway that checks them - must read the same
+      # three values, so they live here rather than in any one appsettings.json.
+      Jwt__Issuer: ${JWT_ISSUER:-buildnexus-user-service}
+      Jwt__Audience: ${JWT_AUDIENCE:-buildnexus-api}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in infra/.env (min 32 bytes)}
+      Jwt__AccessTokenLifetimeMinutes: ${JWT_LIFETIME_MINUTES:-60}
+    ports:
+      - "5001:8080"
+    depends_on:
+      user-db:
+        condition: service_healthy
+
+volumes:
+  user-db-data:
