@@ -3,6 +3,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from 'react-router-dom'
 
+import { AuthLayout } from '@/components/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -167,13 +168,5 @@ export function RegisterPage() {
         </CardContent>
       </Card>
     </AuthLayout>
-  )
-}
-
-function AuthLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-sm">{children}</div>
-    </main>
   )
 }

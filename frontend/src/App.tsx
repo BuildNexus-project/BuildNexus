@@ -1,12 +1,16 @@
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 
+import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 
 export default function App() {
-  // Routes arrive in the routing commit; for now the register page is the app.
+  // The protected landing route and its redirect arrive in the routing commit.
   return (
     <BrowserRouter>
-      <RegisterPage />
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={<LoginPage />} />
+      </Routes>
     </BrowserRouter>
   )
 }

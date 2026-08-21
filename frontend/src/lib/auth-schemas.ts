@@ -22,3 +22,16 @@ export const registerSchema = z.object({
 })
 
 export type RegisterValues = z.infer<typeof registerSchema>
+
+/**
+ * Login deliberately checks presence only — no length or complexity rules.
+ * Applying the registration rules here would let a caller tell a badly-formed
+ * password apart from a wrong one, which is exactly what the service's single
+ * generic error avoids.
+ */
+export const loginSchema = z.object({
+  email: z.email('Enter a valid email address.'),
+  password: z.string().min(1, 'Enter your password.'),
+})
+
+export type LoginValues = z.infer<typeof loginSchema>
