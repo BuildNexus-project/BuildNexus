@@ -59,6 +59,19 @@ public class UserRepository : IUserRepository
         return await reader.ReadAsync() ? MapUser(reader) : null;
     }
 
+    public async Task<bool> AdminExistsAsync()
+    {
+        const string sql = "SELECT EXISTS(SELECT 1 FROM users WHERE role = @role);";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@role", nameof(UserRole.Admin));
+
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt64(result) == 1;
+    }
+
     public async Task InsertAsync(User user)
     {
         const string sql = @"

@@ -44,11 +44,36 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 
 | Method | Route                 | Allowed roles                            |
 |--------|-----------------------|------------------------------------------|
-| POST   | `/api/auth/register`  | Anonymous                                |
+| POST   | `/api/auth/register`  | Anonymous (Client, Architect, PM only)   |
 | POST   | `/api/auth/login`     | Anonymous                                |
 | GET    | `/api/users/me`       | Client, Architect, ProjectManager, Admin |
 | GET    | `/api/users/{id}`     | Admin                                    |
 | GET    | `/health`             | Anonymous                                |
+
+Self-service registration cannot create an `Admin`: the handler rejects that role
+with `400` before hashing anything. Role names must be sent in their exact
+canonical form — `ProjectManager`, not `projectmanager`.
+
+Because of that restriction, a bootstrap Admin is seeded at startup **in
+Development only** when no Admin exists:
+
+| Email                    | Password       |
+|--------------------------|----------------|
+| `admin@buildnexus.local` | `ChangeMe123!` |
+
+The password is hashed at runtime by the same hasher registration uses, so it
+cannot go stale if the hashing changes. Real environments must not use this path
+— their first Admin comes from a secret or manual creation after deploy (US-35).
+
+## Tests
+
+```bash
+cd ../../infra && docker compose up -d user-db
+cd ../services/user-service-tests && dotnet test
+```
+
+Integration tests boot the real host against the development database and clean
+up the accounts they create.
 
 Protected routes expect `Authorization: Bearer <token>`. Tokens are validated on
 issuer, audience, signature and lifetime with no clock skew, so an expired or

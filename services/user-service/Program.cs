@@ -80,6 +80,14 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+// Local development only: guarantees an Admin exists to log in with, since
+// self-service registration refuses that role. Real environments get their
+// first Admin from a secret or manual creation after deploy (US-35).
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddHostedService<AdminSeeder>();
+}
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -96,3 +104,6 @@ app.MapGet("/health", () => Results.Ok(new { service = "user-service", status = 
 app.MapControllers();
 
 app.Run();
+
+// Exposed so the integration tests can boot the real application host.
+public partial class Program { }

@@ -52,6 +52,21 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
+        // Self-service registration must never mint an Admin. The match is exact
+        // and case-sensitive against the canonical role names, so "admin" is
+        // rejected here rather than reaching ck_users_role as a raw SQL error.
+        // Checked before hashing: no reason to spend 210k PBKDF2 iterations on a
+        // request that is already refused.
+        if (request.Role is not ("Client" or "Architect" or "ProjectManager"))
+        {
+            _logger.LogWarning("Registration rejected: role {Role} is not self-assignable.", request.Role);
+
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                ["Role"] = ["Role must be one of: Client, Architect, ProjectManager."]
+            }));
+        }
+
         var email = NormaliseEmail(request.Email);
 
         if (await _userRepository.EmailExistsAsync(email))
@@ -67,7 +82,7 @@ public class AuthController : ControllerBase
             Email = email,
             // The raw password is hashed here and never persisted or logged.
             PasswordHash = _passwordHasher.Hash(request.Password),
-            Role = Enum.Parse<UserRole>(request.Role, ignoreCase: true),
+            Role = Enum.Parse<UserRole>(request.Role),
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now

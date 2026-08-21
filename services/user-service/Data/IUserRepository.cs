@@ -16,6 +16,9 @@ public interface IUserRepository
     /// <summary>Returns the user with this id, or <c>null</c> when there is none.</summary>
     Task<User?> GetByIdAsync(Guid id);
 
+    /// <summary>Returns true when at least one Admin account exists.</summary>
+    Task<bool> AdminExistsAsync();
+
     /// <summary>Inserts a new user row.</summary>
     Task InsertAsync(User user);
 }
