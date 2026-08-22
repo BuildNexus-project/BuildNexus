@@ -21,4 +21,11 @@ public interface IUserRepository
 
     /// <summary>Inserts a new user row.</summary>
     Task InsertAsync(User user);
+
+    /// <summary>
+    /// Writes the self-editable profile fields — full name and contact details —
+    /// for an existing user. Email, role and password hash are never touched.
+    /// </summary>
+    /// <returns><c>false</c> when no row with this id exists.</returns>
+    Task<bool> UpdateProfileAsync(User user);
 }
