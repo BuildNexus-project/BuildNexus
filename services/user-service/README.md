@@ -47,8 +47,20 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 | POST   | `/api/auth/register`  | Anonymous (Client, Architect, PM only)   |
 | POST   | `/api/auth/login`     | Anonymous                                |
 | GET    | `/api/users/me`       | Client, Architect, ProjectManager, Admin |
+| PUT    | `/api/users/me`       | Client, Architect, ProjectManager, Admin |
 | GET    | `/api/users/{id}`     | Admin                                    |
 | GET    | `/health`             | Anonymous                                |
+
+`PUT /api/users/me` edits the caller's own full name, phone number and contact
+address, and nothing else. Email and role are **not** self-editable — that is the
+team's decision for US-02, taken because the email is the login identity and the
+role is the authorisation boundary. A payload carrying either field is refused
+with `400` naming it, rather than being silently ignored, and the `UPDATE`
+statement behind the endpoint does not list those columns at all. Changing them
+is an administrator's job.
+
+Sending `""` for a phone number or address clears it: the value is stored as
+`NULL`, which is also what a brand-new account has.
 
 Self-service registration cannot create an `Admin`: the handler rejects that role
 with `400` before hashing anything. Role names must be sent in their exact
