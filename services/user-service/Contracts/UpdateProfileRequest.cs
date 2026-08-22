@@ -27,12 +27,14 @@ public class UpdateProfileRequest : IValidatableObject
     /// long enough to be a real number rather than a stray digit.
     /// </summary>
     /// <remarks>
-    /// An empty string is left to pass here and is stored as <c>NULL</c>: that is
-    /// how the profile form clears a field it had previously filled in.
+    /// A blank value is left to pass here and is stored as <c>NULL</c>: that is
+    /// how the profile form clears a field it had previously filled in. Blank
+    /// covers whitespace as well as the empty string, since a field the user
+    /// selected and deleted can leave a stray space behind.
     /// </remarks>
     [StringLength(30, ErrorMessage = "Phone number must not exceed 30 characters.")]
-    [RegularExpression(@"^\+?[0-9][0-9 ()\-]{6,}$",
-        ErrorMessage = "Phone number must be at least 7 characters and may contain only digits, spaces, brackets, hyphens and a leading +.")]
+    [RegularExpression(@"^\s*$|^(?=(?:[^0-9]*[0-9]){7,})\s*\+?[0-9 ()\-]+$",
+        ErrorMessage = "Phone number must contain at least 7 digits and may contain only digits, spaces, brackets, hyphens and a leading +.")]
     public string? PhoneNumber { get; set; }
 
     /// <summary>Optional postal or site address. Cleared the same way as the phone number.</summary>
