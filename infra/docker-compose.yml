@@ -1,0 +1,64 @@
+# BuildNexus local development stack.
+#
+# Secrets are read from infra/.env (git-ignored) — see .env.example.
+# Start with:  docker compose up -d
+
+name: buildnexus
+
+services:
+  user-db:
+    image: mysql:8.0
+    container_name: buildnexus-user-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${USER_DB_ROOT_PASSWORD:?set USER_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_user_db
+      MYSQL_USER: ${USER_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${USER_DB_PASSWORD:?set USER_DB_PASSWORD in infra/.env}
+    ports:
+      # Standard MySQL port, matching the default connection string in the
+      # service's appsettings.json. A locally installed MySQL will claim this
+      # port first if its service is running - stop it, or set that service to
+      # start manually.
+      - "3306:3306"
+    volumes:
+      - user-db-data:/var/lib/mysql
+      # Every .sql here runs once, in filename order, when the volume is empty.
+      - ./db/user-service:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  user-service:
+    build:
+      context: ../services/user-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-user-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__UserDb: >-
+        Server=user-db;Port=3306;Database=buildnexus_user_db;User Id=${USER_DB_USER:-buildnexus};Password=${USER_DB_PASSWORD};
+      # The shared convention: every service that validates a BuildNexus token -
+      # the User Service that signs them and the API Gateway that checks them -
+      # must be given these three identical values. The names carry through from
+      # infra/.env unchanged, so there is only ever one name per setting.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # Not part of the shared convention: the lifetime is baked into the token's
+      # exp claim when the User Service issues it, and every other service simply
+      # checks whether exp has passed. User Service only.
+      Jwt__AccessTokenLifetimeMinutes: "60"
+    ports:
+      - "5001:8080"
+    depends_on:
+      user-db:
+        condition: service_healthy
+
+volumes:
+  user-db-data:
