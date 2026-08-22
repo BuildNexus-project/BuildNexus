@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
 import { AuthLayout } from '@/components/AuthLayout'
@@ -18,6 +18,10 @@ const GENERIC_FAILURE = 'Invalid email or password.'
 export function LoginPage() {
   const { signIn } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Where ProtectedRoute turned the visitor away from, if anywhere.
+  const redirectTo = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/'
   const [formError, setFormError] = useState<string | null>(null)
 
   const {
@@ -35,7 +39,7 @@ export function LoginPage() {
     try {
       const { accessToken } = await loginUser(values)
       signIn(accessToken)
-      navigate('/', { replace: true })
+      navigate(redirectTo, { replace: true })
     } catch (error) {
       // Shown at form level, never against a single input: pointing at the email
       // or the password would reveal which half was wrong.

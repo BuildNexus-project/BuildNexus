@@ -23,6 +23,21 @@ change that one proxy target in `vite.config.ts`.
 
 The User Service must be running — see `infra/README.md`.
 
+## Routes
+
+| Route       | Access                                              |
+|-------------|-----------------------------------------------------|
+| `/register` | Anyone — Client, Architect or Project Manager only   |
+| `/login`    | Anyone                                              |
+| `/`         | Signed-in users; others are redirected to `/login`   |
+
+The access token is kept in `localStorage` under `buildnexus.accessToken` and
+read back on load, so a refresh keeps the session. It is discarded if it is
+malformed or has expired, and the app signs out on its own the moment it does.
+
+`ProtectedRoute` is a convenience, not a security boundary — the User Service
+rejects any request without a valid token regardless of what the UI shows.
+
 ## Scripts
 | Command           | What it does                        |
 |-------------------|-------------------------------------|
