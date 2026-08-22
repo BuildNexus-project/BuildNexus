@@ -11,5 +11,11 @@ public class UserResponse
 
     public string Email { get; set; } = string.Empty;
 
+    /// <summary><c>null</c> when the user has not given a contact number.</summary>
+    public string? PhoneNumber { get; set; }
+
+    /// <summary><c>null</c> when the user has not given a contact address.</summary>
+    public string? ContactAddress { get; set; }
+
     public string Role { get; set; } = string.Empty;
 }

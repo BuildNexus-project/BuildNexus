@@ -77,6 +77,8 @@ public class UsersController : ControllerBase
         Id = user.Id,
         FullName = user.FullName,
         Email = user.Email,
+        PhoneNumber = user.PhoneNumber,
+        ContactAddress = user.ContactAddress,
         Role = user.Role.ToString()
     };
 }
