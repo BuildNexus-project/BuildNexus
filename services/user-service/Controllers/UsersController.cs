@@ -19,10 +19,12 @@ namespace BuildNexus.UserService.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly IUserRepository _userRepository;
+    private readonly ILogger<UsersController> _logger;
 
-    public UsersController(IUserRepository userRepository)
+    public UsersController(IUserRepository userRepository, ILogger<UsersController> logger)
     {
         _userRepository = userRepository;
+        _logger = logger;
     }
 
     /// <summary>
@@ -38,18 +40,64 @@ public class UsersController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetCurrentUser()
     {
-        var subject = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
-
-        if (!Guid.TryParse(subject, out var userId))
+        if (!TryGetCallerId(out var userId))
         {
-            // A token that passed signature validation but carries no usable
-            // subject is not something we can act on.
             return Unauthorized();
         }
 
         var user = await _userRepository.GetByIdAsync(userId);
 
         return user is null ? NotFound() : Ok(ToUserResponse(user));
+    }
+
+    /// <summary>
+    /// Updates the caller's own full name and contact details.
+    /// Allowed roles: Client, Architect, ProjectManager, Admin.
+    /// </summary>
+    /// <remarks>
+    /// Email and role are not self-editable: a payload carrying either is
+    /// refused with 400, and the update statement behind this action does not
+    /// list those columns in the first place.
+    /// </remarks>
+    /// <response code="200">The saved profile, as it now stands.</response>
+    /// <response code="400">The payload failed validation, or tried to change email or role.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="404">The token is valid but the account no longer exists.</response>
+    [HttpPut("me")]
+    [ProducesResponseType(typeof(UserResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateCurrentUser([FromBody] UpdateProfileRequest request)
+    {
+        if (!TryGetCallerId(out var userId))
+        {
+            return Unauthorized();
+        }
+
+        // The account is read first so the response can carry the untouched
+        // email and role beside the fields that did change.
+        var user = await _userRepository.GetByIdAsync(userId);
+
+        if (user is null)
+        {
+            return NotFound();
+        }
+
+        user.FullName = request.FullName.Trim();
+        user.PhoneNumber = NullIfBlank(request.PhoneNumber);
+        user.ContactAddress = NullIfBlank(request.ContactAddress);
+        user.UpdatedAt = DateTime.UtcNow;
+
+        if (!await _userRepository.UpdateProfileAsync(user))
+        {
+            // The account was removed between the read and the write.
+            return NotFound();
+        }
+
+        _logger.LogInformation("Updated profile for user {UserId}.", user.Id);
+
+        return Ok(ToUserResponse(user));
     }
 
     /// <summary>
@@ -72,11 +120,32 @@ public class UsersController : ControllerBase
         return user is null ? NotFound() : Ok(ToUserResponse(user));
     }
 
+    /// <summary>
+    /// Reads the caller's id from the token's <c>sub</c> claim. A token that
+    /// passed signature validation but carries no usable subject is not
+    /// something we can act on.
+    /// </summary>
+    private bool TryGetCallerId(out Guid userId) =>
+        Guid.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out userId);
+
+    /// <summary>
+    /// Blank in, <c>null</c> out — clearing a contact detail in the profile form
+    /// must empty the column rather than store an empty string.
+    /// </summary>
+    private static string? NullIfBlank(string? value)
+    {
+        var trimmed = value?.Trim();
+
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
     private static UserResponse ToUserResponse(User user) => new()
     {
         Id = user.Id,
         FullName = user.FullName,
         Email = user.Email,
+        PhoneNumber = user.PhoneNumber,
+        ContactAddress = user.ContactAddress,
         Role = user.Role.ToString()
     };
 }

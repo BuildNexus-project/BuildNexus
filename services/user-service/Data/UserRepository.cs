@@ -11,7 +11,7 @@ namespace BuildNexus.UserService.Data;
 public class UserRepository : IUserRepository
 {
     private const string SelectColumns =
-        "id, full_name, email, password_hash, role, is_active, created_at, updated_at";
+        "id, full_name, email, phone_number, contact_address, password_hash, role, is_active, created_at, updated_at";
 
     private readonly IDbConnectionFactory _connectionFactory;
 
@@ -76,9 +76,9 @@ public class UserRepository : IUserRepository
     {
         const string sql = @"
             INSERT INTO users
-                (id, full_name, email, password_hash, role, is_active, created_at, updated_at)
+                (id, full_name, email, phone_number, contact_address, password_hash, role, is_active, created_at, updated_at)
             VALUES
-                (@id, @fullName, @email, @passwordHash, @role, @isActive, @createdAt, @updatedAt);";
+                (@id, @fullName, @email, @phoneNumber, @contactAddress, @passwordHash, @role, @isActive, @createdAt, @updatedAt);";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -86,6 +86,8 @@ public class UserRepository : IUserRepository
         AddParameter(command, "@id", user.Id);
         AddParameter(command, "@fullName", user.FullName);
         AddParameter(command, "@email", user.Email);
+        AddParameter(command, "@phoneNumber", user.PhoneNumber);
+        AddParameter(command, "@contactAddress", user.ContactAddress);
         AddParameter(command, "@passwordHash", user.PasswordHash);
         AddParameter(command, "@role", user.Role.ToString());
         AddParameter(command, "@isActive", user.IsActive);
@@ -104,12 +106,44 @@ public class UserRepository : IUserRepository
         }
     }
 
-    private static void AddParameter(DbCommand command, string name, object value)
+    public async Task<bool> UpdateProfileAsync(User user)
+    {
+        // Deliberately narrow: only the self-editable fields are listed, so no
+        // request can reach this layer and move email, role or password_hash.
+        const string sql = @"
+            UPDATE users
+            SET full_name       = @fullName,
+                phone_number    = @phoneNumber,
+                contact_address = @contactAddress,
+                updated_at      = @updatedAt
+            WHERE id = @id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@fullName", user.FullName);
+        AddParameter(command, "@phoneNumber", user.PhoneNumber);
+        AddParameter(command, "@contactAddress", user.ContactAddress);
+        AddParameter(command, "@updatedAt", user.UpdatedAt);
+        AddParameter(command, "@id", user.Id);
+
+        // Zero rows means the account was removed between the read and the write.
+        return await command.ExecuteNonQueryAsync() > 0;
+    }
+
+    private static void AddParameter(DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();
         parameter.ParameterName = name;
-        parameter.Value = value;
+        // An unset contact detail is a real NULL in the column, not an empty string.
+        parameter.Value = value ?? DBNull.Value;
         command.Parameters.Add(parameter);
+    }
+
+    private static string? GetNullableString(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
     private static User MapUser(DbDataReader reader) => new()
@@ -118,6 +152,8 @@ public class UserRepository : IUserRepository
         Id = reader.GetGuid(reader.GetOrdinal("id")),
         FullName = reader.GetString(reader.GetOrdinal("full_name")),
         Email = reader.GetString(reader.GetOrdinal("email")),
+        PhoneNumber = GetNullableString(reader, "phone_number"),
+        ContactAddress = GetNullableString(reader, "contact_address"),
         PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
         Role = Enum.Parse<UserRole>(reader.GetString(reader.GetOrdinal("role"))),
         IsActive = reader.GetBoolean(reader.GetOrdinal("is_active")),

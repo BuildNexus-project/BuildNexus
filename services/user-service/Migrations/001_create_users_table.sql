@@ -1,12 +1,11 @@
--- BuildNexus :: User Service schema
--- This database is owned exclusively by the User Service.
--- No other service may query it or hold a foreign key into it.
-
-CREATE DATABASE IF NOT EXISTS buildnexus_user_db
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
-USE buildnexus_user_db;
+-- BuildNexus :: User Service — the users table.
+--
+-- This database is owned exclusively by the User Service. No other service may
+-- query it or hold a foreign key into it.
+--
+-- Applied by DbUp at startup. Scripts run once, in filename order, and are
+-- recorded in the schemaversions table — never edit one that has shipped, add
+-- the next number instead.
 
 CREATE TABLE IF NOT EXISTS users (
     id            CHAR(36)     NOT NULL,

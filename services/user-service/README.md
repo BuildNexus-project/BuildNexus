@@ -13,9 +13,35 @@ REST-only — this service does not publish or consume Kafka events.
 - JWT bearer authentication
 
 ## Database
-Owns `buildnexus_user_db`. The schema lives with the rest of the deployment
-config in `infra/db/user-service/` and is applied automatically when the stack
-starts.
+Owns `buildnexus_user_db`. No other service may query it or hold a foreign key
+into it.
+
+The schema lives in `Migrations/` as numbered `.sql` files, embedded in the
+assembly and applied by [DbUp](https://dbup.readthedocs.io) when the service
+starts. DbUp records each script it has run in a `schemaversions` table and
+applies only the ones missing, so starting against a database that is empty,
+one a few stories behind, or already current all do the right thing.
+
+The service does **not** create `buildnexus_user_db` itself — it must already
+exist, the way `MYSQL_DATABASE` creates it when the Docker container starts.
+The `buildnexus` account is granted access to only that one database, and
+checking for a database's existence needs a connection to MySQL's own `mysql`
+schema, which that account cannot reach. That scoping is deliberate, so the
+service works within it rather than asking for broader access.
+
+DbUp runs the same hand-written SQL we would otherwise apply by hand. It is not
+an ORM and takes no part in queries: the data access is still ADO.NET with
+direct SQL.
+
+To add a schema change, drop the next numbered script into `Migrations/` and
+restart the service:
+
+```
+Migrations/003_whatever_changed.sql
+```
+
+Never edit a script that has already run somewhere — DbUp has recorded it as
+done and will not run it again. Add the next number instead.
 
 ## Run locally
 Through the local stack (recommended — brings up MySQL too):
@@ -47,8 +73,20 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 | POST   | `/api/auth/register`  | Anonymous (Client, Architect, PM only)   |
 | POST   | `/api/auth/login`     | Anonymous                                |
 | GET    | `/api/users/me`       | Client, Architect, ProjectManager, Admin |
+| PUT    | `/api/users/me`       | Client, Architect, ProjectManager, Admin |
 | GET    | `/api/users/{id}`     | Admin                                    |
 | GET    | `/health`             | Anonymous                                |
+
+`PUT /api/users/me` edits the caller's own full name, phone number and contact
+address, and nothing else. Email and role are **not** self-editable — that is the
+team's decision for US-02, taken because the email is the login identity and the
+role is the authorisation boundary. A payload carrying either field is refused
+with `400` naming it, rather than being silently ignored, and the `UPDATE`
+statement behind the endpoint does not list those columns at all. Changing them
+is an administrator's job.
+
+Sending `""` for a phone number or address clears it: the value is stored as
+`NULL`, which is also what a brand-new account has.
 
 Self-service registration cannot create an `Admin`: the handler rejects that role
 with `400` before hashing anything. Role names must be sent in their exact
@@ -68,12 +106,16 @@ cannot go stale if the hashing changes. Real environments must not use this path
 ## Tests
 
 ```bash
-cd ../../infra && docker compose up -d user-db
-cd ../services/user-service-tests && dotnet test
+cd ../user-service-tests && dotnet test
 ```
 
-Integration tests boot the real host against the development database and clean
-up the accounts they create.
+The unit tests cover the profile validation rules, the profile update action
+over a stand-in repository, and the migration scripts being embedded and in
+order. They need no database.
+
+`RegistrationRoleTests` is the exception: it boots the real host and needs the
+development database running (`cd ../../infra && docker compose up -d user-db`).
+It cleans up the accounts it creates.
 
 Protected routes expect `Authorization: Bearer <token>`. Tokens are validated on
 issuer, audience, signature and lifetime with no clock skew, so an expired or

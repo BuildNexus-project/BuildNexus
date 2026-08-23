@@ -11,6 +11,12 @@ public class User
 
     public string Email { get; set; } = string.Empty;
 
+    /// <summary>Optional contact number; <c>null</c> until the user fills it in.</summary>
+    public string? PhoneNumber { get; set; }
+
+    /// <summary>Optional postal or site address; <c>null</c> until the user fills it in.</summary>
+    public string? ContactAddress { get; set; }
+
     /// <summary>Never the raw password — always the hash produced by the password hasher.</summary>
     public string PasswordHash { get; set; } = string.Empty;
 

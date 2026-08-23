@@ -10,6 +10,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Embedded so a published container carries the schema it expects, rather
+         than depending on files being mounted next to it. -->
+    <EmbeddedResource Include="Migrations\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="dbup-mysql" Version="6.1.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
     <PackageReference Include="MySqlConnector" Version="2.4.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
