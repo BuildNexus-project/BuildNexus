@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using DbUp;
 using DbUp.Engine;
 
@@ -27,19 +27,25 @@ namespace BuildNexus.UserService.Data;
 public static class DatabaseMigrator
 {
     /// <summary>
-    /// Creates the database if it does not exist, then applies any scripts that
-    /// have not run yet.
+    /// Applies any scripts that have not run yet.
     /// </summary>
+    /// <remarks>
+    /// Does not create the database itself — <c>buildnexus_user_db</c> is
+    /// expected to already exist, the way <c>MYSQL_DATABASE</c> creates it in
+    /// <c>infra/docker-compose.yml</c>. Creating it here would need DbUp's
+    /// <c>EnsureDatabase</c> helper, which checks for the database by opening a
+    /// separate connection to MySQL's own <c>mysql</c> schema — something the
+    /// <c>buildnexus</c> account cannot do, since it is granted access to only
+    /// its own database. That scoping is deliberate (one schema per service,
+    /// enforced at the account level, not just by convention), so the fix is to
+    /// not need the broader access rather than to grant it.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// A script failed. Thrown so the service stops rather than serving requests
     /// against a schema it does not match.
     /// </exception>
     public static void Migrate(string connectionString, ILogger logger)
     {
-        // A fresh MySQL container already has the database from MYSQL_DATABASE;
-        // a natively installed one being pointed at for the first time does not.
-        EnsureDatabase.For.MySqlDatabase(connectionString);
-
         var upgrader = DeployChanges.To
             .MySqlDatabase(connectionString)
             // Scripts are embedded in the assembly, so a published container

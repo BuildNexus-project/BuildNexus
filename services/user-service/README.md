@@ -19,9 +19,15 @@ into it.
 The schema lives in `Migrations/` as numbered `.sql` files, embedded in the
 assembly and applied by [DbUp](https://dbup.readthedocs.io) when the service
 starts. DbUp records each script it has run in a `schemaversions` table and
-applies only the ones missing, so starting against an empty database, one a few
-stories behind, or one already current all do the right thing — and the service
-creates the database itself if it is not there.
+applies only the ones missing, so starting against a database that is empty,
+one a few stories behind, or already current all do the right thing.
+
+The service does **not** create `buildnexus_user_db` itself — it must already
+exist, the way `MYSQL_DATABASE` creates it when the Docker container starts.
+The `buildnexus` account is granted access to only that one database, and
+checking for a database's existence needs a connection to MySQL's own `mysql`
+schema, which that account cannot reach. That scoping is deliberate, so the
+service works within it rather than asking for broader access.
 
 DbUp runs the same hand-written SQL we would otherwise apply by hand. It is not
 an ORM and takes no part in queries: the data access is still ADO.NET with
