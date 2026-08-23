@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 import { useAuth } from '@/auth/auth-context'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,6 +31,10 @@ export function HomePage() {
             Your dashboard arrives in a later story. Until then, this page just confirms your
             session is active.
           </p>
+
+          <Button render={<Link to="/profile" />} className="w-full">
+            Manage your profile
+          </Button>
 
           <Button variant="outline" onClick={signOut} className="w-full">
             Sign out
