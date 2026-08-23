@@ -28,11 +28,18 @@ Set-Service MySQL80 -StartupType Manual
 
 ## Database schema
 
-`db/<service>/` holds the schema for one service, applied in filename order the
-first time that service's data volume is created. Each service owns its own
-database; nothing here may join across two of them.
+Schema lives with the service that owns it, in `services/<service>/Migrations/`,
+and is applied by that service at startup — nothing here creates tables. Each
+service owns its own database; nothing may join across two of them.
 
-To re-apply a schema from scratch, drop the volume and start again:
+The migrations are numbered `.sql` files run in filename order by DbUp, which
+records what it has already applied in a `schemaversions` table and runs only
+the rest. Starting the stack is therefore safe against an empty database, one a
+few stories behind, or one already current, and adding a column no longer means
+throwing the volume away. Add the next number rather than editing a script that
+has already shipped.
+
+Dropping the volume is now only for deliberately starting from nothing:
 
 ```bash
 docker compose down -v && docker compose up -d

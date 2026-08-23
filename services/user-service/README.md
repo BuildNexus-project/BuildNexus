@@ -13,9 +13,29 @@ REST-only — this service does not publish or consume Kafka events.
 - JWT bearer authentication
 
 ## Database
-Owns `buildnexus_user_db`. The schema lives with the rest of the deployment
-config in `infra/db/user-service/` and is applied automatically when the stack
-starts.
+Owns `buildnexus_user_db`. No other service may query it or hold a foreign key
+into it.
+
+The schema lives in `Migrations/` as numbered `.sql` files, embedded in the
+assembly and applied by [DbUp](https://dbup.readthedocs.io) when the service
+starts. DbUp records each script it has run in a `schemaversions` table and
+applies only the ones missing, so starting against an empty database, one a few
+stories behind, or one already current all do the right thing — and the service
+creates the database itself if it is not there.
+
+DbUp runs the same hand-written SQL we would otherwise apply by hand. It is not
+an ORM and takes no part in queries: the data access is still ADO.NET with
+direct SQL.
+
+To add a schema change, drop the next numbered script into `Migrations/` and
+restart the service:
+
+```
+Migrations/003_whatever_changed.sql
+```
+
+Never edit a script that has already run somewhere — DbUp has recorded it as
+done and will not run it again. Add the next number instead.
 
 ## Run locally
 Through the local stack (recommended — brings up MySQL too):
@@ -80,12 +100,16 @@ cannot go stale if the hashing changes. Real environments must not use this path
 ## Tests
 
 ```bash
-cd ../../infra && docker compose up -d user-db
-cd ../services/user-service-tests && dotnet test
+cd ../user-service-tests && dotnet test
 ```
 
-Integration tests boot the real host against the development database and clean
-up the accounts they create.
+The unit tests cover the profile validation rules, the profile update action
+over a stand-in repository, and the migration scripts being embedded and in
+order. They need no database.
+
+`RegistrationRoleTests` is the exception: it boots the real host and needs the
+development database running (`cd ../../infra && docker compose up -d user-db`).
+It cleans up the accounts it creates.
 
 Protected routes expect `Authorization: Bearer <token>`. Tokens are validated on
 issuer, audience, signature and lifetime with no clock skew, so an expired or

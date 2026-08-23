@@ -23,8 +23,10 @@ services:
       - "3306:3306"
     volumes:
       - user-db-data:/var/lib/mysql
-      # Every .sql here runs once, in filename order, when the volume is empty.
-      - ./db/user-service:/docker-entrypoint-initdb.d:ro
+      # No schema is mounted here. The User Service applies its own migrations at
+      # startup with DbUp, which runs only the scripts a database has not seen —
+      # unlike docker-entrypoint-initdb.d, which runs once on a brand-new volume
+      # and would leave every later schema change unapplied.
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
       interval: 5s

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using BuildNexus.UserService.Configuration;
 using BuildNexus.UserService.Data;
 using BuildNexus.UserService.Services;
@@ -89,6 +89,14 @@ if (builder.Environment.IsDevelopment())
 }
 
 var app = builder.Build();
+
+// Bring the schema up to date before anything reads or writes, including the
+// AdminSeeder below. A failure here stops the service rather than letting it
+// serve requests against a schema it does not match.
+DatabaseMigrator.Migrate(
+    app.Configuration.GetConnectionString("UserDb")
+        ?? throw new InvalidOperationException("Connection string 'UserDb' is not configured."),
+    app.Services.GetRequiredService<ILogger<Program>>());
 
 if (app.Environment.IsDevelopment())
 {
