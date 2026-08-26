@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BuildNexus.ApiGateway</RootNamespace>
+    <AssemblyName>BuildNexus.ApiGateway</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- YARP is the whole gateway: there is no controller here, only the
+         reverse proxy driven by the ReverseProxy section of appsettings.json. -->
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+  </ItemGroup>
+
+</Project>
