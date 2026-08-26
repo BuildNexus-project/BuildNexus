@@ -3,6 +3,7 @@ using BuildNexus.UserService.Configuration;
 using BuildNexus.UserService.Data;
 using BuildNexus.UserService.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 
@@ -58,7 +59,16 @@ builder.Services
         };
     });
 
-builder.Services.AddAuthorization();
+// Deny by default: an endpoint that declares nothing still demands a signed-in
+// caller, so a controller added later cannot end up open to the world just
+// because someone forgot the attribute. Everything anonymous — registration,
+// login, the health probe — says so explicitly with [AllowAnonymous].
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 builder.Services.AddSwaggerGen(options =>
 {
@@ -107,7 +117,8 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/health", () => Results.Ok(new { service = "user-service", status = "healthy" }));
+app.MapGet("/health", () => Results.Ok(new { service = "user-service", status = "healthy" }))
+   .AllowAnonymous();
 
 app.MapControllers();
 

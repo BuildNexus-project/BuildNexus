@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using BuildNexus.UserService.Authorization;
 using BuildNexus.UserService.Contracts;
 using BuildNexus.UserService.Data;
 using BuildNexus.UserService.Models;
@@ -11,7 +12,8 @@ namespace BuildNexus.UserService.Controllers;
 /// <summary>
 /// Protected user endpoints. Every action here requires a valid bearer token —
 /// an expired, tampered or malformed token is rejected with 401 before the
-/// action runs.
+/// action runs — and names the roles allowed to call it, so a caller holding a
+/// good token for the wrong role is refused with 403.
 /// </summary>
 [ApiController]
 [Route("api/users")]
@@ -33,10 +35,13 @@ public class UsersController : ControllerBase
     /// </summary>
     /// <response code="200">The caller's profile.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The token carries no recognised platform role.</response>
     /// <response code="404">The token is valid but the account no longer exists.</response>
     [HttpGet("me")]
+    [Authorize(Roles = PlatformRoles.AnyRole)]
     [ProducesResponseType(typeof(UserResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetCurrentUser()
     {
@@ -62,11 +67,14 @@ public class UsersController : ControllerBase
     /// <response code="200">The saved profile, as it now stands.</response>
     /// <response code="400">The payload failed validation, or tried to change email or role.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The token carries no recognised platform role.</response>
     /// <response code="404">The token is valid but the account no longer exists.</response>
     [HttpPut("me")]
+    [Authorize(Roles = PlatformRoles.AnyRole)]
     [ProducesResponseType(typeof(UserResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateCurrentUser([FromBody] UpdateProfileRequest request)
     {
@@ -108,7 +116,7 @@ public class UsersController : ControllerBase
     /// <response code="403">The caller is authenticated but is not an Admin.</response>
     /// <response code="404">No user with this id.</response>
     [HttpGet("{id:guid}")]
-    [Authorize(Roles = nameof(UserRole.Admin))]
+    [Authorize(Roles = PlatformRoles.Admin)]
     [ProducesResponseType(typeof(UserResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
