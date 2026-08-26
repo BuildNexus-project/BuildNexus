@@ -14,6 +14,17 @@ export const SELECTABLE_ROLES = ['Client', 'Architect', 'ProjectManager'] as con
 
 export type SelectableRole = (typeof SELECTABLE_ROLES)[number]
 
+/**
+ * The two roles that staff and deliver a project, mirroring the User Service's
+ * `PlatformRoles.ProjectStaff`. A Client is outside it — a customer has no
+ * business browsing the firm's staff — and so is an Admin, who administers
+ * accounts rather than taking part in project work.
+ */
+export const PROJECT_STAFF_ROLES: readonly Role[] = ['Architect', 'ProjectManager']
+
+/** Account administration is Admin only, mirroring the service. */
+export const ADMIN_ROLES: readonly Role[] = ['Admin']
+
 /** Display names — the wire value `ProjectManager` reads badly in a UI. */
 export const ROLE_LABELS: Record<Role, string> = {
   Client: 'Client',
