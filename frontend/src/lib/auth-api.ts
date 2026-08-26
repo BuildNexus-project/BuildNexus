@@ -31,6 +31,19 @@ export type AdminUserSummary = {
 }
 
 /**
+ * One entry in the project-staff directory.
+ *
+ * Deliberately thinner than {@link AdminUserSummary}: a colleague's name and
+ * what they do is all the service sends, so there is no email address or
+ * account status here to be shown by mistake.
+ */
+export type DirectoryEntry = {
+  id: string
+  fullName: string
+  role: Role
+}
+
+/**
  * The fields a user may change on their own account.
  *
  * Neither email nor role appears here: the User Service refuses a payload
@@ -97,6 +110,18 @@ export function fetchProfile(authFetch: AuthFetch) {
  */
 export function fetchAllUsers(authFetch: AuthFetch) {
   return authFetch<AdminUserSummary[]>('/api/users')
+}
+
+/**
+ * Lists the active Architects and Project Managers available to work on a
+ * project.
+ *
+ * Architect and Project Manager only. A Client gets {@link ApiError} with
+ * status 403, and so does an Admin — account administration is not project
+ * work, and it reads {@link fetchAllUsers} instead.
+ */
+export function fetchProjectStaffDirectory(authFetch: AuthFetch) {
+  return authFetch<DirectoryEntry[]>('/api/users/directory')
 }
 
 /**
