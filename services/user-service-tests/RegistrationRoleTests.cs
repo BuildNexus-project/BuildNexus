@@ -8,7 +8,8 @@ namespace BuildNexus.UserService.Tests;
 /// Covers the privilege boundary on registration: nobody may hand themselves the
 /// Admin role, and the bootstrap Admin the seeder creates can actually log in.
 /// </summary>
-public class RegistrationRoleTests : IClassFixture<UserServiceFactory>
+[Collection(UserServiceCollection.Name)]
+public class RegistrationRoleTests
 {
     private readonly HttpClient _client;
 

@@ -5,6 +5,7 @@ using BuildNexus.UserService.Data;
 using BuildNexus.UserService.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 
@@ -36,22 +37,31 @@ builder.Services.AddOptions<JwtOptions>()
     .Validate(o => o.AccessTokenLifetimeMinutes > 0, "Jwt:AccessTokenLifetimeMinutes must be greater than zero.")
     .ValidateOnStart();
 
-var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
-    ?? throw new InvalidOperationException($"Configuration section '{JwtOptions.SectionName}' is missing.");
-
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+
+// Validation settings are taken from the same bound JwtOptions the token
+// service signs with, rather than from a snapshot read straight off the
+// configuration here. Reading it eagerly meant the two could disagree: any
+// source layered on after this line — User Secrets, an integration test's own
+// values — reached the signing side through IOptions but never the validating
+// side, and every token the service issued came back 401 against its own keys.
+builder.Services
+    .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IOptions<JwtOptions>>((bearerOptions, jwt) =>
     {
+        var jwtOptions = jwt.Value;
+
         // Keep the claims exactly as they were issued, so "sub" and "role" are
         // not rewritten into the longer WS-Federation claim URIs.
-        options.MapInboundClaims = false;
+        bearerOptions.MapInboundClaims = false;
 
         // A refused request answers with problem details rather than the empty
         // body the handler writes by default.
-        options.EventsType = typeof(AuthorizationProblemEvents);
+        bearerOptions.EventsType = typeof(AuthorizationProblemEvents);
 
-        options.TokenValidationParameters = new TokenValidationParameters
+        bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidIssuer = jwtOptions.Issuer,
