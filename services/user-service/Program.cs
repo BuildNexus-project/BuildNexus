@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using BuildNexus.UserService.Authorization;
 using BuildNexus.UserService.Configuration;
 using BuildNexus.UserService.Data;
 using BuildNexus.UserService.Services;
@@ -19,6 +20,9 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 // Security services
 builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+
+// Resolved per request through EventsType below, so it can take an ILogger.
+builder.Services.AddScoped<AuthorizationProblemEvents>();
 
 // JWT settings, validated at startup so a missing or weak signing key fails
 // the service immediately instead of at the first login attempt.
@@ -42,6 +46,10 @@ builder.Services
         // Keep the claims exactly as they were issued, so "sub" and "role" are
         // not rewritten into the longer WS-Federation claim URIs.
         options.MapInboundClaims = false;
+
+        // A refused request answers with problem details rather than the empty
+        // body the handler writes by default.
+        options.EventsType = typeof(AuthorizationProblemEvents);
 
         options.TokenValidationParameters = new TokenValidationParameters
         {
