@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/auth/auth-context'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ROLE_LABELS } from '@/lib/roles'
+import { ADMIN_ROLES, ROLE_LABELS } from '@/lib/roles'
 
 /**
  * Placeholder landing page for a signed-in user. The real role-aware dashboard
@@ -35,6 +35,15 @@ export function HomePage() {
           <Button render={<Link to="/profile" />} className="w-full">
             Manage your profile
           </Button>
+
+          {/* Offered only to the roles the page is open to, so nobody is invited
+              into a screen the service is going to refuse. The guard on the
+              route, and the endpoint behind it, decide the real answer. */}
+          {ADMIN_ROLES.includes(user.role) && (
+            <Button render={<Link to="/admin/users" />} variant="outline" className="w-full">
+              User directory
+            </Button>
+          )}
 
           <Button variant="outline" onClick={signOut} className="w-full">
             Sign out
