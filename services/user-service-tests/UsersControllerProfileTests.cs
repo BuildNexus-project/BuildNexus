@@ -217,6 +217,12 @@ public class UsersControllerProfileTests
 
         public Task<bool> AdminExistsAsync() => Task.FromResult(true);
 
+        // Listing is not what these tests are about — see RoleAccessTests.
+        public Task<IReadOnlyList<User>> ListAllAsync() => Task.FromResult<IReadOnlyList<User>>([]);
+
+        public Task<IReadOnlyList<User>> ListActiveByRolesAsync(IReadOnlyCollection<UserRole> roles) =>
+            Task.FromResult<IReadOnlyList<User>>([]);
+
         public Task InsertAsync(User user) => Task.CompletedTask;
     }
 }

@@ -14,6 +14,36 @@ export type UserProfile = {
 }
 
 /**
+ * One row of the Admin user directory.
+ *
+ * Narrower than {@link UserProfile}: a roster needs who someone is, what they
+ * may do and whether they can still sign in, not their contact details.
+ */
+export type AdminUserSummary = {
+  id: string
+  fullName: string
+  email: string
+  role: Role
+  /** `false` for a deactivated account, which the directory still lists. */
+  isActive: boolean
+  /** ISO-8601, as the service serialises it. */
+  createdAt: string
+}
+
+/**
+ * One entry in the project-staff directory.
+ *
+ * Deliberately thinner than {@link AdminUserSummary}: a colleague's name and
+ * what they do is all the service sends, so there is no email address or
+ * account status here to be shown by mistake.
+ */
+export type DirectoryEntry = {
+  id: string
+  fullName: string
+  role: Role
+}
+
+/**
  * The fields a user may change on their own account.
  *
  * Neither email nor role appears here: the User Service refuses a payload
@@ -69,6 +99,29 @@ export function loginUser(payload: LoginPayload) {
  */
 export function fetchProfile(authFetch: AuthFetch) {
   return authFetch<UserProfile>('/api/users/me')
+}
+
+/**
+ * Reads every account on the platform, deactivated ones included.
+ *
+ * Admin only. Any other role gets {@link ApiError} with status 403 — the
+ * service enforces that itself, whatever the router guard in front of this
+ * page does.
+ */
+export function fetchAllUsers(authFetch: AuthFetch) {
+  return authFetch<AdminUserSummary[]>('/api/users')
+}
+
+/**
+ * Lists the active Architects and Project Managers available to work on a
+ * project.
+ *
+ * Architect and Project Manager only. A Client gets {@link ApiError} with
+ * status 403, and so does an Admin — account administration is not project
+ * work, and it reads {@link fetchAllUsers} instead.
+ */
+export function fetchProjectStaffDirectory(authFetch: AuthFetch) {
+  return authFetch<DirectoryEntry[]>('/api/users/directory')
 }
 
 /**

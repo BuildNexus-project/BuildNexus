@@ -19,6 +19,23 @@ public interface IUserRepository
     /// <summary>Returns true when at least one Admin account exists.</summary>
     Task<bool> AdminExistsAsync();
 
+    /// <summary>
+    /// Returns every account, active or not, ordered by name — the Admin
+    /// directory, which is the one view that must show deactivated accounts too.
+    /// </summary>
+    /// <remarks>The password hash is not read: a listing has no use for it.</remarks>
+    Task<IReadOnlyList<User>> ListAllAsync();
+
+    /// <summary>
+    /// Returns the active accounts holding any of these roles, ordered by name.
+    /// </summary>
+    /// <remarks>
+    /// Deactivated accounts are left out: this backs the project-staff lookup,
+    /// and someone who can no longer sign in cannot be given work. The password
+    /// hash is not read.
+    /// </remarks>
+    Task<IReadOnlyList<User>> ListActiveByRolesAsync(IReadOnlyCollection<UserRole> roles);
+
     /// <summary>Inserts a new user row.</summary>
     Task InsertAsync(User user);
 

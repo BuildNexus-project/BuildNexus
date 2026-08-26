@@ -13,6 +13,13 @@ public class UserRepository : IUserRepository
     private const string SelectColumns =
         "id, full_name, email, phone_number, contact_address, password_hash, role, is_active, created_at, updated_at";
 
+    /// <summary>
+    /// The same columns minus <c>password_hash</c>. Listings never need it, and
+    /// a hash that is never read cannot be leaked by a mapping mistake.
+    /// </summary>
+    private const string SelectListColumns =
+        "id, full_name, email, phone_number, contact_address, role, is_active, created_at, updated_at";
+
     private readonly IDbConnectionFactory _connectionFactory;
 
     public UserRepository(IDbConnectionFactory connectionFactory)
@@ -70,6 +77,46 @@ public class UserRepository : IUserRepository
 
         var result = await command.ExecuteScalarAsync();
         return Convert.ToInt64(result) == 1;
+    }
+
+    public async Task<IReadOnlyList<User>> ListAllAsync()
+    {
+        const string sql = $"SELECT {SelectListColumns} FROM users ORDER BY full_name;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+
+        return await ReadListAsync(command);
+    }
+
+    public async Task<IReadOnlyList<User>> ListActiveByRolesAsync(IReadOnlyCollection<UserRole> roles)
+    {
+        if (roles.Count == 0)
+        {
+            // "IN ()" is a syntax error in MySQL, and an empty filter can only
+            // ever match nothing — so answer that without a round trip.
+            return [];
+        }
+
+        // One bound parameter per role rather than the names pasted into the
+        // string. They come from our own enum, not from a caller, but the rule
+        // in this repository is that no value reaches MySQL any other way.
+        var placeholders = string.Join(", ", roles.Select((_, index) => $"@role{index}"));
+        var sql = $"SELECT {SelectListColumns} FROM users WHERE is_active = TRUE AND role IN ({placeholders}) ORDER BY full_name;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+
+        var ordinal = 0;
+        foreach (var role in roles)
+        {
+            AddParameter(command, $"@role{ordinal}", role.ToString());
+            ordinal++;
+        }
+
+        return await ReadListAsync(command);
     }
 
     public async Task InsertAsync(User user)
@@ -131,6 +178,24 @@ public class UserRepository : IUserRepository
         return await command.ExecuteNonQueryAsync() > 0;
     }
 
+    /// <summary>
+    /// Drains a listing query. The rows carry no <c>password_hash</c>, so
+    /// <see cref="User.PasswordHash"/> is left at its empty default.
+    /// </summary>
+    private static async Task<IReadOnlyList<User>> ReadListAsync(DbCommand command)
+    {
+        var users = new List<User>();
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            users.Add(MapListedUser(reader));
+        }
+
+        return users;
+    }
+
     private static void AddParameter(DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();
@@ -145,6 +210,19 @@ public class UserRepository : IUserRepository
         var ordinal = reader.GetOrdinal(column);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
+
+    private static User MapListedUser(DbDataReader reader) => new()
+    {
+        Id = reader.GetGuid(reader.GetOrdinal("id")),
+        FullName = reader.GetString(reader.GetOrdinal("full_name")),
+        Email = reader.GetString(reader.GetOrdinal("email")),
+        PhoneNumber = GetNullableString(reader, "phone_number"),
+        ContactAddress = GetNullableString(reader, "contact_address"),
+        Role = Enum.Parse<UserRole>(reader.GetString(reader.GetOrdinal("role"))),
+        IsActive = reader.GetBoolean(reader.GetOrdinal("is_active")),
+        CreatedAt = reader.GetDateTime(reader.GetOrdinal("created_at")),
+        UpdatedAt = reader.GetDateTime(reader.GetOrdinal("updated_at"))
+    };
 
     private static User MapUser(DbDataReader reader) => new()
     {
