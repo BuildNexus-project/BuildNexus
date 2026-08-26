@@ -109,6 +109,54 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
+    /// Lists the Architects and Project Managers available to work on a project.
+    /// Allowed roles: Architect, ProjectManager.
+    /// </summary>
+    /// <remarks>
+    /// The two roles that staff and deliver a project can look each other up.
+    /// A Client is refused — a customer has no business browsing the firm's
+    /// staff — and so is an Admin, who administers accounts through
+    /// <c>GET /api/users</c> rather than taking part in project work.
+    /// Deactivated accounts are left out: they cannot be given work.
+    /// </remarks>
+    /// <response code="200">The active project staff, ordered by name.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is a Client or an Admin.</response>
+    [HttpGet("directory")]
+    [Authorize(Roles = PlatformRoles.ProjectStaff)]
+    [ProducesResponseType(typeof(IReadOnlyList<DirectoryEntryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetProjectStaffDirectory()
+    {
+        var staff = await _userRepository.ListActiveByRolesAsync([UserRole.Architect, UserRole.ProjectManager]);
+
+        return Ok(staff.Select(ToDirectoryEntry).ToList());
+    }
+
+    /// <summary>
+    /// Lists every account on the platform. Allowed roles: Admin.
+    /// </summary>
+    /// <remarks>
+    /// Deactivated accounts are included — an administrator has to be able to
+    /// see them.
+    /// </remarks>
+    /// <response code="200">Every account, ordered by name.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is authenticated but is not an Admin.</response>
+    [HttpGet]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(IReadOnlyList<UserSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetAll()
+    {
+        var users = await _userRepository.ListAllAsync();
+
+        return Ok(users.Select(ToUserSummary).ToList());
+    }
+
+    /// <summary>
     /// Returns any user's profile by id. Allowed roles: Admin.
     /// </summary>
     /// <response code="200">The requested profile.</response>
@@ -146,6 +194,23 @@ public class UsersController : ControllerBase
 
         return string.IsNullOrEmpty(trimmed) ? null : trimmed;
     }
+
+    private static UserSummaryResponse ToUserSummary(User user) => new()
+    {
+        Id = user.Id,
+        FullName = user.FullName,
+        Email = user.Email,
+        Role = user.Role.ToString(),
+        IsActive = user.IsActive,
+        CreatedAt = user.CreatedAt
+    };
+
+    private static DirectoryEntryResponse ToDirectoryEntry(User user) => new()
+    {
+        Id = user.Id,
+        FullName = user.FullName,
+        Role = user.Role.ToString()
+    };
 
     private static UserResponse ToUserResponse(User user) => new()
     {
