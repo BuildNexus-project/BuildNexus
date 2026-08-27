@@ -26,7 +26,6 @@ table in `appsettings.json` plus the token validation in `Program.cs`.
 | `/api/users/*`       | `user`         | authenticated |
 | `/api/projects/*`    | `project`      | authenticated |
 | `/api/designs/*`     | `design`       | authenticated |
-| `/api/documents/*`   | `design`       | authenticated |
 | `/api/construction/*`| `construction` | authenticated |
 | `/api/payments/*`    | `payment`      | authenticated |
 | `/health`            | —              | anonymous     |
@@ -55,6 +54,20 @@ Nothing secret lives in `appsettings.json`. The addresses in it are the local
 
 The gateway refuses to start if the signing key is missing or shorter than 32
 bytes, rather than turning every proxied request into a 401 at runtime.
+
+## Tests
+
+```bash
+dotnet test api-gateway-tests/ApiGateway.Tests.csproj
+```
+
+They need nothing running — no database, no stack, none of the five services.
+`api-gateway-tests` boots the real gateway host with a stub standing in for each
+cluster, so the routing table is asserted for what it claims (this prefix
+reaches this service, and the path arrives unchanged) and every refusal is
+asserted twice: the caller gets a 401, and the stub behind the route received
+nothing. A status code alone would not tell "refused at the gateway" apart from
+"proxied, and the service refused it", which is the distinction US-25 is about.
 
 ## Running it
 

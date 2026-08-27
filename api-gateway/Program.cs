@@ -125,3 +125,6 @@ app.MapGet("/health", () => Results.Ok(new { service = "api-gateway", status = "
 app.MapReverseProxy();
 
 app.Run();
+
+// Exposed so the integration tests can boot the real application host.
+public partial class Program { }
