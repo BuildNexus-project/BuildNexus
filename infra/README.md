@@ -11,8 +11,14 @@ docker compose up -d
 
 | Service        | Container                | Host address            |
 |----------------|--------------------------|-------------------------|
+| API Gateway    | buildnexus-api-gateway   | http://localhost:5000   |
 | User Service   | buildnexus-user-service  | http://localhost:5001   |
 | User database  | buildnexus-user-db       | localhost:3306 (MySQL)  |
+
+The gateway is the entry point: the frontend calls <http://localhost:5000> and
+nothing else, and the Vite dev server proxies `/api` there. The service port
+above it is published for debugging only — the app does not use it, and a
+service does not need a published port for the stack to work.
 
 The database uses the standard port 3306, matching the default connection
 string the User Service ships with, so `dotnet run` needs no extra configuration.
@@ -25,6 +31,18 @@ set it to start manually so it does not reclaim the port after a reboot:
 Stop-Service MySQL80
 Set-Service MySQL80 -StartupType Manual
 ```
+
+## The gateway
+
+`FRONTEND_ORIGIN` is the origin the React app is served from. CORS is configured
+once, at the gateway, so this is the only place an origin is declared for the
+whole system — none of the five services repeats it.
+
+Which path prefix reaches which service is the gateway's own routing table; see
+`api-gateway/README.md`. The addresses in that file are the local `dotnet run`
+ports, and `docker-compose.yml` overrides each one to a compose service name.
+Only the User Service exists so far, so the other four routes answer 502 until
+the stories that build them land.
 
 ## Database schema
 
@@ -53,7 +71,9 @@ git-ignored so per-machine edits never get committed.
 
 `Jwt__Issuer`, `Jwt__Audience` and `Jwt__SigningKey` are the shared convention:
 the User Service signs tokens with them and every service that validates a token
-— starting with the API Gateway — must be given the same three values. They live
+— starting with the API Gateway — must be given the same three values. The
+gateway checks the signature before it proxies anything, so a mismatch here does
+not fail quietly: every request through the gateway comes back 401. They live
 here rather than in any one service's `appsettings.json` so the two sides cannot
 drift apart. The double underscore is what ASP.NET Core maps onto `Jwt:SigningKey`;
 a single underscore will not bind.
