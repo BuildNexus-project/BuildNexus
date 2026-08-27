@@ -22,10 +22,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // The User Service during local development. Once the YARP gateway is up,
-      // this target becomes the gateway instead.
+      // The API Gateway, and nothing else. Every /api call the app makes goes
+      // through this one target: the gateway validates the bearer token and
+      // proxies on to whichever of the five services owns the path. Pointing
+      // this at a single service again would bypass that.
       '/api': {
-        target: 'http://localhost:5001',
+        target: 'http://localhost:5000',
         changeOrigin: true,
       },
     },
