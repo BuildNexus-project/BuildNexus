@@ -62,5 +62,46 @@ services:
       user-db:
         condition: service_healthy
 
+  # The single entry point. The frontend talks only to this; the five services
+  # behind it are reachable on the compose network by service name and never
+  # need a published port of their own for the app to work. The ports the
+  # services do publish below are a debugging convenience, not the path the
+  # React app takes.
+  api-gateway:
+    build:
+      context: ../api-gateway
+      dockerfile: Dockerfile
+    container_name: buildnexus-api-gateway
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      # Same three values as every service that validates a BuildNexus token.
+      # The gateway checks the signature before it proxies anything; a service
+      # given a different key would refuse every token the User Service issues.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # CORS lives here and nowhere else, so the five services never repeat it.
+      Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      # Where each cluster in appsettings.json actually points once containerised.
+      # The file ships localhost ports for `dotnet run`; these override them with
+      # compose service names, which is also the shape a deployment overrides.
+      # The four services below do not exist yet — their routes answer 502 until
+      # the stories that build them land, which is why the gateway does not wait
+      # on them to start.
+      ReverseProxy__Clusters__user__Destinations__primary__Address: http://user-service:8080/
+      ReverseProxy__Clusters__project__Destinations__primary__Address: http://project-service:8080/
+      ReverseProxy__Clusters__design__Destinations__primary__Address: http://design-service:8080/
+      ReverseProxy__Clusters__construction__Destinations__primary__Address: http://construction-service:8080/
+      ReverseProxy__Clusters__payment__Destinations__primary__Address: http://payment-service:8080/
+    ports:
+      - "5000:8080"
+    depends_on:
+      # Start order only, deliberately not a health condition: the gateway must
+      # come up and serve /health whether or not a service behind it is running,
+      # so one service being down never takes the entry point with it.
+      - user-service
+
 volumes:
   user-db-data:
