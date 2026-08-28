@@ -14,6 +14,7 @@ docker compose up -d
 | API Gateway    | buildnexus-api-gateway   | http://localhost:5000   |
 | User Service   | buildnexus-user-service  | http://localhost:5001   |
 | User database  | buildnexus-user-db       | localhost:3306 (MySQL)  |
+| Mail catcher   | buildnexus-mailpit       | http://localhost:8025   |
 
 The gateway is the entry point: the frontend calls <http://localhost:5000> and
 nothing else, and the Vite dev server proxies `/api` there. The service port
@@ -43,6 +44,31 @@ Which path prefix reaches which service is the gateway's own routing table; see
 ports, and `docker-compose.yml` overrides each one to a compose service name.
 Only the User Service exists so far, so the other four routes answer 502 until
 the stories that build them land.
+
+## Reading the emails the stack sends (US-04)
+
+The stack has no real mail server and must never have one: a local run sending
+actual email to whatever address someone typed is not something to leave lying
+around. Instead every message goes to **Mailpit**, which speaks SMTP, keeps what
+it is given and forwards nowhere.
+
+Open <http://localhost:8025> and the messages appear in a normal-looking inbox.
+This is a real send over SMTP through the same `SmtpEmailSender` a deployment
+uses — only the destination is different — so the password reset flow can be
+demonstrated end to end:
+
+1. Leave <http://localhost:8025> open in a tab.
+2. Ask for a reset at <http://localhost:5173/forgot-password>.
+3. The email arrives in Mailpit within a second. Open it.
+4. Follow its link, choose a new password, and sign in with it.
+
+Mailpit is wiped when its container is removed — there is no volume, because
+nothing in an inbox of test mail is worth keeping.
+
+A native `dotnet run` of the User Service does **not** use Mailpit by default:
+`appsettings.json` leaves `Email:SmtpHost` blank, which makes the service log
+the message instead of sending it. Point it at the published SMTP port to get
+the inbox instead — see `services/user-service/README.md`.
 
 ## Database schema
 

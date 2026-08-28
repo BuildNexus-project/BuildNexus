@@ -151,12 +151,37 @@ the column is overwritten, and nothing can verify against the old value again.
 | `Email:SmtpPort`, `Email:UseStartTls`  | SMTP transport                                    |
 | `Email:Username`, `Email:Password`     | SMTP credentials; blank means no authentication   |
 
-With no `Email:SmtpHost` — the default, and what `docker compose` runs with —
-the service writes the whole email to its log instead of sending it. That is how
-the flow is exercised locally without a mail server: request a reset, then read
-the link out of `docker compose logs -f user-service` (or the `dotnet run`
-console) and paste it into the browser. A deployed environment must set a real
-host; supply `Email__Password` out of band, never in a committed file.
+`Email:SmtpHost` decides how mail is delivered, and there are two local setups:
+
+**Through the Docker stack** — `docker compose` points this service at the
+**Mailpit** container, which speaks real SMTP, keeps everything it is given and
+forwards nowhere. The email is genuinely sent through `SmtpEmailSender`, the
+same class a deployment uses; only the destination differs. Read it in the inbox
+at <http://localhost:8025>. See `infra/README.md`.
+
+**Through `dotnet run`** — `appsettings.json` leaves `Email:SmtpHost` blank, and
+a blank host makes the service write the whole email to its log instead of
+sending it, so the link is read out of the console. To use the Mailpit inbox
+here too, start it (`cd ../../infra && docker compose up -d mailpit`) and add
+these to `appsettings.Development.json`, which is git-ignored:
+
+```json
+{
+  "Email": {
+    "SmtpHost": "localhost",
+    "SmtpPort": 1025,
+    "UseStartTls": false
+  }
+}
+```
+
+`UseStartTls` must be `false` for Mailpit: it serves plain SMTP unless given
+certificates, and this setting maps onto `SmtpClient.EnableSsl`, so leaving it at
+its `true` default makes every send fail trying to start TLS. A real relay wants
+it `true`.
+
+A deployed environment must set a real host and never runs Mailpit; supply
+`Email__Password` out of band, never in a committed file.
 
 The service does not currently revoke access tokens already issued to the
 account. A reset invalidates the password, as the AC requires; a token minted
