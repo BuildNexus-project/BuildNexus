@@ -56,6 +56,14 @@ services:
       # exp claim when the User Service issues it, and every other service simply
       # checks whether exp has passed. User Service only.
       Jwt__AccessTokenLifetimeMinutes: "60"
+      # US-04. The emailed reset link points at the React app, not at this
+      # service, so it is built from the same frontend origin the gateway
+      # allows through CORS. No SMTP host is set: the stack has no mail server,
+      # so the service logs the message instead of sending it and the link is
+      # read with `docker compose logs -f user-service`.
+      PasswordReset__TokenLifetimeMinutes: "30"
+      PasswordReset__ResetUrlTemplate: ${FRONTEND_ORIGIN:-http://localhost:5173}/reset-password?token={token}
+      Email__FromAddress: no-reply@buildnexus.local
     ports:
       - "5001:8080"
     depends_on:
