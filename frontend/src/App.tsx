@@ -3,10 +3,12 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
+import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { RegisterPage } from '@/pages/RegisterPage'
+import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
 import { ADMIN_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
 
@@ -16,6 +18,11 @@ export default function App() {
       <Routes>
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/login" element={<LoginPage />} />
+        {/* Both open to anyone: a forgotten password is exactly the situation
+            with no session to guard the route with. The reset page reads its
+            token from the query string the emailed link carries. */}
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route
           path="/"
           element={

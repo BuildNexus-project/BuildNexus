@@ -73,6 +73,21 @@ export type LoginPayload = {
   password: string
 }
 
+export type ForgotPasswordPayload = {
+  email: string
+}
+
+export type ResetPasswordPayload = {
+  /** Taken from the emailed link's query string, never typed by the user. */
+  token: string
+  newPassword: string
+}
+
+/** A response whose only content is a sentence to show the user. */
+export type MessageResponse = {
+  message: string
+}
+
 export type AuthResponse = {
   tokenType: string
   accessToken: string
@@ -88,6 +103,29 @@ export function registerUser(payload: RegisterPayload) {
 /** Exchanges credentials for a signed token. Throws {@link ApiError} with 401 if they are wrong. */
 export function loginUser(payload: LoginPayload) {
   return apiFetch<AuthResponse>('/api/auth/login', { method: 'POST', json: payload })
+}
+
+/**
+ * Asks the service to email a reset link to this address.
+ *
+ * Succeeds whether or not the address has an account: the service deliberately
+ * answers the same way either way, so this cannot be used to find out who is
+ * registered. Show the message it returns rather than one of our own.
+ */
+export function requestPasswordReset(payload: ForgotPasswordPayload) {
+  return apiFetch<MessageResponse>('/api/auth/forgot-password', { method: 'POST', json: payload })
+}
+
+/**
+ * Redeems an emailed reset link and sets the new password.
+ *
+ * Throws {@link ApiError} with status 400 when the link is unknown, expired or
+ * already used — all three come back with the same message — or when the new
+ * password fails the service's rules, which arrives as a `NewPassword` field
+ * error.
+ */
+export function resetPassword(payload: ResetPasswordPayload) {
+  return apiFetch<MessageResponse>('/api/auth/reset-password', { method: 'POST', json: payload })
 }
 
 /**

@@ -75,7 +75,15 @@ export function LoginPage() {
             </Field>
 
             <Field>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel htmlFor="password">Password</FieldLabel>
+                <Link
+                  to="/forgot-password"
+                  className="text-muted-foreground text-sm underline underline-offset-4"
+                >
+                  Forgot your password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
