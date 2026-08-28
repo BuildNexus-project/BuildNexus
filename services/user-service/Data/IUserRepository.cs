@@ -45,4 +45,11 @@ public interface IUserRepository
     /// </summary>
     /// <returns><c>false</c> when no row with this id exists.</returns>
     Task<bool> UpdateProfileAsync(User user);
+
+    /// <summary>
+    /// Replaces a user's stored password hash, which is what retires the old
+    /// password: it is overwritten, so nothing can verify against it again.
+    /// </summary>
+    /// <returns><c>false</c> when no row with this id exists.</returns>
+    Task<bool> UpdatePasswordHashAsync(Guid userId, string passwordHash, DateTime updatedAtUtc);
 }
