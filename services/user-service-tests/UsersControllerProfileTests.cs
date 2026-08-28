@@ -224,5 +224,10 @@ public class UsersControllerProfileTests
             Task.FromResult<IReadOnlyList<User>>([]);
 
         public Task InsertAsync(User user) => Task.CompletedTask;
+
+        // The password is not editable through the profile endpoint — see
+        // AuthControllerPasswordResetTests for what does move it.
+        public Task<bool> UpdatePasswordHashAsync(Guid userId, string passwordHash, DateTime updatedAtUtc) =>
+            Task.FromResult(false);
     }
 }

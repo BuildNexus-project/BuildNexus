@@ -198,8 +198,16 @@ cd ../user-service-tests && dotnet test
 ```
 
 The unit tests cover the profile validation rules, the profile update action
-over a stand-in repository, and the migration scripts being embedded and in
-order. They need no database.
+over a stand-in repository, the password reset flow, and the migration scripts
+being embedded and in order. They need no database.
+
+`AuthControllerPasswordResetTests` walks the US-04 acceptance criteria one by
+one over stand-in repositories and a stand-in mail sender, with the real hasher
+and token service: the link goes to the registered address, expires inside the
+configured window, and completing a reset leaves the old password unable to
+verify. It also pins the behaviour that keeps the endpoint from being an account
+directory — an unknown address, a deactivated account and a failed send all get
+the same answer a registered one does.
 
 `EndpointRoleDeclarationTests` also needs no database: it walks the controllers
 by reflection and fails if any endpoint neither declares its roles nor is
