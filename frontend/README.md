@@ -29,6 +29,8 @@ The User Service must be running — see `infra/README.md`.
 |----------------|----------------------------------------------------|
 | `/register`    | Anyone — Client, Architect or Project Manager only  |
 | `/login`       | Anyone                                             |
+| `/forgot-password` | Anyone                                         |
+| `/reset-password`  | Anyone — needs a `?token=` from the reset email |
 | `/`            | Signed-in users; others are redirected to `/login`  |
 | `/profile`     | Signed-in users                                    |
 | `/directory`   | Architect, Project Manager                         |
@@ -52,6 +54,27 @@ None of that is the boundary either. Each page also handles the `403` the
 service returns and shows the reason it gives, so bypassing the guard changes
 nothing about what a user can actually read.
 
+## Password reset (US-04)
+
+`/forgot-password` asks the service to email a link and then shows the sentence
+the service returned, unchanged. That sentence is deliberately the same whether
+or not the address has an account, so rewording it here would risk saying more
+than the service means to.
+
+`/reset-password` reads its token from the query string of the emailed link.
+Two situations replace the form rather than annotating it: no token in the URL,
+and a `400` naming no field — which is how the service reports a link that is
+unknown, expired or already used. Neither can be fixed by editing the form, so
+both offer a fresh link instead. A `400` that *does* name a field is an ordinary
+validation failure and stays on the form.
+
+To follow the flow locally, the reset email is caught by **Mailpit** rather than
+delivered: open the inbox at <http://localhost:8025>, ask for a reset, and the
+message appears there within a second with its link. See `infra/README.md`.
+
+(A native `dotnet run` of the User Service logs the email to its console instead,
+unless it is pointed at Mailpit — `services/user-service/README.md` covers that.)
+
 ## Scripts
 | Command           | What it does                        |
 |-------------------|-------------------------------------|
@@ -59,6 +82,8 @@ nothing about what a user can actually read.
 | `npm run build`   | Type-check and produce `dist/`      |
 | `npm run preview` | Serve the production build          |
 | `npm run lint`    | oxlint                              |
+| `npm test`        | Vitest, once                        |
+| `npm run test:watch` | Vitest in watch mode             |
 
 ## Adding shadcn components
 

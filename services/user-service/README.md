@@ -72,6 +72,8 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 |--------|--------------------------|------------------------------------------|
 | POST   | `/api/auth/register`     | Anonymous (Client, Architect, PM only)   |
 | POST   | `/api/auth/login`        | Anonymous                                |
+| POST   | `/api/auth/forgot-password` | Anonymous                             |
+| POST   | `/api/auth/reset-password`  | Anonymous                             |
 | GET    | `/api/users/me`          | Client, Architect, ProjectManager, Admin |
 | PUT    | `/api/users/me`          | Client, Architect, ProjectManager, Admin |
 | GET    | `/api/users/directory`   | Architect, ProjectManager                |
@@ -115,6 +117,76 @@ The password is hashed at runtime by the same hasher registration uses, so it
 cannot go stale if the hashing changes. Real environments must not use this path
 — their first Admin comes from a secret or manual creation after deploy (US-35).
 
+## Password reset (US-04)
+
+A user who cannot sign in asks for a link with `POST /api/auth/forgot-password`
+and redeems it with `POST /api/auth/reset-password`. Both are anonymous — a
+forgotten password is exactly the situation where there is no token to present.
+
+`forgot-password` mints 32 random bytes, stores only their SHA-256 hash in
+`password_reset_tokens`, and emails the token itself as a link into the React
+app. The token is never stored and never logged, so a copy of the database
+contains no working links.
+
+It always answers `202` with the same sentence, whether the address is
+registered, deactivated or unknown — and even when sending the email failed,
+which is logged as an error. Any other answer would make an endpoint anyone can
+call into a way to find out who has an account.
+
+Requesting a link invalidates the ones already outstanding for that account, so
+only the newest one works.
+
+`reset-password` refuses an unknown, expired or already-used token with `400`
+and one message covering all three; which it was goes to the log. It spends the
+link *before* writing the new password, so two requests carrying the same link
+cannot both succeed. Writing the new hash is what retires the old password —
+the column is overwritten, and nothing can verify against the old value again.
+
+| Setting                                | Meaning                                          |
+|----------------------------------------|--------------------------------------------------|
+| `PasswordReset:TokenLifetimeMinutes`   | How long a link lasts. **30**, per the AC.       |
+| `PasswordReset:ResetUrlTemplate`       | Frontend URL, with `{token}` where the token goes |
+| `Email:FromAddress`, `Email:FromName`  | Who the email comes from                          |
+| `Email:SmtpHost`                       | **Blank means "log it, do not send it"**          |
+| `Email:SmtpPort`, `Email:UseStartTls`  | SMTP transport                                    |
+| `Email:Username`, `Email:Password`     | SMTP credentials; blank means no authentication   |
+
+`Email:SmtpHost` decides how mail is delivered, and there are two local setups:
+
+**Through the Docker stack** — `docker compose` points this service at the
+**Mailpit** container, which speaks real SMTP, keeps everything it is given and
+forwards nowhere. The email is genuinely sent through `SmtpEmailSender`, the
+same class a deployment uses; only the destination differs. Read it in the inbox
+at <http://localhost:8025>. See `infra/README.md`.
+
+**Through `dotnet run`** — `appsettings.json` leaves `Email:SmtpHost` blank, and
+a blank host makes the service write the whole email to its log instead of
+sending it, so the link is read out of the console. To use the Mailpit inbox
+here too, start it (`cd ../../infra && docker compose up -d mailpit`) and add
+these to `appsettings.Development.json`, which is git-ignored:
+
+```json
+{
+  "Email": {
+    "SmtpHost": "localhost",
+    "SmtpPort": 1025,
+    "UseStartTls": false
+  }
+}
+```
+
+`UseStartTls` must be `false` for Mailpit: it serves plain SMTP unless given
+certificates, and this setting maps onto `SmtpClient.EnableSsl`, so leaving it at
+its `true` default makes every send fail trying to start TLS. A real relay wants
+it `true`.
+
+A deployed environment must set a real host and never runs Mailpit; supply
+`Email__Password` out of band, never in a committed file.
+
+The service does not currently revoke access tokens already issued to the
+account. A reset invalidates the password, as the AC requires; a token minted
+before it keeps working until its own `exp` passes, at most an hour.
+
 ## Role-based access control (US-03)
 
 Every endpoint above names the roles allowed to call it. The names come from
@@ -151,8 +223,16 @@ cd ../user-service-tests && dotnet test
 ```
 
 The unit tests cover the profile validation rules, the profile update action
-over a stand-in repository, and the migration scripts being embedded and in
-order. They need no database.
+over a stand-in repository, the password reset flow, and the migration scripts
+being embedded and in order. They need no database.
+
+`AuthControllerPasswordResetTests` walks the US-04 acceptance criteria one by
+one over stand-in repositories and a stand-in mail sender, with the real hasher
+and token service: the link goes to the registered address, expires inside the
+configured window, and completing a reset leaves the old password unable to
+verify. It also pins the behaviour that keeps the endpoint from being an account
+directory — an unknown address, a deactivated account and a failed send all get
+the same answer a registered one does.
 
 `EndpointRoleDeclarationTests` also needs no database: it walks the controllers
 by reflection and fails if any endpoint neither declares its roles nor is
@@ -175,6 +255,7 @@ malformed token is rejected with `401`.
 ## Configuration
 - `ConnectionStrings:UserDb` — MySQL connection string
 - `Jwt:Issuer`, `Jwt:Audience`, `Jwt:AccessTokenLifetimeMinutes`
+- `PasswordReset:*` and `Email:*` — see [Password reset](#password-reset-us-04)
 - `Jwt:SigningKey` — **deliberately empty in `appsettings.json`.** It is supplied
   per environment: `Jwt__SigningKey` from `infra/.env` in Docker, or User Secrets
   for a native run. The service refuses to start if it is missing or shorter than

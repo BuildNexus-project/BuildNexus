@@ -178,6 +178,27 @@ public class UserRepository : IUserRepository
         return await command.ExecuteNonQueryAsync() > 0;
     }
 
+    public async Task<bool> UpdatePasswordHashAsync(Guid userId, string passwordHash, DateTime updatedAtUtc)
+    {
+        // As narrow as UpdateProfileAsync, from the other end: this statement
+        // can only ever move the password hash, never a name, email or role.
+        const string sql = @"
+            UPDATE users
+            SET password_hash = @passwordHash,
+                updated_at    = @updatedAt
+            WHERE id = @id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@passwordHash", passwordHash);
+        AddParameter(command, "@updatedAt", updatedAtUtc);
+        AddParameter(command, "@id", userId);
+
+        // Zero rows means the account was removed between the read and the write.
+        return await command.ExecuteNonQueryAsync() > 0;
+    }
+
     /// <summary>
     /// Drains a listing query. The rows carry no <c>password_hash</c>, so
     /// <see cref="User.PasswordHash"/> is left at its empty default.

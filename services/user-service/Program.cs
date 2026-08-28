@@ -17,10 +17,24 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
 
 // Security services
 builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+builder.Services.AddSingleton<IPasswordResetTokenService, PasswordResetTokenService>();
+
+// Password reset delivery. Both senders are registered; which one answers
+// IEmailSender is decided when it is resolved, from the options as they finally
+// stand, rather than from a snapshot of configuration taken here — the same
+// trap the JwtBearerOptions comment below describes.
+builder.Services.AddSingleton<SmtpEmailSender>();
+builder.Services.AddSingleton<LoggingEmailSender>();
+builder.Services.AddSingleton<IEmailSender>(provider =>
+    string.IsNullOrWhiteSpace(provider.GetRequiredService<IOptions<EmailOptions>>().Value.SmtpHost)
+        ? provider.GetRequiredService<LoggingEmailSender>()
+        : provider.GetRequiredService<SmtpEmailSender>());
+builder.Services.AddSingleton<IPasswordResetNotifier, PasswordResetNotifier>();
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
@@ -35,6 +49,23 @@ builder.Services.AddOptions<JwtOptions>()
         o => Encoding.UTF8.GetByteCount(o.SigningKey) >= JwtOptions.MinimumSigningKeyBytes,
         $"Jwt:SigningKey must be at least {JwtOptions.MinimumSigningKeyBytes} bytes for HMAC-SHA256.")
     .Validate(o => o.AccessTokenLifetimeMinutes > 0, "Jwt:AccessTokenLifetimeMinutes must be greater than zero.")
+    .ValidateOnStart();
+
+// Reset link settings, validated at startup for the same reason as the JWT
+// options above: a link with no window or nowhere to point is not something to
+// discover when a user is locked out of their account.
+builder.Services.AddOptions<PasswordResetOptions>()
+    .Bind(builder.Configuration.GetSection(PasswordResetOptions.SectionName))
+    .Validate(o => o.TokenLifetimeMinutes > 0, "PasswordReset:TokenLifetimeMinutes must be greater than zero.")
+    .Validate(
+        o => o.ResetUrlTemplate.Contains(PasswordResetOptions.TokenPlaceholder, StringComparison.Ordinal),
+        $"PasswordReset:ResetUrlTemplate must contain the {PasswordResetOptions.TokenPlaceholder} placeholder.")
+    .ValidateOnStart();
+
+builder.Services.AddOptions<EmailOptions>()
+    .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.FromAddress), "Email:FromAddress must be configured.")
+    .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be greater than zero.")
     .ValidateOnStart();
 
 builder.Services

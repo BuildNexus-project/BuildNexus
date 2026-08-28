@@ -3,6 +3,22 @@ import { z } from 'zod'
 import { SELECTABLE_ROLES } from './roles'
 
 /**
+ * The rules a password has to meet, wherever one is chosen — signing up or
+ * resetting a forgotten one. Shared so the two can never drift apart and let a
+ * reset set a password the sign-up form would have refused. The service applies
+ * the same rules to both.
+ */
+const passwordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters.')
+  .max(128, 'Password must not exceed 128 characters.')
+  .regex(/(?=.*[A-Za-z])(?=.*\d)/, 'Password must contain at least one letter and one digit.')
+
+const emailSchema = z
+  .email('Enter a valid email address.')
+  .max(255, 'Email must not exceed 255 characters.')
+
+/**
  * Mirrors the User Service's own registration rules, so most mistakes are
  * caught before a request is made. The service revalidates everything.
  */
@@ -12,12 +28,8 @@ export const registerSchema = z.object({
     .trim()
     .min(2, 'Full name must be at least 2 characters.')
     .max(150, 'Full name must not exceed 150 characters.'),
-  email: z.email('Enter a valid email address.').max(255, 'Email must not exceed 255 characters.'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters.')
-    .max(128, 'Password must not exceed 128 characters.')
-    .regex(/(?=.*[A-Za-z])(?=.*\d)/, 'Password must contain at least one letter and one digit.'),
+  email: emailSchema,
+  password: passwordSchema,
   role: z.enum(SELECTABLE_ROLES, 'Choose the role that describes you.'),
 })
 
@@ -35,6 +47,37 @@ export const loginSchema = z.object({
 })
 
 export type LoginValues = z.infer<typeof loginSchema>
+
+/**
+ * Starting a password reset asks for the address and nothing else — someone who
+ * has forgotten their password has nothing else to offer.
+ */
+export const forgotPasswordSchema = z.object({
+  email: emailSchema,
+})
+
+export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>
+
+/**
+ * Choosing the replacement password. The token is not here: it arrives in the
+ * URL rather than being typed, so there is nothing for the user to get wrong
+ * about it and no input to validate.
+ *
+ * The confirmation field is this side only. The service has no use for it — it
+ * exists so a typo in a password nobody can see does not lock the user out of
+ * the account they are in the middle of recovering.
+ */
+export const resetPasswordSchema = z
+  .object({
+    newPassword: passwordSchema,
+    confirmPassword: z.string().min(1, 'Re-enter your new password.'),
+  })
+  .refine((values) => values.newPassword === values.confirmPassword, {
+    message: 'Both passwords must match.',
+    path: ['confirmPassword'],
+  })
+
+export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>
 
 /**
  * Mirrors the User Service's own profile rules, so most mistakes are caught
