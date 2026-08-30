@@ -2,6 +2,7 @@ using System.Security.Claims;
 using BuildNexus.ProjectService.Authorization;
 using BuildNexus.ProjectService.Contracts;
 using BuildNexus.ProjectService.Data;
+using BuildNexus.ProjectService.Messaging;
 using BuildNexus.ProjectService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -27,11 +28,16 @@ namespace BuildNexus.ProjectService.Controllers;
 public class ProjectsController : ControllerBase
 {
     private readonly IProjectRepository _projectRepository;
+    private readonly IProjectEventPublisher _eventPublisher;
     private readonly ILogger<ProjectsController> _logger;
 
-    public ProjectsController(IProjectRepository projectRepository, ILogger<ProjectsController> logger)
+    public ProjectsController(
+        IProjectRepository projectRepository,
+        IProjectEventPublisher eventPublisher,
+        ILogger<ProjectsController> logger)
     {
         _projectRepository = projectRepository;
+        _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
@@ -100,7 +106,48 @@ public class ProjectsController : ControllerBase
             project.ClientId,
             project.Status);
 
+        await PublishProjectCreatedAsync(project);
+
         return StatusCode(StatusCodes.Status201Created, ToProjectResponse(project));
+    }
+
+    /// <summary>
+    /// Announces the new project on <c>project-events</c>, so the Design,
+    /// Construction and Payment services learn about it without polling this
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// A failed publish does not fail the request. The row is already committed
+    /// by the time this runs, so answering with a 500 would tell the Client
+    /// their submission was lost when it was not — and a retry would create a
+    /// second project. It is logged at error level with the project id instead,
+    /// which is enough to republish it by hand.
+    /// <para>
+    /// That leaves a real gap: a project created while the broker is unreachable
+    /// is never announced. Closing it properly means writing the event into this
+    /// service's own database in the same transaction as the row and having a
+    /// background worker drain it — the transactional outbox pattern — which is
+    /// its own story rather than something to smuggle in here.
+    /// </para>
+    /// </remarks>
+    private async Task PublishProjectCreatedAsync(Project project)
+    {
+        try
+        {
+            // Deliberately not given the request's cancellation token: the row
+            // is already committed, and a Client closing the tab must not leave
+            // a project nobody was told about. The publish is bounded by
+            // Kafka:MessageTimeoutMs instead.
+            await _eventPublisher.PublishProjectCreatedAsync(project);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Project {ProjectId} was created but its {EventType} event could not be published.",
+                project.Id,
+                ProjectEventTypes.ProjectCreated);
+        }
     }
 
     /// <summary>

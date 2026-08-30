@@ -111,8 +111,101 @@ through the API Gateway on `http://localhost:5000`, which validates the token
 and proxies it here unchanged. This service re-validates it and enforces its own
 role checks — the gateway makes no authorization decisions.
 
+## Events published (Kafka)
+
+This service publishes to one topic, `project-events` — one topic per publishing
+service, not one per event type. A consumer subscribes to everything the Project
+Service has to say and filters on the envelope's `eventType`; a topic per event
+type would multiply partitions for no gain and lose the ordering between two
+events about the same project.
+
+Messages are keyed by project id, so every event about one project lands on the
+same partition and reaches consumers in the order it happened.
+
+| Event            | Published when                       |
+|------------------|--------------------------------------|
+| `ProjectCreated` | A Client submits a project (US-05)   |
+
+Every event uses the envelope shared across all four publishing services:
+
+```json
+{
+  "eventType": "ProjectCreated",
+  "eventId": "3f1c8e5a-9d42-4f7b-8c11-2a6e0b7d4f93",
+  "occurredAt": "2026-08-30T09:15:00+00:00",
+  "payload": {
+    "projectId": "b2d4...",
+    "clientId": "7a91...",
+    "name": "Beachfront villa",
+    "location": "Galle",
+    "landSizePerches": 25.5,
+    "budget": 18500000.00,
+    "floors": 2,
+    "bedrooms": 4,
+    "bathrooms": 3,
+    "garageSpaces": 2,
+    "otherRequirements": "Solar hot water",
+    "status": "Pending",
+    "createdAt": "2026-08-30T09:15:00"
+  }
+}
+```
+
+`eventId` identifies the publication, not the project — that is what lets a
+consumer recognise a message the broker has redelivered.
+
+The payload carries the whole project rather than just its id. A consumer in
+another service cannot query `buildnexus_project_db` to fill in the rest — one
+schema per service — so an id-only event would force a REST call back here for
+every message, which is the coupling the bus exists to avoid.
+
+The producer publishes with `acks=all` and idempotence on, so an event is not
+acknowledged until every in-sync replica has it, and an internal retry cannot
+put it on the topic twice.
+
+### When the broker is down
+
+A failed publish **does not fail the request**. The project row is already
+committed by the time the event goes out, so a 500 would tell the Client their
+submission was lost when it was not, and a retry would create a second project.
+The failure is logged at error level with the project id, which is enough to
+republish by hand.
+
+That leaves a real gap, stated here rather than hidden: a project created while
+Kafka is unreachable is never announced. Closing it properly means writing the
+event into this service's own database in the same transaction as the row and
+draining it with a background worker — the transactional outbox pattern — which
+is its own story, not something to smuggle into US-05.
+
+`Kafka:MessageTimeoutMs` is 5 seconds, far below librdkafka's five-minute
+default, because the publish is awaited inside the HTTP request that caused it.
+Left at the default, a Client submitting a project while the broker was down
+would watch a spinner for five minutes.
+
+### Running Kafka locally
+
+`docker compose up -d` brings up a single-node broker in KRaft mode — no
+ZooKeeper. Containers reach it at `kafka:9092`; a native `dotnet run` reaches
+the published host listener at `localhost:29092`, which is what
+`appsettings.json` defaults to. Topics are auto-created on first publish, so
+there is nothing to set up by hand.
+
+To watch events arrive while testing the form:
+
+```bash
+docker exec -it buildnexus-kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic project-events --from-beginning
+```
+
 ## Configuration
 - `ConnectionStrings:ProjectDb` — MySQL connection string
+- `Kafka:BootstrapServers` — the broker list, supplied as
+  `Kafka__BootstrapServers`. The shared name every publishing service uses. The
+  service refuses to start without it: one that cannot say where Kafka is would
+  publish nothing, and finding that out from a log line after the first project
+  was submitted is too late.
+- `Kafka:MessageTimeoutMs` — how long a publish may spend reaching the broker.
+  Defaults to 5000; see [When the broker is down](#when-the-broker-is-down).
 - `Jwt:Issuer`, `Jwt:Audience`
 - `Jwt:SigningKey` — **deliberately empty in `appsettings.json`.** It is supplied
   per environment: `Jwt__SigningKey` from `infra/.env` in Docker, or User Secrets

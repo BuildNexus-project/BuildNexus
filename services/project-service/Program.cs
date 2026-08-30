@@ -2,6 +2,7 @@ using System.Text;
 using BuildNexus.ProjectService.Authorization;
 using BuildNexus.ProjectService.Configuration;
 using BuildNexus.ProjectService.Data;
+using BuildNexus.ProjectService.Messaging;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,11 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
 
+// One producer for the process, held open. Building a Kafka producer starts
+// background threads and a connection pool, so one per request would spend more
+// on setup than on the publish itself.
+builder.Services.AddSingleton<IProjectEventPublisher, KafkaProjectEventPublisher>();
+
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
 
@@ -31,6 +37,15 @@ builder.Services.AddOptions<JwtOptions>()
     .Validate(
         o => Encoding.UTF8.GetByteCount(o.SigningKey) >= JwtOptions.MinimumSigningKeyBytes,
         $"Jwt:SigningKey must be at least {JwtOptions.MinimumSigningKeyBytes} bytes for HMAC-SHA256.")
+    .ValidateOnStart();
+
+// Broker address, validated at startup for the same reason as the JWT settings:
+// a service that cannot say where Kafka is will publish nothing, and finding
+// that out from a log line after the first project is submitted is too late.
+builder.Services.AddOptions<KafkaOptions>()
+    .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
+    .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
     .ValidateOnStart();
 
 builder.Services
