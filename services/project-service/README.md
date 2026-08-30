@@ -73,9 +73,38 @@ per schema.
 
 ## Endpoints
 
-| Method | Route       | Allowed roles |
-|--------|-------------|---------------|
-| GET    | `/health`   | Anonymous     |
+| Method | Route            | Allowed roles |
+|--------|------------------|---------------|
+| POST   | `/api/projects` | Client        |
+| GET    | `/health`       | Anonymous     |
+
+`POST /api/projects` is US-05: a Client describes the building they want and
+the project is created with status `Pending`, waiting on the company to pick it
+up. Client only, deliberately — an Architect, Project Manager or Admin holding a
+perfectly valid token is refused with `403`, because submitting work on a
+customer's behalf is not what this endpoint is for.
+
+Two things are decided by the service rather than taken from the payload:
+
+- **Who it belongs to.** `client_id` comes from the `sub` claim of the caller's
+  own token, so a project cannot be submitted for somebody else by sending a
+  different id.
+- **The status.** It is `Pending` on creation and the caller has no say in it.
+
+The requirements captured are the name, location, land size (perches), budget,
+floors, bedrooms, bathrooms and garage spaces, plus free-text other
+requirements. Everything but the last is required. Bedrooms, bathrooms and
+garage spaces accept `0` — not every build is a house — while floors must be at
+least 1. The numeric fields are modelled as nullable so a missing value is
+refused by name rather than binding silently as zero, which for those three
+would be a legitimate answer the Client never gave.
+
+Sending `""` for other requirements stores `NULL`, which is also what a project
+submitted without them has.
+
+Validation failures come back as `400` with an RFC 7807 `errors` map keyed by
+field name, which is what the React form reads to put each message under the
+input that caused it.
 
 The frontend never calls this service directly: every `/api/projects` call goes
 through the API Gateway on `http://localhost:5000`, which validates the token
