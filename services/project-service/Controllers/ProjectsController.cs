@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using BuildNexus.ProjectService.Authorization;
+using BuildNexus.ProjectService.Configuration;
 using BuildNexus.ProjectService.Contracts;
 using BuildNexus.ProjectService.Data;
 using BuildNexus.ProjectService.Messaging;
@@ -116,6 +117,205 @@ public class ProjectsController : ControllerBase
     }
 
     /// <summary>
+    /// Lists the projects the caller may see. Allowed roles: Client, Architect,
+    /// Project Manager, Admin.
+    /// </summary>
+    /// <remarks>
+    /// The way into the project view, and scoped by the same rule that guards
+    /// it: a Client sees the projects they submitted, an Architect or Project
+    /// Manager the ones they are assigned to, and an Admin all of them. Nobody
+    /// is shown a project they would be refused when they clicked it.
+    /// <para>
+    /// Every role is admitted to the endpoint because the role is not what
+    /// decides the answer here — the caller's own id is. A caller with nothing
+    /// to their name gets an empty list, which is the truthful answer rather
+    /// than a refusal.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The projects the caller may see, newest first.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    [HttpGet]
+    [Authorize(Roles = PlatformRoles.AnyRole)]
+    [ProducesResponseType(typeof(IReadOnlyList<ProjectSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> ListProjects()
+    {
+        if (!TryGetCallerId(out var userId))
+        {
+            return Unauthorized();
+        }
+
+        var projects = ProjectAccessPolicy.SeesEveryProject(CallerRole())
+            ? await _projectRepository.ListAllAsync()
+            : await _projectRepository.ListForUserAsync(userId);
+
+        return Ok(projects.Select(ProjectSummaryResponse.From).ToList());
+    }
+
+    /// <summary>
+    /// One project in full, with its status history. Allowed roles: Client,
+    /// Architect, Project Manager, Admin.
+    /// </summary>
+    /// <remarks>
+    /// The role gets a caller as far as the endpoint; whether they may see
+    /// <em>this</em> project is <see cref="ProjectAccessPolicy.CanView"/>'s
+    /// answer, and it can only be asked once the row has been read. Being an
+    /// Architect is not enough — it has to be this project's Architect.
+    /// <para>
+    /// A caller who is not party to the project is told so with a 403 rather
+    /// than a 404. That does reveal the id exists, which is a deliberate trade:
+    /// these are four known internal roles, not the open internet, and "you are
+    /// not on this project" is something somebody can act on where a 404 sends
+    /// them looking for a typo that is not there.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The project, its requirements, and its full status history.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is not the owning client, assigned staff, or an Admin.</response>
+    /// <response code="404">No project has that id.</response>
+    [HttpGet("{id:guid}")]
+    [Authorize(Roles = PlatformRoles.AnyRole)]
+    [ProducesResponseType(typeof(ProjectDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetProject(Guid id)
+    {
+        if (!TryGetCallerId(out var userId))
+        {
+            return Unauthorized();
+        }
+
+        var project = await _projectRepository.GetByIdAsync(id);
+
+        if (project is null)
+        {
+            return ProjectNotFound(id);
+        }
+
+        if (!ProjectAccessPolicy.CanView(project, userId, CallerRole()))
+        {
+            return NotOnThisProject(id, userId, "view");
+        }
+
+        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
+
+        return Ok(ProjectDetailResponse.From(project, history));
+    }
+
+    /// <summary>
+    /// Moves a project to its next status and records the change. Allowed
+    /// roles: Architect, Project Manager, Admin.
+    /// </summary>
+    /// <remarks>
+    /// The owning Client is deliberately outside this. They can see every step
+    /// of their project, but declaring the design approved or the build
+    /// finished is the company's word, not the customer's.
+    /// <para>
+    /// The move itself must be one <see cref="ProjectStatusTransitions"/>
+    /// allows — forward, one stage at a time — so a build cannot start before
+    /// its design is approved and a finished project cannot be reopened. Who
+    /// made the change is taken from the caller's own token and never from the
+    /// payload; a history that could be attributed to somebody else would not
+    /// be worth keeping.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The project as it now stands, with the new entry in its history.</response>
+    /// <response code="400">The status is not a status, or not one this project may move to.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is not assigned staff on this project, nor an Admin.</response>
+    /// <response code="404">No project has that id.</response>
+    /// <response code="409">Somebody else moved the project first.</response>
+    [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = PlatformRoles.ProjectStaffOrAdmin)]
+    [ProducesResponseType(typeof(ProjectDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> UpdateProjectStatus(Guid id, [FromBody] UpdateProjectStatusRequest request)
+    {
+        if (!TryGetCallerId(out var userId))
+        {
+            return Unauthorized();
+        }
+
+        var callerRole = CallerRole();
+
+        var project = await _projectRepository.GetByIdAsync(id);
+
+        if (project is null)
+        {
+            return ProjectNotFound(id);
+        }
+
+        if (!ProjectAccessPolicy.CanUpdateStatus(project, userId, callerRole))
+        {
+            return NotOnThisProject(id, userId, "change the status of");
+        }
+
+        // [EnumDataType] already refused anything that is not a status name, so
+        // this parses.
+        var target = Enum.Parse<ProjectStatus>(request.Status);
+
+        if (!ProjectStatusTransitions.IsAllowed(project.Status, target))
+        {
+            return InvalidTransition(project, target);
+        }
+
+        var now = DateTime.UtcNow;
+        var change = new ProjectStatusChange
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            FromStatus = project.Status,
+            ToStatus = target,
+            // From the token, never the payload: an audit trail that could be
+            // attributed to somebody else is not worth keeping.
+            ChangedByUserId = userId,
+            ChangedByRole = callerRole ?? string.Empty,
+            ChangedAt = now
+        };
+
+        if (!await _projectRepository.UpdateStatusAsync(change, now))
+        {
+            // The guard in the UPDATE found a status other than the one we read
+            // and validated against, so somebody moved the project in between
+            // and nothing was written.
+            _logger.LogWarning(
+                "Project {ProjectId} moved before {UserId} could change it from {FromStatus} to {ToStatus}.",
+                project.Id,
+                userId,
+                change.FromStatus,
+                change.ToStatus);
+
+            return Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "The project has moved on",
+                detail: "Somebody else changed this project's status while you were looking at it. "
+                        + "Reload it to see where it stands now.");
+        }
+
+        _logger.LogInformation(
+            "Project {ProjectId} moved from {FromStatus} to {ToStatus} by {UserId} in role {Role}.",
+            project.Id,
+            change.FromStatus,
+            change.ToStatus,
+            userId,
+            change.ChangedByRole);
+
+        // Answer with the project as it now stands rather than as it was read,
+        // so the screen that made the change does not have to fetch it again.
+        project.Status = target;
+        project.UpdatedAt = now;
+
+        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
+
+        return Ok(ProjectDetailResponse.From(project, history));
+    }
+
+    /// <summary>
     /// Announces the new project on <c>project-events</c>, so the Design,
     /// Construction and Payment services learn about it without polling this
     /// one.
@@ -152,6 +352,57 @@ public class ProjectsController : ControllerBase
                 project.Id,
                 ProjectEventTypes.ProjectCreated);
         }
+    }
+
+    /// <summary>
+    /// The role the caller's token carries, as one of the four platform role
+    /// names. Recorded on a status change exactly as it was at the time.
+    /// </summary>
+    private string? CallerRole() => User.FindFirstValue(JwtOptions.RoleClaimType);
+
+    /// <summary>No project with that id — as far as this service is concerned, it does not exist.</summary>
+    private IActionResult ProjectNotFound(Guid id) =>
+        Problem(
+            statusCode: StatusCodes.Status404NotFound,
+            title: "Project not found",
+            detail: $"No project with id '{id}' exists.");
+
+    /// <summary>
+    /// The project exists, but the caller is not party to it. Logged with the
+    /// caller and the project, so an unexpected refusal can be traced rather
+    /// than guessed at.
+    /// </summary>
+    private IActionResult NotOnThisProject(Guid projectId, Guid userId, string action)
+    {
+        _logger.LogWarning(
+            "Refused {UserId} in role {Role} on project {ProjectId}: not the owning client, assigned staff, or an Admin.",
+            userId,
+            CallerRole() ?? "none",
+            projectId);
+
+        return Problem(
+            statusCode: StatusCodes.Status403Forbidden,
+            title: "Not your project",
+            detail: "Only the client who submitted this project, the staff assigned to it, or an "
+                    + $"administrator can {action} it.");
+    }
+
+    /// <summary>
+    /// A move the lifecycle does not allow. The message names where the project
+    /// actually is and what it may do next, because "invalid transition" on its
+    /// own tells the caller nothing they can act on.
+    /// </summary>
+    private IActionResult InvalidTransition(Project project, ProjectStatus target)
+    {
+        var allowed = ProjectStatusTransitions.NextFrom(project.Status);
+
+        return Problem(
+            statusCode: StatusCodes.Status400BadRequest,
+            title: "Not a valid status change",
+            detail: allowed.Count == 0
+                ? $"This project is {project.Status} and cannot move any further."
+                : $"A {project.Status} project cannot move to {target}. It can only move to "
+                  + $"{string.Join(" or ", allowed)}.");
     }
 
     /// <summary>

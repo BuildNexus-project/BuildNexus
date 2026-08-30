@@ -27,6 +27,34 @@ public static class PlatformRoles
 
     public const string Admin = nameof(Admin);
 
+    /// <summary>
+    /// Any signed-in user, whatever their role — for endpoints where the role
+    /// is not what decides the answer.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately spelled out rather than written as a bare <c>[Authorize]</c>:
+    /// every protected endpoint states the roles it accepts, and a token whose
+    /// <c>role</c> claim is missing or unrecognised is refused rather than let
+    /// through as "authenticated, role unknown".
+    /// <para>
+    /// Used by the endpoints that read a project. All four roles may reach
+    /// them, but which projects each caller actually gets is a per-project
+    /// question the role alone cannot answer — see
+    /// <see cref="ProjectAccessPolicy"/>.
+    /// </para>
+    /// </remarks>
+    public const string AnyRole = $"{Client},{Architect},{ProjectManager},{Admin}";
+
+    /// <summary>
+    /// The roles that move a project through its lifecycle: the two that staff
+    /// and deliver it, plus Admin.
+    /// </summary>
+    /// <remarks>
+    /// Client is outside it on purpose. A customer watches their project's
+    /// progress; they do not declare the design approved or the build finished.
+    /// </remarks>
+    public const string ProjectStaffOrAdmin = $"{Architect},{ProjectManager},{Admin}";
+
     /// <summary>All four names, for code that has to enumerate the roles.</summary>
     public static readonly IReadOnlyList<string> All = [Client, Architect, ProjectManager, Admin];
 }
