@@ -34,6 +34,32 @@ services:
       retries: 20
       start_period: 30s
 
+  project-db:
+    image: mysql:8.0
+    container_name: buildnexus-project-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PROJECT_DB_ROOT_PASSWORD:?set PROJECT_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_project_db
+      MYSQL_USER: ${PROJECT_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${PROJECT_DB_PASSWORD:?set PROJECT_DB_PASSWORD in infra/.env}
+    ports:
+      # 3307, not 3306: user-db already publishes that one. One schema per
+      # service means one MySQL container per service, so each needs a port of
+      # its own on the host. Matches the default connection string in the
+      # service's appsettings.json.
+      - "3307:3306"
+    volumes:
+      - project-db-data:/var/lib/mysql
+      # No schema is mounted here — the Project Service applies its own
+      # migrations at startup with DbUp, exactly as the User Service does.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
   # Catches every email the stack sends instead of delivering it, and serves an
   # inbox at http://localhost:8025 to read them in. Nothing leaves the machine:
   # it speaks SMTP, accepts anything, and forwards nowhere.
@@ -106,6 +132,30 @@ services:
       mailpit:
         condition: service_started
 
+  project-service:
+    build:
+      context: ../services/project-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-project-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__ProjectDb: >-
+        Server=project-db;Port=3306;Database=buildnexus_project_db;User Id=${PROJECT_DB_USER:-buildnexus};Password=${PROJECT_DB_PASSWORD};
+      # The shared convention. Identical to the values the User Service signs
+      # with, or every token it issues is refused here.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # No Jwt__AccessTokenLifetimeMinutes here: the lifetime is baked into a
+      # token's exp claim by the User Service, and this side only checks it.
+    ports:
+      - "5002:8080"
+    depends_on:
+      project-db:
+        condition: service_healthy
+
   # The single entry point. The frontend talks only to this; the five services
   # behind it are reachable on the compose network by service name and never
   # need a published port of their own for the app to work. The ports the
@@ -131,9 +181,9 @@ services:
       # Where each cluster in appsettings.json actually points once containerised.
       # The file ships localhost ports for `dotnet run`; these override them with
       # compose service names, which is also the shape a deployment overrides.
-      # The four services below do not exist yet — their routes answer 502 until
-      # the stories that build them land, which is why the gateway does not wait
-      # on them to start.
+      # The three services below do not exist yet — their routes answer 502
+      # until the stories that build them land, which is why the gateway does
+      # not wait on them to start.
       ReverseProxy__Clusters__user__Destinations__primary__Address: http://user-service:8080/
       ReverseProxy__Clusters__project__Destinations__primary__Address: http://project-service:8080/
       ReverseProxy__Clusters__design__Destinations__primary__Address: http://design-service:8080/
@@ -146,6 +196,8 @@ services:
       # come up and serve /health whether or not a service behind it is running,
       # so one service being down never takes the entry point with it.
       - user-service
+      - project-service
 
 volumes:
   user-db-data:
+  project-db-data:
