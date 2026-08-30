@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 using BuildNexus.ProjectService.Data;
+using BuildNexus.ProjectService.Models;
 
 namespace BuildNexus.ProjectService.Tests;
 
@@ -26,6 +27,7 @@ public class MigrationScriptTests
 
     [Theory]
     [InlineData("001_create_projects_table.sql")]
+    [InlineData("002_add_project_status_history.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));
@@ -80,15 +82,67 @@ public class MigrationScriptTests
     }
 
     [Fact]
-    public void The_projects_table_only_allows_the_status_the_service_can_produce()
+    public void The_script_that_created_the_projects_table_is_left_exactly_as_it_shipped()
     {
-        // 'Pending' is the only status US-05 defines. The story that adds the
-        // next one adds it to this constraint in its own numbered script, and
-        // this test with it.
-        var sql = ReadScript(ScriptNames().Single(name => name.EndsWith("001_create_projects_table.sql", StringComparison.Ordinal)));
+        // 'Pending' was the only status US-05 defined, and 001 still says so.
+        // DbUp has already recorded this script as run, so editing it would
+        // change nothing on any database that exists — US-06 widens the
+        // constraint in 002 instead.
+        var sql = ReadScript(Script("001_create_projects_table.sql"));
 
         Assert.Contains("status IN ('Pending')", sql, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void The_status_constraint_allows_the_whole_lifecycle()
+    {
+        // The five statuses US-06 defines, replacing the single-value check
+        // from 001. A project cannot be moved to a status the column refuses,
+        // so this constraint and the enum have to agree.
+        var sql = ReadScript(Script("002_add_project_status_history.sql"));
+
+        Assert.Contains(
+            "status IN ('Pending', 'Designing', 'DesignApproved', 'Construction', 'Completed')",
+            sql,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Every_status_the_service_can_produce_is_allowed_by_the_schema()
+    {
+        // Written over the enum rather than over today's five names: a status
+        // added in a later story without a matching migration would otherwise
+        // only surface as a constraint violation the first time somebody tried
+        // to use it.
+        var sql = ReadScript(Script("002_add_project_status_history.sql"));
+
+        var missing = Enum.GetNames<ProjectStatus>()
+            .Where(status => !sql.Contains($"'{status}'", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "These statuses exist in ProjectStatus but no migration allows them in the database: "
+            + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_status_history_table_records_who_made_each_change()
+    {
+        // The audit trail is only worth keeping if it says who and when, not
+        // just what.
+        var sql = StripComments(ReadScript(Script("002_add_project_status_history.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS project_status_history", sql, StringComparison.Ordinal);
+
+        foreach (var column in (string[])["from_status", "to_status", "changed_by_user_id", "changed_by_role", "changed_at"])
+        {
+            Assert.Contains(column, sql, StringComparison.Ordinal);
+        }
+    }
+
+    private static string Script(string fileName) =>
+        ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 
     /// <summary>
     /// Drops <c>--</c> line comments, so the checks above read the SQL a script
