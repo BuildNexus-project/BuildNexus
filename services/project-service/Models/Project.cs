@@ -51,8 +51,34 @@ public class Project
     /// </summary>
     public string? OtherRequirements { get; set; }
 
-    /// <summary>Always <see cref="ProjectStatus.Pending"/> on a newly created project.</summary>
+    /// <summary>
+    /// Always <see cref="ProjectStatus.Pending"/> on a newly created project,
+    /// and thereafter only what <see cref="ProjectStatusTransitions"/> allows.
+    /// </summary>
     public ProjectStatus Status { get; set; }
+
+    /// <summary>
+    /// The Architect working on it, or <c>null</c> while nobody is.
+    /// </summary>
+    /// <remarks>
+    /// Not a foreign key, for the same reason <see cref="ClientId"/> is not:
+    /// the account lives in the User Service's own database. Only the id is
+    /// held and never a copy of the person — a name kept here would go stale
+    /// the moment they changed it.
+    /// <para>
+    /// Nothing writes this yet. No story has defined how staff are put on a
+    /// project, so it is read-only for now: US-06 needs it because the view
+    /// shows the assigned architect, and because it is half of what "assigned
+    /// staff" means in the access rule.
+    /// </para>
+    /// </remarks>
+    public Guid? AssignedArchitectId { get; set; }
+
+    /// <summary>
+    /// The Project Manager running it, or <c>null</c> while nobody is. The same
+    /// remarks as <see cref="AssignedArchitectId"/> apply.
+    /// </summary>
+    public Guid? AssignedProjectManagerId { get; set; }
 
     public DateTime CreatedAt { get; set; }
 
