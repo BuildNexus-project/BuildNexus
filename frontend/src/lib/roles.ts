@@ -25,6 +25,14 @@ export const PROJECT_STAFF_ROLES: readonly Role[] = ['Architect', 'ProjectManage
 /** Account administration is Admin only, mirroring the service. */
 export const ADMIN_ROLES: readonly Role[] = ['Admin']
 
+/**
+ * Submitting a construction project is the customer's job, mirroring the
+ * Project Service's own gate on `POST /api/projects`. Staff roles do not
+ * submit work on a Client's behalf, and an Admin administers accounts rather
+ * than commissioning buildings.
+ */
+export const CLIENT_ROLES: readonly Role[] = ['Client']
+
 /** Display names — the wire value `ProjectManager` reads badly in a UI. */
 export const ROLE_LABELS: Record<Role, string> = {
   Client: 'Client',

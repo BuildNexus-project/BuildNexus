@@ -34,6 +34,32 @@ services:
       retries: 20
       start_period: 30s
 
+  project-db:
+    image: mysql:8.0
+    container_name: buildnexus-project-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PROJECT_DB_ROOT_PASSWORD:?set PROJECT_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_project_db
+      MYSQL_USER: ${PROJECT_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${PROJECT_DB_PASSWORD:?set PROJECT_DB_PASSWORD in infra/.env}
+    ports:
+      # 3307, not 3306: user-db already publishes that one. One schema per
+      # service means one MySQL container per service, so each needs a port of
+      # its own on the host. Matches the default connection string in the
+      # service's appsettings.json.
+      - "3307:3306"
+    volumes:
+      - project-db-data:/var/lib/mysql
+      # No schema is mounted here — the Project Service applies its own
+      # migrations at startup with DbUp, exactly as the User Service does.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
   # Catches every email the stack sends instead of delivering it, and serves an
   # inbox at http://localhost:8025 to read them in. Nothing leaves the machine:
   # it speaks SMTP, accepts anything, and forwards nowhere.
@@ -106,6 +132,85 @@ services:
       mailpit:
         condition: service_started
 
+  # The message bus the Project, Design, Construction and Payment services use
+  # to tell each other what has happened. The User Service is REST-only and
+  # never touches it.
+  #
+  # KRaft mode — Kafka runs its own metadata quorum, so there is no ZooKeeper
+  # container to keep alive alongside it. One node, which is all a development
+  # stack needs; the replication factors below are 1 for the same reason and
+  # would be raised in a real cluster.
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: buildnexus-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Two ways in, because a service can reach Kafka from either side of the
+      # compose network. PLAINTEXT is what the containers use (kafka:9092);
+      # PLAINTEXT_HOST is published below so a native `dotnet run` can publish
+      # here too, the same arrangement as Mailpit's SMTP port.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # No wait before the first consumer group rebalance; the default 3s just
+      # slows down every local start.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # project-events and the other three topics appear on first publish, so
+      # nobody has to create them by hand before the stack works.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      # The host listener. Containers do not need this; it is published so a
+      # service running outside compose can still reach the broker.
+      - "29092:29092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  project-service:
+    build:
+      context: ../services/project-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-project-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__ProjectDb: >-
+        Server=project-db;Port=3306;Database=buildnexus_project_db;User Id=${PROJECT_DB_USER:-buildnexus};Password=${PROJECT_DB_PASSWORD};
+      # The shared convention. Identical to the values the User Service signs
+      # with, or every token it issues is refused here.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # No Jwt__AccessTokenLifetimeMinutes here: the lifetime is baked into a
+      # token's exp claim by the User Service, and this side only checks it.
+      # The broker, under the shared name every publishing service uses. The
+      # internal listener, since this runs on the compose network.
+      Kafka__BootstrapServers: kafka:9092
+    ports:
+      - "5002:8080"
+    depends_on:
+      project-db:
+        condition: service_healthy
+      # Start order only. Kafka being down must not stop the service coming up:
+      # a project is saved before its event is published, and a publish that
+      # cannot reach the broker is logged rather than failing the request.
+      kafka:
+        condition: service_started
+
   # The single entry point. The frontend talks only to this; the five services
   # behind it are reachable on the compose network by service name and never
   # need a published port of their own for the app to work. The ports the
@@ -131,9 +236,9 @@ services:
       # Where each cluster in appsettings.json actually points once containerised.
       # The file ships localhost ports for `dotnet run`; these override them with
       # compose service names, which is also the shape a deployment overrides.
-      # The four services below do not exist yet — their routes answer 502 until
-      # the stories that build them land, which is why the gateway does not wait
-      # on them to start.
+      # The three services below do not exist yet — their routes answer 502
+      # until the stories that build them land, which is why the gateway does
+      # not wait on them to start.
       ReverseProxy__Clusters__user__Destinations__primary__Address: http://user-service:8080/
       ReverseProxy__Clusters__project__Destinations__primary__Address: http://project-service:8080/
       ReverseProxy__Clusters__design__Destinations__primary__Address: http://design-service:8080/
@@ -146,6 +251,9 @@ services:
       # come up and serve /health whether or not a service behind it is running,
       # so one service being down never takes the entry point with it.
       - user-service
+      - project-service
 
 volumes:
   user-db-data:
+  project-db-data:
+  kafka-data:

@@ -6,11 +6,12 @@ import { AdminUsersPage } from '@/pages/AdminUsersPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
 import { LoginPage } from '@/pages/LoginPage'
+import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
 
 export default function App() {
   return (
@@ -37,6 +38,14 @@ export default function App() {
             <ProtectedRoute>
               <ProfilePage />
             </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/new"
+          element={
+            <RoleRoute allowedRoles={CLIENT_ROLES}>
+              <NewProjectPage />
+            </RoleRoute>
           }
         />
         <Route
