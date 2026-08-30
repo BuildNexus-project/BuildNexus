@@ -197,6 +197,44 @@ docker exec -it buildnexus-kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 --topic project-events --from-beginning
 ```
 
+## Tests
+
+```bash
+cd ../project-service-tests && dotnet test
+```
+
+**Every test in this project runs without MySQL and without Kafka.** The
+repository and the event publisher are stood in for, so nothing has to be
+started first — which is also why the CI job runs this project without bringing
+up a `project-db` container the tests would never connect to.
+
+`CreateProjectRequestTests` covers the validation rules: the required fields,
+the column bounds mirrored from `001_create_projects_table.sql`, and the
+distinction the nullable numeric fields exist for — that a missing bedroom count
+is refused while an answer of `0` is accepted.
+
+`ProjectsControllerTests` walks the US-05 acceptance criteria over stand-in
+collaborators: every requirement from the form is stored, the status is
+`Pending`, the client id comes from the token rather than the payload, and
+`ProjectCreated` is published once the project is stored. It also pins the two
+failure cases that matter — a project that could not be stored is never
+announced, and a project that could not be announced still answers `201`.
+
+`ProjectCreatedEventTests` pins the wire contract: the four envelope properties
+in order, the event type, an ISO-8601 `occurredAt`, an `eventId` that differs
+between two events about the same project, and the full payload. Nothing checks
+this at compile time — a consumer reads JSON off a topic, so a renamed property
+would fail at runtime in somebody else's service rather than here.
+
+`EndpointRoleDeclarationTests` walks the controllers by reflection and fails if
+any endpoint neither declares its roles nor is explicitly `[AllowAnonymous]`, or
+names a role the platform does not have. An endpoint added in a later story is
+held to that rule without anyone having to remember this file.
+
+`MigrationScriptTests` checks the scripts are embedded (DbUp silently skips one
+that is not), sort into the order they must run in, do not switch database, and
+hold no foreign key into another service's schema.
+
 ## Configuration
 - `ConnectionStrings:ProjectDb` — MySQL connection string
 - `Kafka:BootstrapServers` — the broker list, supplied as
