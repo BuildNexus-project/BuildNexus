@@ -33,6 +33,7 @@ The User Service must be running — see `infra/README.md`.
 | `/reset-password`  | Anyone — needs a `?token=` from the reset email |
 | `/`            | Signed-in users; others are redirected to `/login`  |
 | `/profile`     | Signed-in users                                    |
+| `/projects/new` | Client                                            |
 | `/directory`   | Architect, Project Manager                         |
 | `/admin/users` | Admin                                              |
 
@@ -44,8 +45,8 @@ malformed or has expired, and the app signs out on its own the moment it does.
 rejects any request without a valid token regardless of what the UI shows.
 
 `RoleRoute` is the same idea for the role-gated routes: it wraps `ProtectedRoute`
-and adds a role check, and the role lists it takes (`PROJECT_STAFF_ROLES`,
-`ADMIN_ROLES` in `src/lib/roles.ts`) mirror the service's own. A signed-in user
+and adds a role check, and the role lists it takes (`CLIENT_ROLES`,
+`PROJECT_STAFF_ROLES`, `ADMIN_ROLES` in `src/lib/roles.ts`) mirror the service's own. A signed-in user
 reaching a route their role may not open stays where they are and is shown who
 the page is for, rather than being redirected somewhere that hides what
 happened. The home page offers each link only to the roles allowed to open it.
@@ -53,6 +54,30 @@ happened. The home page offers each link only to the roles allowed to open it.
 None of that is the boundary either. Each page also handles the `403` the
 service returns and shows the reason it gives, so bypassing the guard changes
 nothing about what a user can actually read.
+
+## New project (US-05)
+
+`/projects/new` is where a Client submits a construction project: name,
+location, land size in perches, budget, floors, bedrooms, bathrooms, garage
+spaces, and free-text other requirements. Everything but the last is required.
+
+Client only, mirroring the Project Service's own gate on `POST /api/projects`.
+Staff roles do not submit work on a customer's behalf, so the link is offered
+on the home page to Clients alone and the endpoint refuses anyone else with a
+`403` whatever the router does.
+
+Bedrooms, bathrooms and garage spaces accept `0` — not every build is a house,
+and a garage is a count rather than a checkbox so that "none" and "two cars"
+are the same question. Floors must be at least 1.
+
+The numeric inputs are registered with `valueAsNumber`, which hands back `NaN`
+for an empty box. `src/lib/project-schemas.ts` writes those messages for what
+that actually means to the person reading them — "Number of bedrooms is
+required", not a type error.
+
+On success the page confirms the project is `Pending` and offers to submit
+another, resetting to a blank form rather than leaving the previous answers in
+place. The status is the service's, shown as it was returned.
 
 ## Password reset (US-04)
 
