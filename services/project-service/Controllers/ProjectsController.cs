@@ -98,7 +98,11 @@ public class ProjectsController : ControllerBase
             UpdatedAt = now
         };
 
-        await _projectRepository.InsertAsync(project);
+        // Stored with the opening entry of its status history, in one
+        // transaction. The creation is the first thing the audit trail has to
+        // say about the project, and a history that starts later is not the
+        // full record US-06 asks the view to show.
+        await _projectRepository.InsertAsync(project, ProjectStatusChange.ForCreation(project, PlatformRoles.Client));
 
         _logger.LogInformation(
             "Created project {ProjectId} for client {ClientId} with status {Status}.",
