@@ -33,6 +33,18 @@ export const ADMIN_ROLES: readonly Role[] = ['Admin']
  */
 export const CLIENT_ROLES: readonly Role[] = ['Client']
 
+/**
+ * The roles that move a project through its lifecycle, mirroring the Project
+ * Service's own gate on `PATCH /api/projects/{id}/status`.
+ *
+ * A Client is outside it on purpose: they can see every step of their project,
+ * but declaring the design approved or the build finished is the company's
+ * word, not the customer's. The service still refuses them whatever this does,
+ * and it also checks the caller is actually on the project — a role is not
+ * enough.
+ */
+export const STATUS_CHANGE_ROLES: readonly Role[] = ['Architect', 'ProjectManager', 'Admin']
+
 /** Display names — the wire value `ProjectManager` reads badly in a UI. */
 export const ROLE_LABELS: Record<Role, string> = {
   Client: 'Client',

@@ -8,6 +8,8 @@ import { HomePage } from '@/pages/HomePage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
+import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
@@ -46,6 +48,26 @@ export default function App() {
             <RoleRoute allowedRoles={CLIENT_ROLES}>
               <NewProjectPage />
             </RoleRoute>
+          }
+        />
+        {/* Both open to any signed-in user. Which projects they may see is a
+            per-project question — the owning client, the assigned staff, or an
+            Admin — and only the service can answer it, so a role guard here
+            would be guessing. */}
+        <Route
+          path="/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId"
+          element={
+            <ProtectedRoute>
+              <ProjectDetailPage />
+            </ProtectedRoute>
           }
         />
         <Route

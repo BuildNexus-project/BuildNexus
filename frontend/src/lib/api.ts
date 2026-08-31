@@ -25,6 +25,23 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The message to show for a failed request that is not a form submission.
+ *
+ * A refusal from the service is a real answer with a reason in it — "you are
+ * not on this project", "a Designing project cannot move to Completed" — and
+ * showing that reason beats flattening every failure into "something went
+ * wrong". Anything that is not an {@link ApiError} (a dropped connection,
+ * unparseable JSON) has no reason to show, so it gets the caller's fallback.
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) {
+    return fallback
+  }
+
+  return error.detail ?? error.title ?? fallback
+}
+
 type ProblemDetails = {
   title?: string
   detail?: string

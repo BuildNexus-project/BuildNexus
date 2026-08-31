@@ -235,13 +235,21 @@ public class ProjectsControllerTests
         };
 
     /// <summary>Records what the action asked to store, instead of storing it.</summary>
+    /// <remarks>
+    /// The reads and the status update are not exercised by these tests — they
+    /// belong to US-06 and are covered by its own tests — so they answer with
+    /// nothing rather than pretending to hold a database.
+    /// </remarks>
     private sealed class StubProjectRepository : IProjectRepository
     {
         public Project? Inserted { get; private set; }
 
+        /// <summary>The opening history entry stored alongside the project.</summary>
+        public ProjectStatusChange? InsertedCreation { get; private set; }
+
         public bool Fails { get; init; }
 
-        public Task InsertAsync(Project project)
+        public Task InsertAsync(Project project, ProjectStatusChange creation)
         {
             if (Fails)
             {
@@ -249,8 +257,23 @@ public class ProjectsControllerTests
             }
 
             Inserted = project;
+            InsertedCreation = creation;
             return Task.CompletedTask;
         }
+
+        public Task<Project?> GetByIdAsync(Guid id) => Task.FromResult<Project?>(null);
+
+        public Task<IReadOnlyList<Project>> ListAllAsync() =>
+            Task.FromResult<IReadOnlyList<Project>>([]);
+
+        public Task<IReadOnlyList<Project>> ListForUserAsync(Guid userId) =>
+            Task.FromResult<IReadOnlyList<Project>>([]);
+
+        public Task<IReadOnlyList<ProjectStatusChange>> GetStatusHistoryAsync(Guid projectId) =>
+            Task.FromResult<IReadOnlyList<ProjectStatusChange>>([]);
+
+        public Task<bool> UpdateStatusAsync(ProjectStatusChange change, DateTime updatedAtUtc) =>
+            Task.FromResult(false);
     }
 
     /// <summary>Records what the action asked to publish, instead of publishing it.</summary>

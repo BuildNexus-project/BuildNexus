@@ -81,7 +81,14 @@ export function NewProjectPage() {
               Submit another project
             </Button>
 
-            <Button render={<Link to="/" />} className="w-full">
+            {/* Straight into the project just created, so a Client can watch
+                it from the moment they submit it rather than having to find it
+                again. */}
+            <Button render={<Link to={`/projects/${submitted.id}`} />} className="w-full">
+              View this project
+            </Button>
+
+            <Button render={<Link to="/" />} variant="outline" className="w-full">
               Back to home
             </Button>
           </CardContent>

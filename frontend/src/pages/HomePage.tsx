@@ -36,6 +36,13 @@ export function HomePage() {
             Manage your profile
           </Button>
 
+          {/* Offered to every role, unlike the buttons below: the service
+              scopes the list to whatever the caller is actually party to, so
+              there is no role that has nothing to look at here by definition. */}
+          <Button render={<Link to="/projects" />} variant="outline" className="w-full">
+            Projects
+          </Button>
+
           {/* Offered only to the roles the page is open to, so nobody is invited
               into a screen the service is going to refuse. The guard on the
               route, and the endpoint behind it, decide the real answer. */}

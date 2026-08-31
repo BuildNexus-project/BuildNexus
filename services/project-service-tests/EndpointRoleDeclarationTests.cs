@@ -64,6 +64,29 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Client], RolesFor("CreateProject"));
     }
 
+    [Fact]
+    public void Reading_a_project_is_open_to_every_role()
+    {
+        // US-06 lets a Client, an Architect and a Project Manager see a project,
+        // and an Admin see any of them — so the role is not what decides the
+        // answer here, the caller's own id is. ProjectAccessPolicy makes that
+        // decision once the row has been read; the route only has to let the
+        // four roles reach it.
+        Assert.Equal(PlatformRoles.All, RolesFor("GetProject"));
+        Assert.Equal(PlatformRoles.All, RolesFor("ListProjects"));
+    }
+
+    [Fact]
+    public void Changing_a_projects_status_is_closed_to_the_client()
+    {
+        // A customer watches their project's progress; they do not declare
+        // their own design approved or their own build finished. Pinned rather
+        // than left to whoever edits the controller next.
+        Assert.Equal(
+            [PlatformRoles.Architect, PlatformRoles.ProjectManager, PlatformRoles.Admin],
+            RolesFor("UpdateProjectStatus"));
+    }
+
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
