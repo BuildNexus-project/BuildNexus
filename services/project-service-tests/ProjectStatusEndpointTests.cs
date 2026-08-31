@@ -346,7 +346,6 @@ public class ProjectStatusEndpointTests
 
         var controller = new ProjectsController(
             repository,
-            new NoOpEventPublisher(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -506,14 +505,4 @@ public class ProjectStatusEndpointTests
         }
     }
 
-    /// <summary>
-    /// US-06 publishes nothing — no story has named an event for a status
-    /// change — so this exists only to satisfy the constructor and fails loudly
-    /// if that ever stops being true by accident.
-    /// </summary>
-    private sealed class NoOpEventPublisher : IProjectEventPublisher
-    {
-        public Task PublishProjectCreatedAsync(Project project, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("US-06 publishes no events.");
-    }
 }

@@ -29,16 +29,13 @@ namespace BuildNexus.ProjectService.Controllers;
 public class ProjectsController : ControllerBase
 {
     private readonly IProjectRepository _projectRepository;
-    private readonly IProjectEventPublisher _eventPublisher;
     private readonly ILogger<ProjectsController> _logger;
 
     public ProjectsController(
         IProjectRepository projectRepository,
-        IProjectEventPublisher eventPublisher,
         ILogger<ProjectsController> logger)
     {
         _projectRepository = projectRepository;
-        _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
@@ -99,25 +96,26 @@ public class ProjectsController : ControllerBase
             UpdatedAt = now
         };
 
-        // Stored with the opening entry of its status history, in one
-        // transaction. The creation is the first thing the audit trail has to
-        // say about the project, and a history that starts later is not the
-        // full record US-06 asks the view to show.
-        // No events yet: US-22 moves ProjectCreated onto the outbox once the
-        // payloads and the dispatcher behind them exist. Until then the publish
-        // below is still the direct one US-05 wrote.
+        // Stored with the opening entry of its status history and its
+        // ProjectCreated event, in one transaction. The creation is the first
+        // thing the audit trail has to say about the project, and a history
+        // that starts later is not the full record US-06 asks the view to show.
+        //
+        // The event rides along rather than being published after the commit
+        // (US-22): a broker that was unreachable used to mean a project nobody
+        // was ever told about, and no amount of logging turned that back into a
+        // delivery. On the outbox it is sent late instead of not at all, and
+        // nothing here waits for Kafka to answer.
         await _projectRepository.InsertAsync(
             project,
             ProjectStatusChange.ForCreation(project, PlatformRoles.Client),
-            []);
+            [ProjectEvents.Created(project)]);
 
         _logger.LogInformation(
             "Created project {ProjectId} for client {ClientId} with status {Status}.",
             project.Id,
             project.ClientId,
             project.Status);
-
-        await PublishProjectCreatedAsync(project);
 
         return StatusCode(StatusCodes.Status201Created, ToProjectResponse(project));
     }
@@ -319,45 +317,6 @@ public class ProjectsController : ControllerBase
         var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
 
         return Ok(ProjectDetailResponse.From(project, history));
-    }
-
-    /// <summary>
-    /// Announces the new project on <c>project-events</c>, so the Design,
-    /// Construction and Payment services learn about it without polling this
-    /// one.
-    /// </summary>
-    /// <remarks>
-    /// A failed publish does not fail the request. The row is already committed
-    /// by the time this runs, so answering with a 500 would tell the Client
-    /// their submission was lost when it was not — and a retry would create a
-    /// second project. It is logged at error level with the project id instead,
-    /// which is enough to republish it by hand.
-    /// <para>
-    /// That leaves a real gap: a project created while the broker is unreachable
-    /// is never announced. Closing it properly means writing the event into this
-    /// service's own database in the same transaction as the row and having a
-    /// background worker drain it — the transactional outbox pattern — which is
-    /// its own story rather than something to smuggle in here.
-    /// </para>
-    /// </remarks>
-    private async Task PublishProjectCreatedAsync(Project project)
-    {
-        try
-        {
-            // Deliberately not given the request's cancellation token: the row
-            // is already committed, and a Client closing the tab must not leave
-            // a project nobody was told about. The publish is bounded by
-            // Kafka:MessageTimeoutMs instead.
-            await _eventPublisher.PublishProjectCreatedAsync(project);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Project {ProjectId} was created but its {EventType} event could not be published.",
-                project.Id,
-                ProjectEventTypes.ProjectCreated);
-        }
     }
 
     /// <summary>
