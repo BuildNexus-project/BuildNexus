@@ -123,16 +123,18 @@ jobs:
       USER_DB_USER: buildnexus
       USER_DB_PASSWORD: buildnexus-dev
 
-      # --- Why the Project Service database credentials are here ------------
-      # For the same reason as the JWT values below: compose interpolates the
-      # WHOLE file before it starts anything, so the required
-      # `${PROJECT_DB_*:?...}` variables on the project-db and project-service
-      # blocks must be set even though this job only starts user-db. Without
-      # them `docker compose up user-db` fails to parse and the User Service
-      # tests never run.
+      # --- Why the Project Service database credentials are literals --------
+      # Same reason as the User Service's above: ProjectDatabaseFixture connects
+      # with a fixed connection string compiled into the test assembly
+      # (User Id=buildnexus;Password=buildnexus-dev), so these values are not
+      # free to vary — a secret here would let someone change one half of a pair
+      # that has to agree.
       #
-      # No project-db container is started: services/project-service-tests stubs
-      # every collaborator and connects to no database at all.
+      # A project-db container IS started below. It was not needed while every
+      # class in services/project-service-tests stubbed its collaborators, but
+      # ProjectRepositoryDatabaseTests deliberately does not: the status-history
+      # ordering defect it guards only exists once a timestamp has been through
+      # a whole-second MySQL DATETIME, which no in-memory stand-in reproduces.
       PROJECT_DB_ROOT_PASSWORD: buildnexus-root-dev
       PROJECT_DB_USER: buildnexus
       PROJECT_DB_PASSWORD: buildnexus-dev
@@ -168,36 +170,43 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      # services/user-service-tests is not fully isolated. RoleAccessTests and
-      # RegistrationRoleTests boot the real User Service host through
-      # UserServiceFactory, which migrates and queries a live MySQL on
-      # localhost:3306 — the same user-db the local stack uses. The other eight
-      # classes in that project stub their dependencies and need nothing here.
+      # Neither test project is fully isolated.
       #
-      # --wait holds until the container reports healthy, not merely started,
-      # which the healthcheck already defined on user-db makes meaningful:
-      # MySQL accepts connections some seconds after the process starts, and
-      # without this the first test would race it.
-      - name: Start the User Service database
-        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db
+      # services/user-service-tests: RoleAccessTests and RegistrationRoleTests
+      # boot the real User Service host through UserServiceFactory, which
+      # migrates and queries a live MySQL on localhost:3306. The other eight
+      # classes stub their dependencies and need nothing here.
+      #
+      # services/project-service-tests: ProjectRepositoryDatabaseTests runs the
+      # real migrations and the real ADO.NET against project-db on localhost:3307
+      # — one schema per service means one container per service, so it needs a
+      # port of its own. Every other class in that project stubs its
+      # collaborators.
+      #
+      # --wait holds until both containers report healthy, not merely started,
+      # which the healthchecks defined on them make meaningful: MySQL accepts
+      # connections some seconds after the process starts, and without this the
+      # first test would race it.
+      - name: Start the service databases
+        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db
 
-      # services/project-service-tests is listed separately from the two below
-      # because it needs nothing started for it: every class in it stubs its
-      # collaborators, so it touches neither MySQL nor Kafka. A project-db
-      # container here would be a service the tests never connect to.
+      # No Kafka container for any of these: nothing in either test project
+      # publishes an event. services/project-service-tests reaches MySQL but
+      # never the broker.
       - name: Test
         run: |
           dotnet test services/user-service-tests/UserService.Tests.csproj -c Release
           dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release
           dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release
 
-      # A failed run is usually the database, and the container's log says why
-      # in a way the test output does not.
-      - name: Database log (on failure)
+      # A failed run is usually a database, and the container's log says why in
+      # a way the test output does not. Both are printed rather than guessing
+      # which of the two took the run down.
+      - name: Database logs (on failure)
         if: failure()
-        run: docker compose -f infra/docker-compose.yml logs user-db
+        run: docker compose -f infra/docker-compose.yml logs user-db project-db
 
-      - name: Stop the User Service database
+      - name: Stop the service databases
         if: always()
         run: docker compose -f infra/docker-compose.yml down -v
 
