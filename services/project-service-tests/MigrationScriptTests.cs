@@ -28,6 +28,7 @@ public class MigrationScriptTests
     [Theory]
     [InlineData("001_create_projects_table.sql")]
     [InlineData("002_add_project_status_history.sql")]
+    [InlineData("003_add_status_history_sequence.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));
@@ -139,6 +140,33 @@ public class MigrationScriptTests
         {
             Assert.Contains(column, sql, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void The_status_history_is_ordered_by_a_column_the_clock_cannot_tie()
+    {
+        // 002 left the history ordered by changed_at with the random id as the
+        // tie-break, and changed_at is a whole-second DATETIME — so two changes
+        // in the same second came back in an order unrelated to what happened.
+        // AUTO_INCREMENT is monotonic by construction, which sub-second
+        // timestamps would only approximate.
+        var sql = StripComments(ReadScript(Script("003_add_status_history_sequence.sql")));
+
+        Assert.Contains("sequence_number", sql, StringComparison.Ordinal);
+        Assert.Contains("AUTO_INCREMENT", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_backfill_numbers_existing_history_without_trusting_the_random_id()
+    {
+        // Attaching AUTO_INCREMENT in one step would have MySQL number the
+        // existing rows during the table rebuild in primary-key order — the
+        // random GUID order, which is the bug being fixed written into the data
+        // permanently. The rows are numbered deliberately instead.
+        var sql = StripComments(ReadScript(Script("003_add_status_history_sequence.sql")));
+
+        Assert.Contains("ROW_NUMBER() OVER", sql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY changed_at", sql, StringComparison.Ordinal);
     }
 
     private static string Script(string fileName) =>

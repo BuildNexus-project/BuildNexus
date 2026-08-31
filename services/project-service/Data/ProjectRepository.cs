@@ -122,14 +122,17 @@ public class ProjectRepository : IProjectRepository
     public async Task<IReadOnlyList<ProjectStatusChange>> GetStatusHistoryAsync(Guid projectId)
     {
         // Oldest first, which is the order the story asks the view to show them
-        // in. `id` breaks a tie so two changes stamped in the same second still
-        // come back in a stable order rather than whatever the engine feels
-        // like.
+        // in — and by sequence_number rather than by changed_at, because that
+        // column holds whole seconds only. Two changes landing in the same
+        // second used to tie-break on the random `id`, which is deterministic
+        // but says nothing about which happened first: a transition could and
+        // did render above the creation it followed. sequence_number is
+        // AUTO_INCREMENT, so it is monotonic whatever the clock's resolution.
         const string sql = $@"
             SELECT {SelectHistoryColumns}
             FROM project_status_history
             WHERE project_id = @projectId
-            ORDER BY changed_at, id;";
+            ORDER BY sequence_number;";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
