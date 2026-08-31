@@ -103,7 +103,13 @@ public class ProjectsController : ControllerBase
         // transaction. The creation is the first thing the audit trail has to
         // say about the project, and a history that starts later is not the
         // full record US-06 asks the view to show.
-        await _projectRepository.InsertAsync(project, ProjectStatusChange.ForCreation(project, PlatformRoles.Client));
+        // No events yet: US-22 moves ProjectCreated onto the outbox once the
+        // payloads and the dispatcher behind them exist. Until then the publish
+        // below is still the direct one US-05 wrote.
+        await _projectRepository.InsertAsync(
+            project,
+            ProjectStatusChange.ForCreation(project, PlatformRoles.Client),
+            []);
 
         _logger.LogInformation(
             "Created project {ProjectId} for client {ClientId} with status {Status}.",
@@ -278,7 +284,7 @@ public class ProjectsController : ControllerBase
             ChangedAt = now
         };
 
-        if (!await _projectRepository.UpdateStatusAsync(change, now))
+        if (!await _projectRepository.UpdateStatusAsync(change, now, []))
         {
             // The guard in the UPDATE found a status other than the one we read
             // and validated against, so somebody moved the project in between

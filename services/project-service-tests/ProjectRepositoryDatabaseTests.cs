@@ -139,7 +139,7 @@ public class ProjectRepositoryDatabaseTests
         await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
 
         var stale = Change(project, SecondMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
-        var accepted = await _fixture.Repository.UpdateStatusAsync(stale, SameSecond);
+        var accepted = await _fixture.Repository.UpdateStatusAsync(stale, SameSecond, []);
 
         Assert.False(accepted);
 
@@ -178,7 +178,7 @@ public class ProjectRepositoryDatabaseTests
         // that used to fail rather than a coin toss.
         creation.Id = CreationId;
 
-        await _fixture.Repository.InsertAsync(project, creation);
+        await _fixture.Repository.InsertAsync(project, creation, []);
 
         return project;
     }
@@ -186,7 +186,7 @@ public class ProjectRepositoryDatabaseTests
     private async Task MoveAsync(Project project, Guid changeId, ProjectStatus from, ProjectStatus to)
     {
         Assert.True(
-            await _fixture.Repository.UpdateStatusAsync(Change(project, changeId, from, to), SameSecond),
+            await _fixture.Repository.UpdateStatusAsync(Change(project, changeId, from, to), SameSecond, []),
             $"The move from {from} to {to} should have been accepted.");
     }
 

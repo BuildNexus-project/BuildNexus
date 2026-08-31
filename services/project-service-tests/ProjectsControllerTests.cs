@@ -249,7 +249,10 @@ public class ProjectsControllerTests
 
         public bool Fails { get; init; }
 
-        public Task InsertAsync(Project project, ProjectStatusChange creation)
+        public Task InsertAsync(
+            Project project,
+            ProjectStatusChange creation,
+            IReadOnlyList<OutboxEvent> outboxEvents)
         {
             if (Fails)
             {
@@ -272,7 +275,10 @@ public class ProjectsControllerTests
         public Task<IReadOnlyList<ProjectStatusChange>> GetStatusHistoryAsync(Guid projectId) =>
             Task.FromResult<IReadOnlyList<ProjectStatusChange>>([]);
 
-        public Task<bool> UpdateStatusAsync(ProjectStatusChange change, DateTime updatedAtUtc) =>
+        public Task<bool> UpdateStatusAsync(
+            ProjectStatusChange change,
+            DateTime updatedAtUtc,
+            IReadOnlyList<OutboxEvent> outboxEvents) =>
             Task.FromResult(false);
     }
 

@@ -17,6 +17,7 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
 // background threads and a connection pool, so one per request would spend more

@@ -442,7 +442,10 @@ public class ProjectStatusEndpointTests
             _history.AddRange(history);
         }
 
-        public Task InsertAsync(Project project, ProjectStatusChange creation)
+        public Task InsertAsync(
+            Project project,
+            ProjectStatusChange creation,
+            IReadOnlyList<OutboxEvent> outboxEvents)
         {
             _projects.Add(project);
             _history.Add(creation);
@@ -482,7 +485,10 @@ public class ProjectStatusEndpointTests
                     .ThenBy(change => change.Id)
             ]);
 
-        public Task<bool> UpdateStatusAsync(ProjectStatusChange change, DateTime updatedAtUtc)
+        public Task<bool> UpdateStatusAsync(
+            ProjectStatusChange change,
+            DateTime updatedAtUtc,
+            IReadOnlyList<OutboxEvent> outboxEvents)
         {
             if (!UpdateSucceeds)
             {
