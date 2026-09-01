@@ -190,9 +190,12 @@ jobs:
       - name: Start the service databases
         run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db
 
-      # No Kafka container for any of these: nothing in either test project
-      # publishes an event. services/project-service-tests reaches MySQL but
-      # never the broker.
+      # No Kafka container for any of these, still. OutboxDispatcherTests does
+      # cover the dispatcher that publishes to the broker, but over a fake
+      # publisher — what is under test there is what the dispatcher does with a
+      # success and with a failure, and a real broker would only make the run
+      # depend on how long it took to answer.
+      # services/project-service-tests reaches MySQL and never the broker.
       - name: Test
         run: |
           dotnet test services/user-service-tests/UserService.Tests.csproj -c Release

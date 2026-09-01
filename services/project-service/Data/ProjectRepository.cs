@@ -24,7 +24,10 @@ public class ProjectRepository : IProjectRepository
         _connectionFactory = connectionFactory;
     }
 
-    public async Task InsertAsync(Project project, ProjectStatusChange creation)
+    public async Task InsertAsync(
+        Project project,
+        ProjectStatusChange creation,
+        IReadOnlyList<OutboxEvent> outboxEvents)
     {
         // The assignment columns are absent on purpose: a new project has nobody
         // on it, and nothing in the system assigns staff yet.
@@ -37,9 +40,13 @@ public class ProjectRepository : IProjectRepository
                  @bathrooms, @garageSpaces, @otherRequirements, @status, @createdAt, @updatedAt);";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
-        // Both statements or neither: a project whose history does not start at
+        // Every statement or none: a project whose history does not start at
         // its creation has an audit trail that begins halfway through, and there
-        // is no moment at which that is an acceptable state to be in.
+        // is no moment at which that is an acceptable state to be in. The
+        // outbox rows are held to the same standard — an event that committed
+        // without its project would announce something that does not exist, and
+        // a project that committed without its event would never be announced
+        // at all.
         await using var transaction = await connection.BeginTransactionAsync();
 
         await using (var command = connection.CreateCommand())
@@ -67,6 +74,9 @@ public class ProjectRepository : IProjectRepository
         }
 
         await InsertStatusChangeAsync(connection, transaction, creation);
+
+        // After the project, because the outbox holds a foreign key to it.
+        await InsertOutboxEventsAsync(connection, transaction, outboxEvents);
 
         await transaction.CommitAsync();
     }
@@ -151,7 +161,10 @@ public class ProjectRepository : IProjectRepository
         return history;
     }
 
-    public async Task<bool> UpdateStatusAsync(ProjectStatusChange change, DateTime updatedAtUtc)
+    public async Task<bool> UpdateStatusAsync(
+        ProjectStatusChange change,
+        DateTime updatedAtUtc,
+        IReadOnlyList<OutboxEvent> outboxEvents)
     {
         // `status = @fromStatus` in the WHERE clause is the concurrency guard:
         // if somebody else moved the project between the read that decided this
@@ -165,9 +178,10 @@ public class ProjectRepository : IProjectRepository
               AND status = @fromStatus;";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
-        // The move and its record are one write or neither. A status that
-        // changed without a history row is exactly the untraceable change the
-        // table exists to prevent.
+        // The move, its record and its events are one write or none. A status
+        // that changed without a history row is exactly the untraceable change
+        // the table exists to prevent, and a move that no event described is
+        // one the rest of the system never hears about.
         await using var transaction = await connection.BeginTransactionAsync();
 
         await using (var command = connection.CreateCommand())
@@ -189,6 +203,10 @@ public class ProjectRepository : IProjectRepository
         }
 
         await InsertStatusChangeAsync(connection, transaction, change);
+
+        // Only reached when the guarded UPDATE actually moved the project, so
+        // the loser of a concurrent move announces nothing — it changed nothing.
+        await InsertOutboxEventsAsync(connection, transaction, outboxEvents);
 
         await transaction.CommitAsync();
 
@@ -223,6 +241,28 @@ public class ProjectRepository : IProjectRepository
         AddParameter(command, "@changedAt", change.ChangedAt);
 
         await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// Appends the events a write raises on the same connection and transaction,
+    /// in the order they were given.
+    /// </summary>
+    /// <remarks>
+    /// In order because <c>sequence_number</c> is what the dispatcher sends by:
+    /// a status change that raises both <c>ProjectUpdated</c> and
+    /// <c>ProjectApproved</c> must put them on the topic in that order, since a
+    /// consumer that saw the approval first would be reasoning about a state the
+    /// project never passed through.
+    /// </remarks>
+    private static async Task InsertOutboxEventsAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        IReadOnlyList<OutboxEvent> outboxEvents)
+    {
+        foreach (var outboxEvent in outboxEvents)
+        {
+            await OutboxRepository.InsertAsync(connection, transaction, outboxEvent);
+        }
     }
 
     private static async Task<IReadOnlyList<Project>> ReadProjectListAsync(DbCommand command)

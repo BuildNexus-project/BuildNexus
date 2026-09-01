@@ -1,4 +1,5 @@
 import type { ApiFetchOptions } from './api'
+import type { ProjectEventType } from './project-events'
 import type { ProjectStatus } from './project-status'
 import type { Role } from './roles'
 
@@ -81,6 +82,42 @@ export type ProjectStatusChange = {
 }
 
 /**
+ * One event the Project Service raised for a project, and how its delivery to
+ * the message bus went.
+ *
+ * The publish no longer happens inside the request that caused it — the event
+ * is written into the service's outbox in the same transaction as the change,
+ * and sent afterwards — which is what makes it survive the broker being down.
+ * It also means "did the other services get told?" is a question only this can
+ * answer.
+ */
+export type ProjectEvent = {
+  /**
+   * The event's own id, and the `eventId` carried in the envelope on the topic
+   * — so a message a consumer asks about can be matched to this row.
+   */
+  id: string
+  /** `ProjectCreated`, `ProjectUpdated` or `ProjectApproved`. */
+  eventType: ProjectEventType
+  /** When the change it announces happened, not when it was sent. */
+  occurredAt: string
+  /** When the broker took it, or `null` while it is still waiting. */
+  publishedAt: string | null
+  /**
+   * How many times delivery has been tried. More than one on a delivered event
+   * means it got there eventually, which is the outbox working rather than a
+   * fault.
+   */
+  attemptCount: number
+  /**
+   * Why the last attempt failed, or `null`. Cleared once the event is
+   * delivered, so a value here alongside a null `publishedAt` is the thing
+   * worth looking at.
+   */
+  lastError: string | null
+}
+
+/**
  * A project in full: its requirements, its status, who is on it, when it was
  * created, and every status change it has been through.
  */
@@ -135,6 +172,21 @@ export function fetchProjects(authFetch: AuthFetch) {
  */
 export function fetchProject(authFetch: AuthFetch, projectId: string) {
   return authFetch<ProjectDetail>(`/api/projects/${projectId}`)
+}
+
+/**
+ * The events raised for one project, oldest first.
+ *
+ * Admin only: this is the integration answering for itself — delivery state,
+ * attempt counts and broker error text — not project information. Any other
+ * role gets {@link ApiError} with status 403, and the service enforces that
+ * whatever this app chooses to render.
+ *
+ * An empty list is a real answer, not a failure: a project created before the
+ * outbox existed has raised nothing. An id that does not exist is a 404.
+ */
+export function fetchProjectEvents(authFetch: AuthFetch, projectId: string) {
+  return authFetch<ProjectEvent[]>(`/api/projects/${projectId}/events`)
 }
 
 /**

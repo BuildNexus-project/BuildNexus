@@ -17,11 +17,17 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
 // background threads and a connection pool, so one per request would spend more
 // on setup than on the publish itself.
 builder.Services.AddSingleton<IProjectEventPublisher, KafkaProjectEventPublisher>();
+
+// The other half of a reliable publish: the endpoints record events inside the
+// transaction that made the change, and this drains them onto the topic
+// afterwards. Nothing on the request path waits for the broker.
+builder.Services.AddHostedService<OutboxDispatcher>();
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
@@ -46,6 +52,15 @@ builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    .ValidateOnStart();
+
+// Dispatcher tuning. Both settings have working defaults, unlike the broker
+// address, so this only guards against a deployment configuring them to
+// something that cannot work.
+builder.Services.AddOptions<OutboxOptions>()
+    .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName))
+    .Validate(o => o.PollIntervalSeconds > 0, "Outbox:PollIntervalSeconds must be greater than zero.")
+    .Validate(o => o.BatchSize > 0, "Outbox:BatchSize must be greater than zero.")
     .ValidateOnStart();
 
 builder.Services

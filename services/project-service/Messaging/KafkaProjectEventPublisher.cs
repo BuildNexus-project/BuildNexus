@@ -49,28 +49,27 @@ public sealed class KafkaProjectEventPublisher : IProjectEventPublisher, IDispos
         }).Build();
     }
 
-    public async Task PublishProjectCreatedAsync(Project project, CancellationToken cancellationToken = default)
+    public async Task PublishAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
     {
-        var envelope = EventEnvelope<ProjectCreatedPayload>.Create(
-            ProjectEventTypes.ProjectCreated,
-            ProjectCreatedPayload.From(project),
-            project.CreatedAt);
-
         var message = new Message<string, string>
         {
             // Keyed by project id, so every event about one project lands on the
             // same partition and reaches consumers in the order it happened.
-            Key = project.Id.ToString(),
-            Value = envelope.ToJson()
+            Key = outboxEvent.ProjectId.ToString(),
+            // The envelope exactly as it was serialised when the change was
+            // made. Not rebuilt here: a retry must put the same eventId and the
+            // same occurredAt on the topic, or a consumer deduplicating on the
+            // id would see every attempt as a new event.
+            Value = outboxEvent.Envelope
         };
 
         var result = await _producer.ProduceAsync(Topic, message, cancellationToken);
 
         _logger.LogInformation(
             "Published {EventType} {EventId} for project {ProjectId} to {TopicPartitionOffset}.",
-            envelope.EventType,
-            envelope.EventId,
-            project.Id,
+            outboxEvent.EventType,
+            outboxEvent.Id,
+            outboxEvent.ProjectId,
             result.TopicPartitionOffset);
     }
 

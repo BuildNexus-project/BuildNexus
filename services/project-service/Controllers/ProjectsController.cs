@@ -29,16 +29,16 @@ namespace BuildNexus.ProjectService.Controllers;
 public class ProjectsController : ControllerBase
 {
     private readonly IProjectRepository _projectRepository;
-    private readonly IProjectEventPublisher _eventPublisher;
+    private readonly IOutboxRepository _outboxRepository;
     private readonly ILogger<ProjectsController> _logger;
 
     public ProjectsController(
         IProjectRepository projectRepository,
-        IProjectEventPublisher eventPublisher,
+        IOutboxRepository outboxRepository,
         ILogger<ProjectsController> logger)
     {
         _projectRepository = projectRepository;
-        _eventPublisher = eventPublisher;
+        _outboxRepository = outboxRepository;
         _logger = logger;
     }
 
@@ -99,19 +99,26 @@ public class ProjectsController : ControllerBase
             UpdatedAt = now
         };
 
-        // Stored with the opening entry of its status history, in one
-        // transaction. The creation is the first thing the audit trail has to
-        // say about the project, and a history that starts later is not the
-        // full record US-06 asks the view to show.
-        await _projectRepository.InsertAsync(project, ProjectStatusChange.ForCreation(project, PlatformRoles.Client));
+        // Stored with the opening entry of its status history and its
+        // ProjectCreated event, in one transaction. The creation is the first
+        // thing the audit trail has to say about the project, and a history
+        // that starts later is not the full record US-06 asks the view to show.
+        //
+        // The event rides along rather than being published after the commit
+        // (US-22): a broker that was unreachable used to mean a project nobody
+        // was ever told about, and no amount of logging turned that back into a
+        // delivery. On the outbox it is sent late instead of not at all, and
+        // nothing here waits for Kafka to answer.
+        await _projectRepository.InsertAsync(
+            project,
+            ProjectStatusChange.ForCreation(project, PlatformRoles.Client),
+            [ProjectEvents.Created(project)]);
 
         _logger.LogInformation(
             "Created project {ProjectId} for client {ClientId} with status {Status}.",
             project.Id,
             project.ClientId,
             project.Status);
-
-        await PublishProjectCreatedAsync(project);
 
         return StatusCode(StatusCodes.Status201Created, ToProjectResponse(project));
     }
@@ -278,7 +285,13 @@ public class ProjectsController : ControllerBase
             ChangedAt = now
         };
 
-        if (!await _projectRepository.UpdateStatusAsync(change, now))
+        // The events this move announces, enqueued in the same transaction as the
+        // move itself (US-22). Built before the write because that is what the
+        // write is given; their contents come from the change rather than from
+        // the project, which still holds the old status at this point.
+        var raised = ProjectEvents.ForStatusChange(project, change);
+
+        if (!await _projectRepository.UpdateStatusAsync(change, now, raised))
         {
             // The guard in the UPDATE found a status other than the one we read
             // and validated against, so somebody moved the project in between
@@ -298,12 +311,14 @@ public class ProjectsController : ControllerBase
         }
 
         _logger.LogInformation(
-            "Project {ProjectId} moved from {FromStatus} to {ToStatus} by {UserId} in role {Role}.",
+            "Project {ProjectId} moved from {FromStatus} to {ToStatus} by {UserId} in role {Role}, "
+            + "raising {EventTypes}.",
             project.Id,
             change.FromStatus,
             change.ToStatus,
             userId,
-            change.ChangedByRole);
+            change.ChangedByRole,
+            string.Join(" and ", raised.Select(e => e.EventType)));
 
         // Answer with the project as it now stands rather than as it was read,
         // so the screen that made the change does not have to fetch it again.
@@ -316,42 +331,59 @@ public class ProjectsController : ControllerBase
     }
 
     /// <summary>
-    /// Announces the new project on <c>project-events</c>, so the Design,
-    /// Construction and Payment services learn about it without polling this
-    /// one.
+    /// The events this service has raised for one project, and whether each one
+    /// reached the message bus. Allowed roles: Admin.
     /// </summary>
     /// <remarks>
-    /// A failed publish does not fail the request. The row is already committed
-    /// by the time this runs, so answering with a 500 would tell the Client
-    /// their submission was lost when it was not — and a retry would create a
-    /// second project. It is logged at error level with the project id instead,
-    /// which is enough to republish it by hand.
+    /// Admin only, and narrower than every other read here on purpose. This is
+    /// not project information — it is the integration answering for itself:
+    /// delivery state, attempt counts, and broker error text that names our own
+    /// infrastructure. A Client watching their build has no use for it, and the
+    /// staff working the project cannot act on a failed publish either; the
+    /// person who can is the one administering the platform.
     /// <para>
-    /// That leaves a real gap: a project created while the broker is unreachable
-    /// is never announced. Closing it properly means writing the event into this
-    /// service's own database in the same transaction as the row and having a
-    /// background worker drain it — the transactional outbox pattern — which is
-    /// its own story rather than something to smuggle in here.
+    /// It exists because a publish no longer happens inside the request that
+    /// caused it (US-22). That is what makes the publish reliable, but it also
+    /// means "did the other services get told?" stopped being answerable from
+    /// the response to the change — and an outbox nobody can see is a queue that
+    /// silently stops draining. This is the view that makes the first acceptance
+    /// bullet observable rather than merely intended.
+    /// </para>
+    /// <para>
+    /// Oldest first, matching the order they were raised and the order they go
+    /// on the topic.
     /// </para>
     /// </remarks>
-    private async Task PublishProjectCreatedAsync(Project project)
+    /// <response code="200">The project's events, oldest first. Empty for a project raised before the outbox existed.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller holds a valid token but is not an Admin.</response>
+    /// <response code="404">No project has that id.</response>
+    [HttpGet("{id:guid}/events")]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(IReadOnlyList<ProjectEventResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetProjectEvents(Guid id)
     {
-        try
+        if (!TryGetCallerId(out _))
         {
-            // Deliberately not given the request's cancellation token: the row
-            // is already committed, and a Client closing the tab must not leave
-            // a project nobody was told about. The publish is bounded by
-            // Kafka:MessageTimeoutMs instead.
-            await _eventPublisher.PublishProjectCreatedAsync(project);
+            return Unauthorized();
         }
-        catch (Exception ex)
+
+        // Read the project first so an id that does not exist is a 404 rather
+        // than an empty list — the two mean different things, and an empty list
+        // is a real answer for a project created before the outbox existed.
+        if (await _projectRepository.GetByIdAsync(id) is null)
         {
-            _logger.LogError(
-                ex,
-                "Project {ProjectId} was created but its {EventType} event could not be published.",
-                project.Id,
-                ProjectEventTypes.ProjectCreated);
+            return ProjectNotFound(id);
         }
+
+        // No per-project check beyond that: the role attribute already limited
+        // this to Admin, and an Admin is party to every project.
+        var events = await _outboxRepository.ListForProjectAsync(id);
+
+        return Ok(events.Select(ProjectEventResponse.From).ToList());
     }
 
     /// <summary>

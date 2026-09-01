@@ -32,7 +32,7 @@ public class ProjectsControllerTests
     public async Task Creates_the_project_with_status_pending()
     {
         // The AC names the status outright, and the caller has no say in it.
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request());
 
@@ -42,7 +42,7 @@ public class ProjectsControllerTests
     [Fact]
     public async Task Stores_every_requirement_the_form_captured()
     {
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request());
 
@@ -63,7 +63,7 @@ public class ProjectsControllerTests
     {
         // The owner comes from the token, not the payload — there is no field
         // on the request to send somebody else's id in.
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request());
 
@@ -73,7 +73,7 @@ public class ProjectsControllerTests
     [Fact]
     public async Task Gives_the_project_an_id_of_its_own()
     {
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request());
 
@@ -83,7 +83,7 @@ public class ProjectsControllerTests
     [Fact]
     public async Task Trims_the_name_and_location()
     {
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request(name: "  Beachfront villa  ", location: "  Galle  "));
 
@@ -99,7 +99,7 @@ public class ProjectsControllerTests
     {
         // A requirements box the Client left alone must store nothing, which is
         // also what a project submitted without one has.
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request(otherRequirements: blank));
 
@@ -109,7 +109,7 @@ public class ProjectsControllerTests
     [Fact]
     public async Task Answers_201_with_the_project_as_stored()
     {
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         var result = Assert.IsType<ObjectResult>(await controller.CreateProject(Request()));
 
@@ -122,42 +122,46 @@ public class ProjectsControllerTests
     }
 
     [Fact]
-    public async Task Publishes_ProjectCreated_once_the_project_is_stored()
+    public async Task Raises_ProjectCreated_for_the_project_it_stored()
     {
         // The third AC bullet. The event carries the project that was actually
         // written, not the request that asked for it.
-        var (controller, repository, publisher) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request());
 
-        Assert.Equal(1, publisher.PublishCount);
-        Assert.Same(repository.Inserted, publisher.Published);
+        var raised = Assert.Single(repository.InsertedOutboxEvents);
+        Assert.Equal(ProjectEventTypes.ProjectCreated, raised.EventType);
+        Assert.Equal(repository.Inserted!.Id, raised.ProjectId);
     }
 
     [Fact]
-    public async Task Does_not_publish_when_the_project_could_not_be_stored()
+    public async Task Hands_the_event_to_the_same_write_that_stores_the_project()
+    {
+        // US-22: the event is enqueued in the transaction that inserts the row,
+        // not published after it. That is the whole of "publishes reliably" —
+        // the two commit together, so there is no window in which a project
+        // exists and nothing was ever going to announce it.
+        var (controller, repository) = ControllerFor();
+
+        await controller.CreateProject(Request());
+
+        Assert.NotNull(repository.Inserted);
+        Assert.NotEmpty(repository.InsertedOutboxEvents);
+    }
+
+    [Fact]
+    public async Task Announces_nothing_when_the_project_could_not_be_stored()
     {
         // Announcing a project that was never written would leave four other
-        // services acting on something that does not exist.
-        var (controller, _, publisher) = ControllerFor(insertFails: true);
+        // services acting on something that does not exist. Nothing enqueues
+        // separately, so a failed insert takes the event down with it.
+        var (controller, repository) = ControllerFor(insertFails: true);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => controller.CreateProject(Request()));
 
-        Assert.Equal(0, publisher.PublishCount);
-    }
-
-    [Fact]
-    public async Task Still_answers_201_when_the_event_cannot_be_published()
-    {
-        // The row is already committed by then. A 500 would tell the Client
-        // their submission was lost when it was not, and their retry would
-        // create a second project.
-        var (controller, repository, _) = ControllerFor(publishFails: true);
-
-        var result = Assert.IsType<ObjectResult>(await controller.CreateProject(Request()));
-
-        Assert.Equal(StatusCodes.Status201Created, result.StatusCode);
-        Assert.NotNull(repository.Inserted);
+        Assert.Null(repository.Inserted);
+        Assert.Empty(repository.InsertedOutboxEvents);
     }
 
     [Fact]
@@ -165,18 +169,18 @@ public class ProjectsControllerTests
     {
         // Signature-valid but unusable: there is no client to attribute the
         // project to, so there is nothing to create.
-        var (controller, repository, publisher) = ControllerFor(subject: "not-a-guid");
+        var (controller, repository) = ControllerFor(subject: "not-a-guid");
 
         Assert.IsType<UnauthorizedResult>(await controller.CreateProject(Request()));
 
         Assert.Null(repository.Inserted);
-        Assert.Equal(0, publisher.PublishCount);
+        Assert.Empty(repository.InsertedOutboxEvents);
     }
 
     [Fact]
     public async Task Stamps_created_and_updated_with_the_same_moment()
     {
-        var (controller, repository, _) = ControllerFor();
+        var (controller, repository) = ControllerFor();
 
         await controller.CreateProject(Request());
 
@@ -185,18 +189,15 @@ public class ProjectsControllerTests
         Assert.Equal(DateTimeKind.Utc, stored.CreatedAt.Kind);
     }
 
-    private static (ProjectsController Controller, StubProjectRepository Repository, StubEventPublisher Publisher)
-        ControllerFor(
-            bool insertFails = false,
-            bool publishFails = false,
-            string? subject = null)
+    private static (ProjectsController Controller, StubProjectRepository Repository) ControllerFor(
+        bool insertFails = false,
+        string? subject = null)
     {
         var repository = new StubProjectRepository { Fails = insertFails };
-        var publisher = new StubEventPublisher { Fails = publishFails };
 
         var controller = new ProjectsController(
             repository,
-            publisher,
+            new FakeOutboxRepository(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -215,7 +216,7 @@ public class ProjectsControllerTests
             }
         };
 
-        return (controller, repository, publisher);
+        return (controller, repository);
     }
 
     private static CreateProjectRequest Request(
@@ -247,17 +248,26 @@ public class ProjectsControllerTests
         /// <summary>The opening history entry stored alongside the project.</summary>
         public ProjectStatusChange? InsertedCreation { get; private set; }
 
+        /// <summary>The events the action asked to enqueue in the same write.</summary>
+        public IReadOnlyList<OutboxEvent> InsertedOutboxEvents { get; private set; } = [];
+
         public bool Fails { get; init; }
 
-        public Task InsertAsync(Project project, ProjectStatusChange creation)
+        public Task InsertAsync(
+            Project project,
+            ProjectStatusChange creation,
+            IReadOnlyList<OutboxEvent> outboxEvents)
         {
             if (Fails)
             {
+                // Nothing is recorded, which is the point: the events were
+                // handed to this write, so they fail with it.
                 throw new InvalidOperationException("The insert failed.");
             }
 
             Inserted = project;
             InsertedCreation = creation;
+            InsertedOutboxEvents = outboxEvents;
             return Task.CompletedTask;
         }
 
@@ -272,30 +282,10 @@ public class ProjectsControllerTests
         public Task<IReadOnlyList<ProjectStatusChange>> GetStatusHistoryAsync(Guid projectId) =>
             Task.FromResult<IReadOnlyList<ProjectStatusChange>>([]);
 
-        public Task<bool> UpdateStatusAsync(ProjectStatusChange change, DateTime updatedAtUtc) =>
+        public Task<bool> UpdateStatusAsync(
+            ProjectStatusChange change,
+            DateTime updatedAtUtc,
+            IReadOnlyList<OutboxEvent> outboxEvents) =>
             Task.FromResult(false);
-    }
-
-    /// <summary>Records what the action asked to publish, instead of publishing it.</summary>
-    private sealed class StubEventPublisher : IProjectEventPublisher
-    {
-        public Project? Published { get; private set; }
-
-        public int PublishCount { get; private set; }
-
-        public bool Fails { get; init; }
-
-        public Task PublishProjectCreatedAsync(Project project, CancellationToken cancellationToken = default)
-        {
-            if (Fails)
-            {
-                // What an unreachable broker looks like from the action's side.
-                throw new InvalidOperationException("The broker could not be reached.");
-            }
-
-            Published = project;
-            PublishCount++;
-            return Task.CompletedTask;
-        }
     }
 }

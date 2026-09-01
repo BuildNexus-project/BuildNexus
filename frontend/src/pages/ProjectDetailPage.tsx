@@ -17,12 +17,15 @@ import {
 import { apiErrorMessage } from '@/lib/api'
 import {
   fetchProject,
+  fetchProjectEvents,
   updateProjectStatus,
   type ProjectDetail,
+  type ProjectEvent,
   type ProjectStatusChange,
 } from '@/lib/project-api'
+import { deliveryOf, needsAttention } from '@/lib/project-events'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
-import { ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
 
 /** A date and time the service sent, as a reader would write it. */
 function formatMoment(iso: string): string {
@@ -60,6 +63,49 @@ function describeChange(change: ProjectStatusChange): string {
     : `${PROJECT_STATUS_LABELS[change.fromStatus]} → ${to}`
 }
 
+/** Shown when the delivery log itself cannot be read. */
+const EVENTS_LOAD_FAILED = 'Could not load this project’s events.'
+
+/**
+ * How one event's delivery reads.
+ *
+ * A delivered event that took several attempts is shown as delivered, with the
+ * count in the small print: that is the outbox having worked, and badging it as
+ * a problem would teach people to ignore the badge.
+ */
+function Delivery({ event }: { event: ProjectEvent }) {
+  const delivery = deliveryOf(event)
+
+  if (delivery === 'delivered') {
+    return (
+      <div className="flex flex-col gap-1">
+        <Badge variant="secondary" className="w-fit">
+          Delivered
+        </Badge>
+        <span className="text-muted-foreground text-xs">
+          {formatMoment(event.publishedAt as string)}
+          {event.attemptCount > 1 && ` · after ${event.attemptCount} attempts`}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge variant={delivery === 'retrying' ? 'destructive' : 'outline'} className="w-fit">
+        {delivery === 'retrying' ? 'Not delivered' : 'Waiting'}
+      </Badge>
+      <span className="text-muted-foreground text-xs">
+        {delivery === 'retrying'
+          ? `${event.attemptCount} ${event.attemptCount === 1 ? 'attempt' : 'attempts'}${
+              event.lastError ? ` · ${event.lastError}` : ''
+            }`
+          : 'Not yet sent'}
+      </span>
+    </div>
+  )
+}
+
 /** One labelled fact about the project. */
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -87,6 +133,13 @@ export function ProjectDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [changingTo, setChangingTo] = useState<ProjectStatus | null>(null)
+  const [events, setEvents] = useState<ProjectEvent[] | null>(null)
+  const [eventsError, setEventsError] = useState<string | null>(null)
+
+  // The events view is the integration answering for itself, and the service
+  // refuses it to everybody else with a 403. Asking anyway would show every
+  // Client an error for something that is not theirs to see.
+  const isAdmin = user !== null && ADMIN_ROLES.includes(user.role)
 
   useEffect(() => {
     if (!projectId) {
@@ -115,6 +168,53 @@ export function ProjectDetailPage() {
   }, [authFetch, projectId])
 
   /**
+   * Loads the delivery log, separately from the project itself so a failure
+   * here cannot take the page down with it — an administrator who cannot reach
+   * the events should still see the project.
+   */
+  useEffect(() => {
+    if (!projectId || !isAdmin) {
+      return
+    }
+
+    let cancelled = false
+
+    fetchProjectEvents(authFetch, projectId)
+      .then((loaded) => {
+        if (!cancelled) {
+          setEvents(loaded)
+          setEventsError(null)
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setEventsError(apiErrorMessage(error, EVENTS_LOAD_FAILED))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authFetch, isAdmin, projectId])
+
+  /**
+   * Re-reads the delivery log after something has changed it.
+   *
+   * Not cancellation-guarded like the load above, because this only runs from a
+   * button the user just pressed on a page that is still mounted.
+   */
+  async function refreshEvents(id: string) {
+    try {
+      setEvents(await fetchProjectEvents(authFetch, id))
+      setEventsError(null)
+    } catch (error) {
+      // The move itself succeeded; only the log failed to refresh. Saying so
+      // beats leaving a stale list looking current.
+      setEventsError(apiErrorMessage(error, EVENTS_LOAD_FAILED))
+    }
+  }
+
+  /**
    * Moves the project on. The service answers with the project as it now
    * stands, history included, so the page updates from its reply rather than
    * refetching or guessing at the new state.
@@ -129,6 +229,13 @@ export function ProjectDetailPage() {
 
     try {
       setProject(await updateProjectStatus(authFetch, projectId, status))
+
+      // The move just raised events of its own, so the log below is already out
+      // of date. The reply to the PATCH does not carry them — they are written
+      // by the same transaction but sent afterwards — so it is re-read.
+      if (isAdmin) {
+        await refreshEvents(projectId)
+      }
     } catch (error) {
       setStatusError(
         apiErrorMessage(error, 'Could not update the status. Please try again.'),
@@ -290,6 +397,69 @@ export function ProjectDetailPage() {
                   <p role="alert" className="text-destructive text-sm">
                     {statusError}
                   </p>
+                )}
+              </section>
+            </>
+          )}
+
+          {isAdmin && (
+            <>
+              <Separator />
+
+              <section className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-sm font-medium">Integration events</h2>
+                  {events !== null && needsAttention(events) && (
+                    <Badge variant="destructive">Needs attention</Badge>
+                  )}
+                </div>
+
+                <p className="text-muted-foreground text-sm">
+                  What this project announced to the other services. An event is recorded in the
+                  same transaction as the change it describes and sent afterwards, so one that has
+                  not gone yet is delayed rather than lost.
+                </p>
+
+                {eventsError ? (
+                  <p role="alert" className="text-destructive text-sm">
+                    {eventsError}
+                  </p>
+                ) : events === null ? (
+                  <p className="text-muted-foreground text-sm">Loading events…</p>
+                ) : events.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">
+                    This project has not announced anything yet.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Event</TableHead>
+                        <TableHead>Raised</TableHead>
+                        <TableHead>Delivery</TableHead>
+                      </TableRow>
+                    </TableHeader>
+
+                    <TableBody>
+                      {/* Oldest first, exactly as the service sent it — which is
+                          also the order the events go onto the topic. */}
+                      {events.map((event) => (
+                        <TableRow key={event.id}>
+                          <TableCell>
+                            {/* The wire value, not a friendly name: it is what a
+                                consumer subscribes to, so it is what an
+                                administrator needs to match against. */}
+                            <span className="font-mono text-xs font-medium">{event.eventType}</span>
+                            <span className="text-muted-foreground block text-xs">{event.id}</span>
+                          </TableCell>
+                          <TableCell>{formatMoment(event.occurredAt)}</TableCell>
+                          <TableCell>
+                            <Delivery event={event} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 )}
               </section>
             </>

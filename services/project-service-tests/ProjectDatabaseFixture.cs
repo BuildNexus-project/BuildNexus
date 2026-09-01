@@ -43,6 +43,12 @@ public class ProjectDatabaseFixture : IAsyncLifetime
 
     public ProjectRepository Repository { get; private set; } = null!;
 
+    /// <summary>
+    /// The outbox over the same database, so a test can check that an event
+    /// enqueued by a project write actually committed with it.
+    /// </summary>
+    public OutboxRepository Outbox { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         // The production migration path, not a hand-written schema: DbUp records
@@ -59,15 +65,19 @@ public class ProjectDatabaseFixture : IAsyncLifetime
             })
             .Build();
 
-        Repository = new ProjectRepository(new MySqlConnectionFactory(configuration));
+        var connectionFactory = new MySqlConnectionFactory(configuration);
+
+        Repository = new ProjectRepository(connectionFactory);
+        Outbox = new OutboxRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
 
     /// <summary>
     /// Removes the projects these tests created, leaving the development
-    /// database as it was found. The history rows go with them —
-    /// <c>fk_project_status_history_project</c> cascades on delete.
+    /// database as it was found. The history and outbox rows go with them —
+    /// <c>fk_project_status_history_project</c> and
+    /// <c>fk_project_outbox_events_project</c> both cascade on delete.
     /// </summary>
     public async Task DisposeAsync()
     {

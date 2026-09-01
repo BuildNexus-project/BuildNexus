@@ -1,4 +1,5 @@
 using BuildNexus.ProjectService.Authorization;
+using BuildNexus.ProjectService.Messaging;
 using BuildNexus.ProjectService.Models;
 
 namespace BuildNexus.ProjectService.Tests;
@@ -139,7 +140,7 @@ public class ProjectRepositoryDatabaseTests
         await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
 
         var stale = Change(project, SecondMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
-        var accepted = await _fixture.Repository.UpdateStatusAsync(stale, SameSecond);
+        var accepted = await _fixture.Repository.UpdateStatusAsync(stale, SameSecond, []);
 
         Assert.False(accepted);
 
@@ -153,7 +154,11 @@ public class ProjectRepositoryDatabaseTests
     /// A project stored through the real INSERT, named so the fixture's cleanup
     /// will find it.
     /// </summary>
-    private async Task<Project> CreateProjectAsync()
+    /// <param name="raises">
+    /// The event the insert should carry, or <c>null</c> for the tests that only
+    /// care about the project and its history.
+    /// </param>
+    private async Task<Project> CreateProjectAsync(Func<Project, OutboxEvent>? raises = null)
     {
         var project = new Project
         {
@@ -178,16 +183,166 @@ public class ProjectRepositoryDatabaseTests
         // that used to fail rather than a coin toss.
         creation.Id = CreationId;
 
-        await _fixture.Repository.InsertAsync(project, creation);
+        await _fixture.Repository.InsertAsync(
+            project,
+            creation,
+            raises is null ? [] : [raises(project)]);
 
         return project;
+    }
+
+    // ------------------------------------------------- the outbox (US-22) ----
+
+    [Fact]
+    public async Task Stores_the_events_a_project_raises_with_the_project()
+    {
+        // The first US-22 acceptance bullet, against the real engine: the event
+        // and the row it announces commit together. A stub cannot show this —
+        // it has no transaction to roll back.
+        var project = await CreateProjectAsync(ProjectEvents.Created);
+
+        var stored = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+
+        Assert.Equal(ProjectEventTypes.ProjectCreated, stored.EventType);
+        Assert.Equal(project.Id, stored.ProjectId);
+        Assert.False(stored.IsPublished);
+        Assert.Equal(0, stored.AttemptCount);
+        Assert.Null(stored.LastError);
+    }
+
+    [Fact]
+    public async Task Keeps_the_envelope_byte_for_byte_through_the_column()
+    {
+        // LONGTEXT and not MySQL's JSON type, which would normalise the value
+        // and reorder its keys — so a retry would put different bytes on the
+        // topic than the first attempt did, under a different eventId.
+        var project = await CreateProjectAsync(ProjectEvents.Created);
+        var raised = ProjectEvents.Created(project);
+
+        var stored = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+
+        // The ids differ — each call mints its own — so compare the shape the
+        // column has to preserve rather than the whole string.
+        Assert.StartsWith("{\"eventType\":\"ProjectCreated\",\"eventId\":", stored.Envelope, StringComparison.Ordinal);
+        Assert.Equal(raised.Envelope.Length, stored.Envelope.Length);
+        Assert.Contains("\"occurredAt\":", stored.Envelope, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Stores_the_events_a_status_change_raises_with_the_move()
+    {
+        var project = await CreateProjectAsync();
+
+        await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+
+        var stored = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+        Assert.Equal(ProjectEventTypes.ProjectUpdated, stored.EventType);
+    }
+
+    [Fact]
+    public async Task Numbers_two_events_from_one_move_in_the_order_they_go_on_the_topic()
+    {
+        // Both rows are written in one transaction and share occurred_at to the
+        // second, so only sequence_number can tell them apart. The approval must
+        // not overtake the update that carried the same move.
+        var project = await CreateProjectAsync();
+
+        await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+        await MoveAsync(project, SecondMoveId, ProjectStatus.Designing, ProjectStatus.DesignApproved);
+
+        var stored = await _fixture.Outbox.ListForProjectAsync(project.Id);
+
+        Assert.Equal(
+            [
+                ProjectEventTypes.ProjectUpdated,
+                ProjectEventTypes.ProjectUpdated,
+                ProjectEventTypes.ProjectApproved
+            ],
+            stored.Select(e => e.EventType));
+
+        Assert.All(stored, e => Assert.Equal(SameSecond, e.OccurredAt));
+        Assert.Equal(stored.Select(e => e.SequenceNumber).Order(), stored.Select(e => e.SequenceNumber));
+    }
+
+    [Fact]
+    public async Task A_move_that_lost_a_race_leaves_no_event_behind()
+    {
+        // The guarded UPDATE matched nothing, so the whole transaction rolled
+        // back — the event included. Announcing a move that did not happen is
+        // the failure this ordering exists to prevent.
+        var project = await CreateProjectAsync();
+
+        await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+
+        var before = (await _fixture.Outbox.ListForProjectAsync(project.Id)).Count;
+
+        // Stale: the project has already left Pending.
+        var stale = Change(project, SecondMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+        Assert.False(
+            await _fixture.Repository.UpdateStatusAsync(
+                stale, SameSecond, ProjectEvents.ForStatusChange(project, stale)));
+
+        Assert.Equal(before, (await _fixture.Outbox.ListForProjectAsync(project.Id)).Count);
+    }
+
+    [Fact]
+    public async Task Marks_an_event_delivered_and_clears_what_an_earlier_attempt_recorded()
+    {
+        var project = await CreateProjectAsync(ProjectEvents.Created);
+        var stored = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+
+        await _fixture.Outbox.MarkFailedAsync(stored.Id, "Local: Message timed out");
+
+        var failed = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+        Assert.False(failed.IsPublished);
+        Assert.Equal(1, failed.AttemptCount);
+        Assert.Equal("Local: Message timed out", failed.LastError);
+
+        await _fixture.Outbox.MarkPublishedAsync(stored.Id, SameSecond);
+
+        var delivered = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+        Assert.True(delivered.IsPublished);
+        Assert.Equal(2, delivered.AttemptCount);
+        // Cleared: it described an attempt that has since been superseded.
+        Assert.Null(delivered.LastError);
+    }
+
+    [Fact]
+    public async Task Offers_only_the_events_still_waiting_to_be_sent()
+    {
+        // What the dispatcher asks for. A delivered event must not come back.
+        var project = await CreateProjectAsync(ProjectEvents.Created);
+        var stored = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+
+        Assert.Contains(await _fixture.Outbox.ListPendingAsync(100), e => e.Id == stored.Id);
+
+        await _fixture.Outbox.MarkPublishedAsync(stored.Id, SameSecond);
+
+        Assert.DoesNotContain(await _fixture.Outbox.ListPendingAsync(100), e => e.Id == stored.Id);
     }
 
     private async Task MoveAsync(Project project, Guid changeId, ProjectStatus from, ProjectStatus to)
     {
         Assert.True(
-            await _fixture.Repository.UpdateStatusAsync(Change(project, changeId, from, to), SameSecond),
+            await MoveWithEventsAsync(project, changeId, from, to),
             $"The move from {from} to {to} should have been accepted.");
+    }
+
+    /// <summary>
+    /// Moves the project, carrying the events the move actually raises rather
+    /// than an empty list — so the outbox rows under test are the ones the
+    /// controller would have written.
+    /// </summary>
+    private async Task<bool> MoveWithEventsAsync(
+        Project project,
+        Guid changeId,
+        ProjectStatus from,
+        ProjectStatus to)
+    {
+        var change = Change(project, changeId, from, to);
+
+        return await _fixture.Repository.UpdateStatusAsync(
+            change, SameSecond, ProjectEvents.ForStatusChange(project, change));
     }
 
     private static ProjectStatusChange Change(Project project, Guid changeId, ProjectStatus from, ProjectStatus to) => new()

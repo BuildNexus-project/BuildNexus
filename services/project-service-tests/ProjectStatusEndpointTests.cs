@@ -346,7 +346,7 @@ public class ProjectStatusEndpointTests
 
         var controller = new ProjectsController(
             repository,
-            new NoOpEventPublisher(),
+            new FakeOutboxRepository(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -430,6 +430,9 @@ public class ProjectStatusEndpointTests
 
         public ProjectStatusChange? UpdatedWith { get; private set; }
 
+        /// <summary>The events the action asked to enqueue with the move.</summary>
+        public IReadOnlyList<OutboxEvent> RaisedEvents { get; private set; } = [];
+
         /// <summary>
         /// Set false to stand in for the conditional UPDATE matching no row —
         /// somebody moved the project between the read and the write.
@@ -442,7 +445,10 @@ public class ProjectStatusEndpointTests
             _history.AddRange(history);
         }
 
-        public Task InsertAsync(Project project, ProjectStatusChange creation)
+        public Task InsertAsync(
+            Project project,
+            ProjectStatusChange creation,
+            IReadOnlyList<OutboxEvent> outboxEvents)
         {
             _projects.Add(project);
             _history.Add(creation);
@@ -482,14 +488,22 @@ public class ProjectStatusEndpointTests
                     .ThenBy(change => change.Id)
             ]);
 
-        public Task<bool> UpdateStatusAsync(ProjectStatusChange change, DateTime updatedAtUtc)
+        public Task<bool> UpdateStatusAsync(
+            ProjectStatusChange change,
+            DateTime updatedAtUtc,
+            IReadOnlyList<OutboxEvent> outboxEvents)
         {
             if (!UpdateSucceeds)
             {
+                // Nothing is recorded, and that includes the events: the real
+                // repository enqueues them inside the transaction the guarded
+                // UPDATE just refused, so the loser of a concurrent move
+                // announces nothing.
                 return Task.FromResult(false);
             }
 
             UpdatedWith = change;
+            RaisedEvents = outboxEvents;
             _history.Add(change);
 
             var project = _projects.Single(candidate => candidate.Id == change.ProjectId);
@@ -500,14 +514,4 @@ public class ProjectStatusEndpointTests
         }
     }
 
-    /// <summary>
-    /// US-06 publishes nothing — no story has named an event for a status
-    /// change — so this exists only to satisfy the constructor and fails loudly
-    /// if that ever stops being true by accident.
-    /// </summary>
-    private sealed class NoOpEventPublisher : IProjectEventPublisher
-    {
-        public Task PublishProjectCreatedAsync(Project project, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("US-06 publishes no events.");
-    }
 }
