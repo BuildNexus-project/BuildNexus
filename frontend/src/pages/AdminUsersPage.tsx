@@ -34,7 +34,8 @@ export function AdminUsersPage() {
     fetchAllUsers(authFetch)
       .then((loaded) => {
         if (!cancelled) {
-          setUsers(loaded)
+          // The first page only, until the paging and filtering controls land.
+          setUsers(loaded.items)
         }
       })
       .catch((error: unknown) => {
