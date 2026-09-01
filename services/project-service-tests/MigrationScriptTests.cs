@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 using BuildNexus.ProjectService.Data;
+using BuildNexus.ProjectService.Messaging;
 using BuildNexus.ProjectService.Models;
 
 namespace BuildNexus.ProjectService.Tests;
@@ -29,6 +30,7 @@ public class MigrationScriptTests
     [InlineData("001_create_projects_table.sql")]
     [InlineData("002_add_project_status_history.sql")]
     [InlineData("003_add_status_history_sequence.sql")]
+    [InlineData("004_create_project_outbox.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));
@@ -167,6 +169,68 @@ public class MigrationScriptTests
 
         Assert.Contains("ROW_NUMBER() OVER", sql, StringComparison.Ordinal);
         Assert.Contains("ORDER BY changed_at", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_outbox_records_what_an_event_needs_to_be_sent_and_chased()
+    {
+        // An outbox row has to carry the message itself, whether it got out, and
+        // what went wrong if it did not — without all three it is a log rather
+        // than a queue.
+        var sql = StripComments(ReadScript(Script("004_create_project_outbox.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS project_outbox_events", sql, StringComparison.Ordinal);
+
+        foreach (var column in (string[])["event_type", "envelope", "occurred_at", "published_at", "attempt_count", "last_error"])
+        {
+            Assert.Contains(column, sql, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void The_outbox_is_dispatched_in_an_order_the_clock_cannot_tie()
+    {
+        // occurred_at is a whole-second DATETIME, and a status change raises two
+        // events sharing it exactly — so ordering on it would let the approval
+        // reach the topic before the update that carried the same move. The same
+        // lesson 003 learned about the status history, applied before it bit.
+        var sql = StripComments(ReadScript(Script("004_create_project_outbox.sql")));
+
+        Assert.Contains("sequence_number", sql, StringComparison.Ordinal);
+        Assert.Contains("AUTO_INCREMENT", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_envelope_is_stored_as_text_rather_than_as_json()
+    {
+        // MySQL's JSON type normalises what it stores and returns its keys in
+        // its own order, so a retry would put different bytes on the topic than
+        // the first attempt did — and the envelope's four properties are an
+        // agreed shape.
+        var sql = StripComments(ReadScript(Script("004_create_project_outbox.sql")));
+
+        Assert.Contains("envelope        LONGTEXT", sql, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"(?i)envelope\s+JSON", sql);
+    }
+
+    [Fact]
+    public void Every_event_the_service_can_publish_is_allowed_by_the_schema()
+    {
+        // Written over ProjectEventTypes rather than over today's three names:
+        // an event added in a later story without a matching migration would
+        // otherwise only surface as a constraint violation the first time
+        // somebody actually raised it — inside the transaction of the state
+        // change that raised it, taking the state change down with it.
+        var sql = ReadScript(Script("004_create_project_outbox.sql"));
+
+        var missing = ProjectEventTypes.All
+            .Where(eventType => !sql.Contains($"'{eventType}'", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "These event types exist in ProjectEventTypes but no migration allows them in the database: "
+            + string.Join(", ", missing));
     }
 
     private static string Script(string fileName) =>
