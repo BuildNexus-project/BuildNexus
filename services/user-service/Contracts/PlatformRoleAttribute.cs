@@ -10,12 +10,23 @@ namespace BuildNexus.UserService.Contracts;
 /// <remarks>
 /// Deliberately stricter than <see cref="EnumDataTypeAttribute"/>, which would
 /// also accept numeric values such as "3" and any undefined number.
+/// <para>
+/// An absent value passes: whether a role has to be supplied is
+/// <see cref="RequiredAttribute"/>'s question, not this one's. That is what
+/// lets the same attribute guard a required role on a registration and an
+/// optional one on a directory filter.
+/// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
 public class PlatformRoleAttribute : ValidationAttribute
 {
     public override bool IsValid(object? value)
     {
+        if (value is null)
+        {
+            return true;
+        }
+
         if (value is not string role || string.IsNullOrWhiteSpace(role))
         {
             return false;

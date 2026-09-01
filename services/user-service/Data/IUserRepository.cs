@@ -20,11 +20,18 @@ public interface IUserRepository
     Task<bool> AdminExistsAsync();
 
     /// <summary>
-    /// Returns every account, active or not, ordered by name — the Admin
+    /// Returns one page of accounts, active or not, ordered by name — the Admin
     /// directory, which is the one view that must show deactivated accounts too.
     /// </summary>
-    /// <remarks>The password hash is not read: a listing has no use for it.</remarks>
-    Task<IReadOnlyList<User>> ListAllAsync();
+    /// <param name="role">Narrows the page to a single role; <c>null</c> lists every role.</param>
+    /// <param name="page">1-based page number.</param>
+    /// <param name="pageSize">Rows per page.</param>
+    /// <remarks>
+    /// The total counts the accounts matching <paramref name="role"/>, not the
+    /// table, so the caller can tell a last page from a full one. The password
+    /// hash is not read: a listing has no use for it.
+    /// </remarks>
+    Task<PagedResult<User>> ListPageAsync(UserRole? role, int page, int pageSize);
 
     /// <summary>
     /// Returns the active accounts holding any of these roles, ordered by name.
@@ -45,6 +52,23 @@ public interface IUserRepository
     /// </summary>
     /// <returns><c>false</c> when no row with this id exists.</returns>
     Task<bool> UpdateProfileAsync(User user);
+
+    /// <summary>
+    /// Writes the fields only an administrator may change — full name, email and
+    /// role. The password hash and the active flag are never touched.
+    /// </summary>
+    /// <returns><c>false</c> when no row with this id exists.</returns>
+    /// <exception cref="DuplicateEmailException">
+    /// The new email already belongs to another account.
+    /// </exception>
+    Task<bool> UpdateAccountAsync(User user);
+
+    /// <summary>
+    /// Turns an account's access on or off. Deactivating is what stops the
+    /// holder signing in; nothing else about the account changes.
+    /// </summary>
+    /// <returns><c>false</c> when no row with this id exists.</returns>
+    Task<bool> SetActiveAsync(Guid userId, bool isActive, DateTime updatedAtUtc);
 
     /// <summary>
     /// Replaces a user's stored password hash, which is what retires the old

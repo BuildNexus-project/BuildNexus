@@ -27,6 +27,7 @@ public class MigrationScriptTests
     [InlineData("001_create_users_table.sql")]
     [InlineData("002_add_users_contact_details.sql")]
     [InlineData("003_create_password_reset_tokens_table.sql")]
+    [InlineData("004_index_users_by_role.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));

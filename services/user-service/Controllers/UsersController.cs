@@ -135,25 +135,40 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// Lists every account on the platform. Allowed roles: Admin.
+    /// Lists the accounts on the platform, a page at a time and optionally
+    /// narrowed to one role. Allowed roles: Admin.
     /// </summary>
     /// <remarks>
     /// Deactivated accounts are included — an administrator has to be able to
-    /// see them.
+    /// see them, and reinstating one starts with finding it.
+    /// <para>
+    /// Paged at the database rather than here: a directory that grows past a few
+    /// hundred accounts should not be read in full to show twenty of them.
+    /// A page past the end is a valid question with an empty answer, not a 404 —
+    /// the total in the response is what tells the caller they overshot.
+    /// </para>
     /// </remarks>
-    /// <response code="200">Every account, ordered by name.</response>
+    /// <response code="200">The requested page, ordered by name, with the total beside it.</response>
+    /// <response code="400">The page, page size or role filter was not usable.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid.</response>
     /// <response code="403">The caller is authenticated but is not an Admin.</response>
     [HttpGet]
     [Authorize(Roles = PlatformRoles.Admin)]
-    [ProducesResponseType(typeof(IReadOnlyList<UserSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PagedResponse<UserSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] UserListQuery query)
     {
-        var users = await _userRepository.ListAllAsync();
+        var page = await _userRepository.ListPageAsync(query.ParsedRole(), query.Page, query.PageSize);
 
-        return Ok(users.Select(ToUserSummary).ToList());
+        return Ok(new PagedResponse<UserSummaryResponse>
+        {
+            Items = page.Items.Select(ToUserSummary).ToList(),
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = page.TotalCount
+        });
     }
 
     /// <summary>

@@ -218,12 +218,20 @@ public class UsersControllerProfileTests
         public Task<bool> AdminExistsAsync() => Task.FromResult(true);
 
         // Listing is not what these tests are about — see RoleAccessTests.
-        public Task<IReadOnlyList<User>> ListAllAsync() => Task.FromResult<IReadOnlyList<User>>([]);
+        public Task<PagedResult<User>> ListPageAsync(UserRole? role, int page, int pageSize) =>
+            Task.FromResult(new PagedResult<User>());
 
         public Task<IReadOnlyList<User>> ListActiveByRolesAsync(IReadOnlyCollection<UserRole> roles) =>
             Task.FromResult<IReadOnlyList<User>>([]);
 
         public Task InsertAsync(User user) => Task.CompletedTask;
+
+        // Neither is reachable from the profile endpoint: an administrator edits
+        // another account through the admin endpoints — see AdminUserManagementTests.
+        public Task<bool> UpdateAccountAsync(User user) => Task.FromResult(true);
+
+        public Task<bool> SetActiveAsync(Guid userId, bool isActive, DateTime updatedAtUtc) =>
+            Task.FromResult(true);
 
         // The password is not editable through the profile endpoint — see
         // AuthControllerPasswordResetTests for what does move it.
