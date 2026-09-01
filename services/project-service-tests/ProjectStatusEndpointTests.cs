@@ -346,6 +346,7 @@ public class ProjectStatusEndpointTests
 
         var controller = new ProjectsController(
             repository,
+            new FakeOutboxRepository(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -429,6 +430,9 @@ public class ProjectStatusEndpointTests
 
         public ProjectStatusChange? UpdatedWith { get; private set; }
 
+        /// <summary>The events the action asked to enqueue with the move.</summary>
+        public IReadOnlyList<OutboxEvent> RaisedEvents { get; private set; } = [];
+
         /// <summary>
         /// Set false to stand in for the conditional UPDATE matching no row —
         /// somebody moved the project between the read and the write.
@@ -491,10 +495,15 @@ public class ProjectStatusEndpointTests
         {
             if (!UpdateSucceeds)
             {
+                // Nothing is recorded, and that includes the events: the real
+                // repository enqueues them inside the transaction the guarded
+                // UPDATE just refused, so the loser of a concurrent move
+                // announces nothing.
                 return Task.FromResult(false);
             }
 
             UpdatedWith = change;
+            RaisedEvents = outboxEvents;
             _history.Add(change);
 
             var project = _projects.Single(candidate => candidate.Id == change.ProjectId);

@@ -197,6 +197,7 @@ public class ProjectsControllerTests
 
         var controller = new ProjectsController(
             repository,
+            new FakeOutboxRepository(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext

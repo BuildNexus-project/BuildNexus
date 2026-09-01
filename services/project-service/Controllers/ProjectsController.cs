@@ -29,13 +29,16 @@ namespace BuildNexus.ProjectService.Controllers;
 public class ProjectsController : ControllerBase
 {
     private readonly IProjectRepository _projectRepository;
+    private readonly IOutboxRepository _outboxRepository;
     private readonly ILogger<ProjectsController> _logger;
 
     public ProjectsController(
         IProjectRepository projectRepository,
+        IOutboxRepository outboxRepository,
         ILogger<ProjectsController> logger)
     {
         _projectRepository = projectRepository;
+        _outboxRepository = outboxRepository;
         _logger = logger;
     }
 
@@ -282,7 +285,13 @@ public class ProjectsController : ControllerBase
             ChangedAt = now
         };
 
-        if (!await _projectRepository.UpdateStatusAsync(change, now, []))
+        // The events this move announces, enqueued in the same transaction as the
+        // move itself (US-22). Built before the write because that is what the
+        // write is given; their contents come from the change rather than from
+        // the project, which still holds the old status at this point.
+        var raised = ProjectEvents.ForStatusChange(project, change);
+
+        if (!await _projectRepository.UpdateStatusAsync(change, now, raised))
         {
             // The guard in the UPDATE found a status other than the one we read
             // and validated against, so somebody moved the project in between
@@ -302,12 +311,14 @@ public class ProjectsController : ControllerBase
         }
 
         _logger.LogInformation(
-            "Project {ProjectId} moved from {FromStatus} to {ToStatus} by {UserId} in role {Role}.",
+            "Project {ProjectId} moved from {FromStatus} to {ToStatus} by {UserId} in role {Role}, "
+            + "raising {EventTypes}.",
             project.Id,
             change.FromStatus,
             change.ToStatus,
             userId,
-            change.ChangedByRole);
+            change.ChangedByRole,
+            string.Join(" and ", raised.Select(e => e.EventType)));
 
         // Answer with the project as it now stands rather than as it was read,
         // so the screen that made the change does not have to fetch it again.
@@ -317,6 +328,62 @@ public class ProjectsController : ControllerBase
         var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
 
         return Ok(ProjectDetailResponse.From(project, history));
+    }
+
+    /// <summary>
+    /// The events this service has raised for one project, and whether each one
+    /// reached the message bus. Allowed roles: Admin.
+    /// </summary>
+    /// <remarks>
+    /// Admin only, and narrower than every other read here on purpose. This is
+    /// not project information — it is the integration answering for itself:
+    /// delivery state, attempt counts, and broker error text that names our own
+    /// infrastructure. A Client watching their build has no use for it, and the
+    /// staff working the project cannot act on a failed publish either; the
+    /// person who can is the one administering the platform.
+    /// <para>
+    /// It exists because a publish no longer happens inside the request that
+    /// caused it (US-22). That is what makes the publish reliable, but it also
+    /// means "did the other services get told?" stopped being answerable from
+    /// the response to the change — and an outbox nobody can see is a queue that
+    /// silently stops draining. This is the view that makes the first acceptance
+    /// bullet observable rather than merely intended.
+    /// </para>
+    /// <para>
+    /// Oldest first, matching the order they were raised and the order they go
+    /// on the topic.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The project's events, oldest first. Empty for a project raised before the outbox existed.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller holds a valid token but is not an Admin.</response>
+    /// <response code="404">No project has that id.</response>
+    [HttpGet("{id:guid}/events")]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(IReadOnlyList<ProjectEventResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetProjectEvents(Guid id)
+    {
+        if (!TryGetCallerId(out _))
+        {
+            return Unauthorized();
+        }
+
+        // Read the project first so an id that does not exist is a 404 rather
+        // than an empty list — the two mean different things, and an empty list
+        // is a real answer for a project created before the outbox existed.
+        if (await _projectRepository.GetByIdAsync(id) is null)
+        {
+            return ProjectNotFound(id);
+        }
+
+        // No per-project check beyond that: the role attribute already limited
+        // this to Admin, and an Admin is party to every project.
+        var events = await _outboxRepository.ListForProjectAsync(id);
+
+        return Ok(events.Select(ProjectEventResponse.From).ToList());
     }
 
     /// <summary>
