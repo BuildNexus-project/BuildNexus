@@ -176,7 +176,14 @@ export function AdminUsersPage() {
                 }}
               >
                 <SelectTrigger id="roleFilter" className="w-full">
-                  <SelectValue />
+                  {/* Formatted here, or the trigger shows the wire value —
+                      "all", "ProjectManager" — until the popup has been
+                      opened and the item labels registered. */}
+                  <SelectValue>
+                    {(value: RoleFilter) =>
+                      value === ALL_ROLES ? 'All roles' : ROLE_LABELS[value]
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ALL_ROLES}>All roles</SelectItem>
@@ -498,7 +505,11 @@ function EditUserDialog({
               render={({ field }) => (
                 <Select value={field.value ?? null} onValueChange={field.onChange} disabled={isSelf}>
                   <SelectTrigger id="role" aria-invalid={Boolean(errors.role)} className="w-full">
-                    <SelectValue placeholder="Select a role" />
+                    {/* As on the filter: the label, not the wire value the
+                        account actually holds. */}
+                    <SelectValue placeholder="Select a role">
+                      {(value: Role | null) => (value ? ROLE_LABELS[value] : 'Select a role')}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {ROLES.map((role) => (
