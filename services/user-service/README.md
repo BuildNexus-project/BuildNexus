@@ -185,7 +185,15 @@ A deployed environment must set a real host and never runs Mailpit; supply
 
 The service does not currently revoke access tokens already issued to the
 account. A reset invalidates the password, as the AC requires; a token minted
-before it keeps working until its own `exp` passes, at most an hour.
+before it keeps working until its own `exp` passes. US-37's account
+deactivation carries the identical gap: it blocks login, but a token issued
+before the deactivation stays valid until it expires.
+
+`Jwt:AccessTokenLifetimeMinutes` was lowered from 60 to 20 as a deliberate,
+partial mitigation for both — it bounds the exposure window to 20 minutes, it
+does not eliminate the gap. The full fix (a revocation list, or token
+versioning checked per request) remains open, at the same undecided priority
+this limitation has carried since US-04.
 
 ## Role-based access control (US-03)
 

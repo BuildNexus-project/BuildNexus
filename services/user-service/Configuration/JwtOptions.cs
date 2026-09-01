@@ -22,5 +22,5 @@ public class JwtOptions
     public string SigningKey { get; set; } = string.Empty;
 
     /// <summary>How long an issued token stays valid.</summary>
-    public int AccessTokenLifetimeMinutes { get; set; } = 60;
+    public int AccessTokenLifetimeMinutes { get; set; } = 20;
 }

@@ -103,7 +103,7 @@ services:
       # Not part of the shared convention: the lifetime is baked into the token's
       # exp claim when the User Service issues it, and every other service simply
       # checks whether exp has passed. User Service only.
-      Jwt__AccessTokenLifetimeMinutes: "60"
+      Jwt__AccessTokenLifetimeMinutes: "20"
       # US-04. The emailed reset link points at the React app, not at this
       # service, so it is built from the same frontend origin the gateway
       # allows through CORS.
