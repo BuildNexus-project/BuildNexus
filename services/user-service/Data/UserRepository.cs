@@ -79,15 +79,46 @@ public class UserRepository : IUserRepository
         return Convert.ToInt64(result) == 1;
     }
 
-    public async Task<IReadOnlyList<User>> ListAllAsync()
+    public async Task<PagedResult<User>> ListPageAsync(UserRole? role, int page, int pageSize)
     {
-        const string sql = $"SELECT {SelectListColumns} FROM users ORDER BY full_name;";
+        // One optional filter, applied identically to the page and to the count
+        // so the total can never describe a different set than the rows.
+        var filter = role is null ? string.Empty : " WHERE role = @role";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
 
-        return await ReadListAsync(command);
+        // Counted first, on the same connection: a caller asking for a page past
+        // the end still needs to be told how many rows there really are.
+        await using var countCommand = connection.CreateCommand();
+        countCommand.CommandText = $"SELECT COUNT(*) FROM users{filter};";
+
+        if (role is not null)
+        {
+            AddParameter(countCommand, "@role", role.Value.ToString());
+        }
+
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
+
+        await using var pageCommand = connection.CreateCommand();
+        // LIMIT and OFFSET are bound like every other value. The controller has
+        // already clamped them, but a number pasted into SQL is a number pasted
+        // into SQL, and this repository does not do that.
+        pageCommand.CommandText =
+            $"SELECT {SelectListColumns} FROM users{filter} ORDER BY full_name LIMIT @take OFFSET @skip;";
+
+        if (role is not null)
+        {
+            AddParameter(pageCommand, "@role", role.Value.ToString());
+        }
+
+        AddParameter(pageCommand, "@take", pageSize);
+        AddParameter(pageCommand, "@skip", (page - 1) * pageSize);
+
+        return new PagedResult<User>
+        {
+            Items = await ReadListAsync(pageCommand),
+            TotalCount = totalCount
+        };
     }
 
     public async Task<IReadOnlyList<User>> ListActiveByRolesAsync(IReadOnlyCollection<UserRole> roles)
@@ -173,6 +204,64 @@ public class UserRepository : IUserRepository
         AddParameter(command, "@contactAddress", user.ContactAddress);
         AddParameter(command, "@updatedAt", user.UpdatedAt);
         AddParameter(command, "@id", user.Id);
+
+        // Zero rows means the account was removed between the read and the write.
+        return await command.ExecuteNonQueryAsync() > 0;
+    }
+
+    public async Task<bool> UpdateAccountAsync(User user)
+    {
+        // The administrator's counterpart to UpdateProfileAsync, and just as
+        // narrow from the other side: it can move name, email and role, and it
+        // lists neither password_hash nor is_active, so no request reaching this
+        // layer can change a password or reinstate an account through it.
+        const string sql = @"
+            UPDATE users
+            SET full_name  = @fullName,
+                email      = @email,
+                role       = @role,
+                updated_at = @updatedAt
+            WHERE id = @id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@fullName", user.FullName);
+        AddParameter(command, "@email", user.Email);
+        AddParameter(command, "@role", user.Role.ToString());
+        AddParameter(command, "@updatedAt", user.UpdatedAt);
+        AddParameter(command, "@id", user.Id);
+
+        try
+        {
+            // Zero rows means the account was removed between the read and the write.
+            return await command.ExecuteNonQueryAsync() > 0;
+        }
+        catch (MySqlException ex) when (ex.ErrorCode == MySqlErrorCode.DuplicateKeyEntry)
+        {
+            // The unique index on email is the final word on duplicates here too,
+            // even if two administrators move two accounts onto the same address
+            // at the same moment.
+            throw new DuplicateEmailException(user.Email);
+        }
+    }
+
+    public async Task<bool> SetActiveAsync(Guid userId, bool isActive, DateTime updatedAtUtc)
+    {
+        // Narrower still: this statement touches one flag. Deactivating must not
+        // be able to disturb a name, an email or a role on its way past.
+        const string sql = @"
+            UPDATE users
+            SET is_active  = @isActive,
+                updated_at = @updatedAt
+            WHERE id = @id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@isActive", isActive);
+        AddParameter(command, "@updatedAt", updatedAtUtc);
+        AddParameter(command, "@id", userId);
 
         // Zero rows means the account was removed between the read and the write.
         return await command.ExecuteNonQueryAsync() > 0;

@@ -430,7 +430,8 @@ public class AuthControllerPasswordResetTests
 
         public Task<bool> AdminExistsAsync() => Task.FromResult(true);
 
-        public Task<IReadOnlyList<User>> ListAllAsync() => Task.FromResult<IReadOnlyList<User>>([]);
+        public Task<PagedResult<User>> ListPageAsync(UserRole? role, int page, int pageSize) =>
+            Task.FromResult(new PagedResult<User>());
 
         public Task<IReadOnlyList<User>> ListActiveByRolesAsync(IReadOnlyCollection<UserRole> roles) =>
             Task.FromResult<IReadOnlyList<User>>([]);
@@ -438,6 +439,11 @@ public class AuthControllerPasswordResetTests
         public Task InsertAsync(User user) => Task.CompletedTask;
 
         public Task<bool> UpdateProfileAsync(User user) => Task.FromResult(true);
+
+        public Task<bool> UpdateAccountAsync(User user) => Task.FromResult(true);
+
+        public Task<bool> SetActiveAsync(Guid userId, bool isActive, DateTime updatedAtUtc) =>
+            Task.FromResult(true);
     }
 
     /// <summary>

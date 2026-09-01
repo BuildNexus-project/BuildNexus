@@ -78,6 +78,12 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Architect, PlatformRoles.ProjectManager], RolesFor("GetProjectStaffDirectory"));
         Assert.Equal([PlatformRoles.Admin], RolesFor("GetAll"));
         Assert.Equal([PlatformRoles.Admin], RolesFor("GetById"));
+
+        // US-37: administering an account is Admin only, on the way in as well
+        // as on the way out. Editing someone's role is the authorisation
+        // boundary itself, so nothing below Admin may reach either of these.
+        Assert.Equal([PlatformRoles.Admin], RolesFor("UpdateUser"));
+        Assert.Equal([PlatformRoles.Admin], RolesFor("SetUserActive"));
     }
 
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>

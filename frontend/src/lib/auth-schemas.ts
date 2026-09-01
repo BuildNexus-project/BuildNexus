@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { SELECTABLE_ROLES } from './roles'
+import { ROLES, SELECTABLE_ROLES } from './roles'
 
 /**
  * The rules a password has to meet, wherever one is chosen — signing up or
@@ -110,3 +110,28 @@ export const profileSchema = z.object({
 })
 
 export type ProfileValues = z.infer<typeof profileSchema>
+
+/**
+ * Mirrors the User Service's own rules for an administrator's edit of somebody
+ * else's account, so most mistakes are caught before a request is made. The
+ * service revalidates everything.
+ *
+ * The name rules are the profile form's, since it is the same column. Email and
+ * role are here rather than read-only as they are on the profile form — that is
+ * the whole difference between the two, and the reason the profile form tells
+ * the user to ask an administrator.
+ *
+ * `ROLES` and not `SELECTABLE_ROLES`: an administrator may grant Admin, and this
+ * is the only path to a role self-service registration refuses.
+ */
+export const adminUserSchema = z.object({
+  fullName: z
+    .string()
+    .trim()
+    .min(2, 'Full name must be at least 2 characters.')
+    .max(150, 'Full name must not exceed 150 characters.'),
+  email: emailSchema,
+  role: z.enum(ROLES, 'Choose a role for this account.'),
+})
+
+export type AdminUserValues = z.infer<typeof adminUserSchema>

@@ -135,25 +135,40 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// Lists every account on the platform. Allowed roles: Admin.
+    /// Lists the accounts on the platform, a page at a time and optionally
+    /// narrowed to one role. Allowed roles: Admin.
     /// </summary>
     /// <remarks>
     /// Deactivated accounts are included — an administrator has to be able to
-    /// see them.
+    /// see them, and reinstating one starts with finding it.
+    /// <para>
+    /// Paged at the database rather than here: a directory that grows past a few
+    /// hundred accounts should not be read in full to show twenty of them.
+    /// A page past the end is a valid question with an empty answer, not a 404 —
+    /// the total in the response is what tells the caller they overshot.
+    /// </para>
     /// </remarks>
-    /// <response code="200">Every account, ordered by name.</response>
+    /// <response code="200">The requested page, ordered by name, with the total beside it.</response>
+    /// <response code="400">The page, page size or role filter was not usable.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid.</response>
     /// <response code="403">The caller is authenticated but is not an Admin.</response>
     [HttpGet]
     [Authorize(Roles = PlatformRoles.Admin)]
-    [ProducesResponseType(typeof(IReadOnlyList<UserSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PagedResponse<UserSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] UserListQuery query)
     {
-        var users = await _userRepository.ListAllAsync();
+        var page = await _userRepository.ListPageAsync(query.ParsedRole(), query.Page, query.PageSize);
 
-        return Ok(users.Select(ToUserSummary).ToList());
+        return Ok(new PagedResponse<UserSummaryResponse>
+        {
+            Items = page.Items.Select(ToUserSummary).ToList(),
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = page.TotalCount
+        });
     }
 
     /// <summary>
@@ -177,6 +192,169 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
+    /// Replaces another account's name, email and role. Allowed roles: Admin.
+    /// </summary>
+    /// <remarks>
+    /// The two fields a user may not change on themselves — the email they sign
+    /// in with and the role that decides what they may do — are changed here,
+    /// which is what makes this the answer to the "ask an administrator" the
+    /// profile form gives them.
+    /// <para>
+    /// An Admin may not change their own role. Only an Admin can reach this
+    /// endpoint, so self-demotion is the one edit that could leave the platform
+    /// with nobody able to undo it.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The account as it now stands.</response>
+    /// <response code="400">The payload failed validation, or the caller tried to change their own role.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is authenticated but is not an Admin.</response>
+    /// <response code="404">No user with this id.</response>
+    /// <response code="409">The email already belongs to another account.</response>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(UserSummaryResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> UpdateUser(Guid id, [FromBody] AdminUpdateUserRequest request)
+    {
+        if (!TryGetCallerId(out var callerId))
+        {
+            return Unauthorized();
+        }
+
+        // Read first, so the response can carry the fields this endpoint does
+        // not touch and so the role can be compared against what is stored.
+        var user = await _userRepository.GetByIdAsync(id);
+
+        if (user is null)
+        {
+            return NotFound();
+        }
+
+        var role = Enum.Parse<UserRole>(request.Role, ignoreCase: true);
+
+        if (id == callerId && role != user.Role)
+        {
+            return SelfInflicted(
+                "cannot change your own role",
+                "You cannot change your own role. Ask another administrator to do it.",
+                nameof(request.Role));
+        }
+
+        // Stored and compared in the one canonical form every other endpoint
+        // uses, so "Ada@Example.com" cannot be moved onto an address that
+        // already exists as "ada@example.com".
+        var email = NormaliseEmail(request.Email);
+
+        // Checked ahead of the write so the usual case answers with a clear
+        // conflict rather than an exception; the unique index is still the final
+        // word, and the catch below is what makes that race safe.
+        if (!string.Equals(email, user.Email, StringComparison.Ordinal)
+            && await _userRepository.EmailExistsAsync(email))
+        {
+            return EmailAlreadyRegistered(email);
+        }
+
+        user.FullName = request.FullName.Trim();
+        user.Email = email;
+        user.Role = role;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        try
+        {
+            if (!await _userRepository.UpdateAccountAsync(user))
+            {
+                // The account was removed between the read and the write.
+                return NotFound();
+            }
+        }
+        catch (DuplicateEmailException)
+        {
+            // Two administrators moved two accounts onto the same address at
+            // once; the unique index rejected the loser.
+            return EmailAlreadyRegistered(email);
+        }
+
+        _logger.LogInformation(
+            "Admin {AdminId} updated account {UserId}; role is now {Role}.", callerId, user.Id, user.Role);
+
+        return Ok(ToUserSummary(user));
+    }
+
+    /// <summary>
+    /// Withdraws or restores an account's access. Allowed roles: Admin.
+    /// </summary>
+    /// <remarks>
+    /// Deactivating is what stops the holder signing in: login refuses an
+    /// inactive account, and so does a password reset, so a link cannot be used
+    /// to undo this. Nothing the account has already authored is affected.
+    /// <para>
+    /// An Admin may not deactivate their own account. Only an Admin can reach
+    /// this endpoint, so that one rule is what guarantees an active
+    /// administrator always remains — the caller.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The account as it now stands.</response>
+    /// <response code="400">The flag was missing, or the caller tried to deactivate themselves.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is authenticated but is not an Admin.</response>
+    /// <response code="404">No user with this id.</response>
+    [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(UserSummaryResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetUserActive(Guid id, [FromBody] SetUserActiveRequest request)
+    {
+        if (!TryGetCallerId(out var callerId))
+        {
+            return Unauthorized();
+        }
+
+        // Validation has already refused an absent flag.
+        var isActive = request.IsActive!.Value;
+
+        if (id == callerId && !isActive)
+        {
+            return SelfInflicted(
+                "cannot deactivate your own account",
+                "You cannot deactivate your own account. Ask another administrator to do it.",
+                nameof(request.IsActive));
+        }
+
+        // Read first so the response carries the whole row, not just the flag
+        // that moved — the directory replaces the edited row with what comes
+        // back rather than re-reading the page.
+        var user = await _userRepository.GetByIdAsync(id);
+
+        if (user is null)
+        {
+            return NotFound();
+        }
+
+        user.IsActive = isActive;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        if (!await _userRepository.SetActiveAsync(user.Id, isActive, user.UpdatedAt))
+        {
+            // The account was removed between the read and the write.
+            return NotFound();
+        }
+
+        _logger.LogInformation(
+            "Admin {AdminId} {Action} account {UserId}.",
+            callerId, isActive ? "reinstated" : "deactivated", user.Id);
+
+        return Ok(ToUserSummary(user));
+    }
+
+    /// <summary>
     /// Reads the caller's id from the token's <c>sub</c> claim. A token that
     /// passed signature validation but carries no usable subject is not
     /// something we can act on.
@@ -193,6 +371,41 @@ public class UsersController : ControllerBase
         var trimmed = value?.Trim();
 
         return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    /// <summary>
+    /// Emails are stored and compared in a single canonical form, matching how
+    /// registration and login normalise them — otherwise an account could be
+    /// moved to an address its owner could never sign in with.
+    /// </summary>
+    private static string NormaliseEmail(string email) =>
+        email.Trim().ToLowerInvariant();
+
+    /// <summary>
+    /// Refuses an edit an administrator aimed at their own account. Returned as
+    /// a field error so the offending control in the form is the one that lights
+    /// up, rather than a banner above it.
+    /// </summary>
+    private IActionResult SelfInflicted(string reason, string message, string field)
+    {
+        _logger.LogWarning("Admin self-edit refused: {Reason}.", reason);
+
+        return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+        {
+            [field] = [message]
+        }));
+    }
+
+    private IActionResult EmailAlreadyRegistered(string email)
+    {
+        _logger.LogInformation("Account update rejected: {Email} is already registered.", email);
+
+        return Conflict(new ProblemDetails
+        {
+            Status = StatusCodes.Status409Conflict,
+            Title = "Email already registered",
+            Detail = "An account with this email address already exists."
+        });
     }
 
     private static UserSummaryResponse ToUserSummary(User user) => new()
