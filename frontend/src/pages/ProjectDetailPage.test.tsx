@@ -12,6 +12,7 @@ const PROJECT_ID = 'b2d4f6a8-1c3e-4d5f-8a9b-0c1d2e3f4a5b'
 const CLIENT_ID = '6f9619ff-8b86-d011-b42d-00cf4fc964ff'
 const ARCHITECT_ID = '11111111-1111-4111-8111-111111111111'
 const PROJECT_MANAGER_ID = '22222222-2222-4222-8222-222222222222'
+const ADMIN_ID = '99999999-9999-4999-8999-999999999999'
 
 /**
  * The project as the service returns it: mid-lifecycle at Designing, staffed,
@@ -127,6 +128,42 @@ function renderPage(
 
 const asOwningClient = { role: 'Client' as Role, userId: CLIENT_ID }
 const asAssignedArchitect = { role: 'Architect' as Role, userId: ARCHITECT_ID }
+const asAdmin = { role: 'Admin' as Role, userId: ADMIN_ID }
+
+/** One event as the service returns it, delivered on the first attempt. */
+function projectEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ee000000-0000-4000-8000-000000000001',
+    eventType: 'ProjectCreated',
+    occurredAt: '2026-08-01T09:00:00',
+    publishedAt: '2026-08-01T09:00:02',
+    attemptCount: 1,
+    lastError: null,
+    ...overrides,
+  }
+}
+
+/** An event the broker has refused so far. */
+function stuckEvent(overrides: Record<string, unknown> = {}) {
+  return projectEvent({
+    id: 'ee000000-0000-4000-8000-000000000002',
+    eventType: 'ProjectApproved',
+    publishedAt: null,
+    attemptCount: 7,
+    lastError: 'Local: Message timed out',
+    ...overrides,
+  })
+}
+
+/** The panel, so a query cannot stray into the status history above it. */
+function eventsPanel(): HTMLElement {
+  return screen.getByText('Integration events').closest('section') as HTMLElement
+}
+
+/** The event rows, without the header row above them. */
+function eventRows() {
+  return within(eventsPanel()).getAllByRole('row').slice(1)
+}
 
 /** The block holding one labelled fact about the project, found by its label. */
 async function field(label: string): Promise<HTMLElement> {
@@ -355,5 +392,165 @@ describe('ProjectDetailPage', () => {
     expect(
       await screen.findByText('Could not load this project. Please try again.'),
     ).toBeInTheDocument()
+  })
+})
+
+/**
+ * The US-22 panel: what a project announced to the other services, and whether
+ * it got out.
+ *
+ * The publish no longer happens inside the request that caused it — the event
+ * is written in the same transaction as the change and sent afterwards — so
+ * this view is the only thing that can answer "did the other services get
+ * told?". These cover what it shows and, just as importantly, who never sees it.
+ */
+describe('ProjectDetailPage integration events', () => {
+  it('asks the service for the events of the project in the route', async () => {
+    const requests = renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, [projectEvent()]),
+    )
+
+    await screen.findByText('Integration events')
+    expect(requests.map((request) => request.path)).toEqual([
+      `/api/projects/${PROJECT_ID}`,
+      `/api/projects/${PROJECT_ID}/events`,
+    ])
+  })
+
+  it('shows an admin what each event was and when it was raised', async () => {
+    renderPage(asAdmin, apiResponse(200, projectDetail()), apiResponse(200, [projectEvent()]))
+
+    await screen.findByText('Integration events')
+
+    const row = within(eventRows()[0])
+    // The wire value, not a friendly name: it is what a consumer subscribes to.
+    row.getByText('ProjectCreated')
+    row.getByText('ee000000-0000-4000-8000-000000000001')
+    row.getByText('Delivered')
+  })
+
+  it('shows the events oldest first, exactly as the service sent them', async () => {
+    // Nothing here re-sorts, so the panel cannot disagree with the order the
+    // events actually go onto the topic.
+    renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, [projectEvent(), stuckEvent()]),
+    )
+
+    await screen.findByText('Integration events')
+
+    expect(eventRows()).toHaveLength(2)
+    within(eventRows()[0]).getByText('ProjectCreated')
+    within(eventRows()[1]).getByText('ProjectApproved')
+  })
+
+  it('reads an event that took several attempts as delivered rather than as a fault', async () => {
+    // That is the outbox having done its job. Badging it as a problem would
+    // teach people to ignore the badge.
+    renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, [projectEvent({ attemptCount: 4 })]),
+    )
+
+    await screen.findByText('Integration events')
+
+    within(eventsPanel()).getByText('Delivered')
+    within(eventsPanel()).getByText(/after 4 attempts/)
+    expect(within(eventsPanel()).queryByText('Needs attention')).not.toBeInTheDocument()
+  })
+
+  it('flags an event the broker has refused, with the reason it gave', async () => {
+    renderPage(asAdmin, apiResponse(200, projectDetail()), apiResponse(200, [stuckEvent()]))
+
+    await screen.findByText('Integration events')
+
+    within(eventsPanel()).getByText('Not delivered')
+    within(eventsPanel()).getByText(/7 attempts/)
+    within(eventsPanel()).getByText(/Local: Message timed out/)
+    within(eventsPanel()).getByText('Needs attention')
+  })
+
+  it('separates an event still waiting its turn from one that has failed', async () => {
+    // Nothing has gone wrong with it yet — the dispatcher simply has not
+    // reached it. The two need different reactions, so they read differently.
+    renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, [projectEvent({ publishedAt: null, attemptCount: 0, lastError: null })]),
+    )
+
+    await screen.findByText('Integration events')
+
+    within(eventsPanel()).getByText('Waiting')
+    expect(within(eventsPanel()).queryByText('Needs attention')).not.toBeInTheDocument()
+  })
+
+  it('says a project has announced nothing rather than showing an error', async () => {
+    // An empty list is a real answer: a project created before the outbox
+    // existed has raised nothing.
+    renderPage(asAdmin, apiResponse(200, projectDetail()), apiResponse(200, []))
+
+    await screen.findByText('This project has not announced anything yet.')
+  })
+
+  it('keeps showing the project when its events cannot be read', async () => {
+    // A failure in the panel must not take the page down with it.
+    renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail()),
+      apiResponse(500, { title: 'Server error', detail: 'The events could not be read.' }),
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The events could not be read.')
+    screen.getByText('Beachfront villa')
+  })
+
+  it('re-reads the events after a status change raises new ones', async () => {
+    // The PATCH reply cannot carry them: they are written by its transaction
+    // but sent afterwards, so the panel would otherwise sit stale.
+    const requests = renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, [projectEvent()]),
+      apiResponse(200, movedToDesignApproved()),
+      apiResponse(200, [projectEvent(), stuckEvent({ publishedAt: '2026-08-10T09:00:02' })]),
+    )
+
+    await screen.findByText('Integration events')
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Design Approved' }))
+
+    await waitFor(() => expect(eventRows()).toHaveLength(2))
+    expect(requests.map((request) => request.path)).toEqual([
+      `/api/projects/${PROJECT_ID}`,
+      `/api/projects/${PROJECT_ID}/events`,
+      `/api/projects/${PROJECT_ID}/status`,
+      `/api/projects/${PROJECT_ID}/events`,
+    ])
+  })
+
+  it('shows the owning client nothing, and does not ask on their behalf', async () => {
+    // The service refuses them with a 403, so asking would only produce an
+    // error about something that is not theirs to see.
+    const requests = renderPage(asOwningClient, apiResponse(200, projectDetail()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByText('Integration events')).not.toBeInTheDocument()
+    expect(requests.map((request) => request.path)).toEqual([`/api/projects/${PROJECT_ID}`])
+  })
+
+  it('shows assigned staff nothing either', async () => {
+    // Narrower than every other read on the page: delivery state and broker
+    // error text are operations data the staff on a project cannot act on.
+    const requests = renderPage(asAssignedArchitect, apiResponse(200, projectDetail()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByText('Integration events')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(1)
   })
 })
