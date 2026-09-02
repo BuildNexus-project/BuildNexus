@@ -5,6 +5,7 @@ import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
+import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
@@ -26,8 +27,11 @@ export default function App() {
             token from the query string the emailed link carries. */}
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        {/* Public: the first thing a visitor with no session sees. A signed-in
+            visitor is forwarded on to /home from here. */}
+        <Route path="/" element={<LandingPage />} />
         <Route
-          path="/"
+          path="/home"
           element={
             <ProtectedRoute>
               <HomePage />
@@ -86,8 +90,8 @@ export default function App() {
             </RoleRoute>
           }
         />
-        {/* Anything unrecognised goes home, which in turn redirects to /login
-            when there is no session. */}
+        {/* Anything unrecognised goes to the front door: the public landing
+            page when there is no session, or on to /home when there is. */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
