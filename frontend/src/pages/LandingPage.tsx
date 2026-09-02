@@ -10,9 +10,7 @@ import {
 import { Link, Navigate } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/project-status'
 
 /**
  * The public front door, shown on `/` to a visitor with no session: the
@@ -40,7 +38,7 @@ export function LandingPage() {
 
       <div className="relative">
         <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur">
-          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
             <span className="flex items-center gap-2 font-heading text-base font-semibold tracking-tight">
               <img src="/logo-mark.png" alt="" className="h-8 w-auto shrink-0" />
               BuildNexus
@@ -57,15 +55,17 @@ export function LandingPage() {
         </header>
 
         <main>
-          <section className="mx-auto max-w-6xl px-6 pt-16 pb-16 text-center sm:pt-24">
+          {/* Full-bleed banner: breaks out of the centered column so the black
+              runs edge to edge, the logo nearly filling it. */}
+          <div className="flex items-center justify-center bg-primary px-6 py-6 sm:py-8">
             <img
               src="/logo.png"
               alt="BuildNexus"
-              className="mx-auto mb-8 h-28 w-auto sm:h-32"
+              className="h-62 w-auto brightness-0 invert sm:h-75"
             />
-            <Badge variant="outline" className="mb-6">
-              Construction project management
-            </Badge>
+          </div>
+
+          <section className="mx-auto max-w-7xl px-6 pt-12 pb-16 text-center sm:pt-16">
             <h1 className="mx-auto max-w-3xl font-heading text-4xl font-semibold tracking-tight text-balance sm:text-5xl md:text-6xl">
               Build smarter, from first brief to final handover.
             </h1>
@@ -88,7 +88,7 @@ export function LandingPage() {
             </div>
           </section>
 
-          <section className="mx-auto max-w-6xl px-6 py-16">
+          <section className="mx-auto max-w-7xl px-6 py-16">
             <div className="mx-auto max-w-2xl text-center">
               <h2 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
                 Everything a project needs, in one system
@@ -114,36 +114,7 @@ export function LandingPage() {
             </div>
           </section>
 
-          <section className="mx-auto max-w-6xl px-6 py-16">
-            <div className="rounded-2xl bg-card p-8 ring-1 ring-foreground/10 sm:p-10">
-              <div className="mx-auto max-w-2xl text-center">
-                <h2 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
-                  One lifecycle, followed the same way every time
-                </h2>
-                <p className="mt-3 text-muted-foreground">
-                  A project moves forward one stage at a time — no skipping ahead, and the history
-                  is the record of what happened, not somewhere to undo it.
-                </p>
-              </div>
-              <div className="mt-10 flex flex-wrap items-center justify-center gap-x-2 gap-y-3">
-                {PROJECT_STATUSES.map((status, index) => (
-                  <div key={status} className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 rounded-full bg-muted px-3 py-1.5">
-                      <span className="grid size-5 place-items-center rounded-full bg-primary text-[0.65rem] font-bold text-primary-foreground">
-                        {index + 1}
-                      </span>
-                      <span className="text-sm font-medium">{PROJECT_STATUS_LABELS[status]}</span>
-                    </div>
-                    {index < PROJECT_STATUSES.length - 1 && (
-                      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="mx-auto max-w-6xl px-6 pt-8 pb-24">
+          <section className="mx-auto max-w-7xl px-6 pt-8 pb-24">
             <div className="rounded-2xl bg-primary px-8 py-12 text-center text-primary-foreground sm:px-12">
               {/* black line-art logo forced to white for the dark panel */}
               <img
@@ -158,28 +129,12 @@ export function LandingPage() {
                 Create an account as a client, architect, or project manager and start from your
                 first brief.
               </p>
-              <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
-                <Button
-                  render={<Link to="/register" />}
-                  variant="secondary"
-                  className="h-11 w-full px-6 sm:w-auto"
-                >
-                  Create your account
-                </Button>
-                <Button
-                  render={<Link to="/login" />}
-                  variant="ghost"
-                  className="h-11 w-full px-6 text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground sm:w-auto"
-                >
-                  Log in
-                </Button>
-              </div>
             </div>
           </section>
         </main>
 
         <footer className="border-t border-border/60">
-          <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-8 text-sm text-muted-foreground sm:flex-row">
+          <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-6 py-8 text-sm text-muted-foreground sm:flex-row">
             <span className="flex items-center gap-2">
               <img src="/logo-mark.png" alt="" className="h-5 w-auto shrink-0" />
               BuildNexus
