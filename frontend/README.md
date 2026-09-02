@@ -31,7 +31,8 @@ The User Service must be running — see `infra/README.md`.
 | `/login`       | Anyone                                             |
 | `/forgot-password` | Anyone                                         |
 | `/reset-password`  | Anyone — needs a `?token=` from the reset email |
-| `/`            | Signed-in users; others are redirected to `/login`  |
+| `/`            | Anyone — public landing page; signed-in users go to `/home` |
+| `/home`        | Signed-in users; others are redirected to `/login`  |
 | `/profile`     | Signed-in users                                    |
 | `/projects/new` | Client                                            |
 | `/directory`   | Architect, Project Manager                         |
@@ -54,6 +55,15 @@ happened. The home page offers each link only to the roles allowed to open it.
 None of that is the boundary either. Each page also handles the `403` the
 service returns and shows the reason it gives, so bypassing the guard changes
 nothing about what a user can actually read.
+
+## Landing page
+
+`/` is a public page — the BuildNexus name, a one-line description, and Log in /
+Register buttons — so a first-time visitor arrives at something that explains
+the product rather than a bare login form. A signed-in visitor has no use for
+it: `LandingPage` forwards them to `/home`, the authenticated landing page,
+which stays behind `ProtectedRoute` for anyone who reaches it without a session.
+`/register`, `/login` and the `ProtectedRoute` redirect are unchanged.
 
 ## New project (US-05)
 
