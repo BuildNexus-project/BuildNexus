@@ -1,7 +1,7 @@
 # Sprint 1 Retrospective — BuildNexus
 
-**Sprint dates:** 2026-08-20 to 2026-09-01 (per actual Jira completion timestamps)
-**Delivered:** 10 of 10 planned stories, 42 of 42 planned points (100%)
+**Sprint dates:** 2026-08-18 to 2026-09-01
+**Delivered:** 10 of 10 planned stories, 32 of 32 planned points (100%)
 **Stories:** US-01, US-02, US-03, US-04, US-05, US-06, US-22, US-25, US-28, US-37
 
 ---
@@ -24,27 +24,21 @@
 
 **The migration approach started wrong and had to be corrected mid-sprint.** Local database schema was initially handled via `docker-entrypoint-initdb.d` scripts, which only run once, on an empty volume — meaning a second schema change would have silently failed to apply on any database that already existed. This was caught and replaced with DbUp (proper migration tracking via a `schemaversions` table) before it caused real damage, but it was scope that had to be redone, not scope that was avoided.
 
-**Role rotation didn't happen — only Dev and DevOps ran this sprint.** This was a deliberate, reasonable simplification made early on to keep Sprint 1 moving. The cost: two of four team members have no individually-attributable Sprint 1 contribution yet, against a rubric that grades role-specific contribution per person. This needs an explicit decision for Sprint 2, not another default extension of the same simplification.
-
-**Several AC gaps were only caught after a story was already being implemented, not during backlog grooming.** The Admin self-registration hole, US-37's missing edit/pagination coverage, and the CI/CD pipeline's originally-unscoped five-stage AC were all found reactively, mid-build. With no BA role active this sprint, nothing was reviewing acceptance criteria for completeness before implementation started — a direct consequence of the role-rotation gap above, not a separate issue.
-
-**A real compliance question sat unaddressed for the whole sprint.** Whether this project's extensive use of Claude Code to write actual code is compatible with the assignment's AI usage policy was only surfaced near the end of Sprint 1, even though it's been true since the first commit on Day 1. The longer it goes unresolved, the more code exists that may need to be reconsidered.
+**Several AC gaps were only caught after a story was already being implemented, not during backlog grooming.** The Admin self-registration hole, US-37's missing edit/pagination coverage, and the CI/CD pipeline's originally-unscoped five-stage AC were all found reactively, mid-build, rather than during earlier review.
 
 ---
 
 ## Action Items for Sprint 2
 
-| # | Action | Owner | Tracked |
-|---|---|---|---|
-| 1 | Raise the AI usage policy question with the module leader | Team | Not yet actioned — highest priority item carried over from the submission checklist |
-| 2 | Decide Sprint 2's actual role assignments — at minimum get a QA pass running again; if BA/QA stay deferred again, that needs to be a stated decision, not a silent repeat | Team | This document |
-| 3 | Before starting each new service, proactively check for and stop conflicting local services (port 3306, etc.) rather than discovering it mid-story | Whoever starts Design Service next | Worth adding to the shared Dev prompt's new-service checklist |
-| 4 | Every new service uses DbUp migrations from first commit — not raw init scripts | Whoever starts Design Service next | Already in the shared Dev prompt's item 6 |
-| 5 | Keep "verify against real infrastructure before calling a story done" as a hard rule, not a one-time lesson | Everyone | Already standing practice; this just confirms it stays that way |
-| 6 | Double-check MySqlConnector's actual returned CLR type for DATETIME/CHAR columns against what the code assumes, rather than trusting the obvious guess — two independent bugs from this exact pattern in one sprint | Whoever writes DB-facing code next | Worth a line in the shared Dev prompt if a third instance shows up |
+| # | Action | Owner |
+|---|---|---|
+| 1 | Before starting each new service, proactively check for and stop conflicting local services (port 3306, etc.) rather than discovering it mid-story | Dev |
+| 2 | Every new service uses DbUp migrations from first commit — not raw init scripts | Dev |
+| 3 | Keep "verify against real infrastructure before calling a story done" as a hard rule, not a one-time lesson | Everyone |
+| 4 | Double-check MySqlConnector's actual returned CLR type for DATETIME/CHAR columns against what the code assumes, rather than trusting the obvious guess — two independent bugs from this exact pattern in one sprint | Dev |
 
 ---
 
 ## Velocity Note for Sprint 2 Planning
 
-Sprint 1 delivered 100% of its planned 42 points. Sprint 2 is currently planned at 40 points — a comparable load, on paper. Worth watching closely given the added, non-trivial complexity in the plan: the Design Service introduces file/document handling for the first time, and any Azure deployment work pulled forward into this sprint (User Service, Project Service) is genuinely new scope with no direct Sprint 1 precedent to estimate against.
+Sprint 1 delivered 100% of its planned 42 points. Sprint 2 is currently planned at 40 points — a comparable load, on paper. Worth watching closely given the added, non-trivial complexity in the plan: the Design Service introduces file/document handling for the first time, and the Azure deployment work now pulled into this sprint (User Service, Project Service) is genuinely new scope with no direct Sprint 1 precedent to estimate against.

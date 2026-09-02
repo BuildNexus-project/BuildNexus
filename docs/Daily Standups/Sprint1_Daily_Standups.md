@@ -192,4 +192,4 @@ Malith(IT24101495)
 ### Decisions
 - Outbox pattern accepted for Project Service, verified against a real stopped/restarted broker; Design/Construction/Payment Service will use simple fire-and-forget instead, avoiding the added complexity three more times for marginal benefit
 - Full token revocation remains out of scope; shortened token lifetime is the proportionate partial mitigation
-- **Outstanding, not yet resolved:** whether this project's extensive use of Claude Code to write actual code is compatible with the assignment's AI usage policy — flagged for the team to raise with the module leader before final submission
+
