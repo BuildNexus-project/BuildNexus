@@ -1,0 +1,259 @@
+# BuildNexus local development stack.
+#
+# Secrets are read from infra/.env (git-ignored) — see .env.example.
+# Start with:  docker compose up -d
+
+name: buildnexus
+
+services:
+  user-db:
+    image: mysql:8.0
+    container_name: buildnexus-user-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${USER_DB_ROOT_PASSWORD:?set USER_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_user_db
+      MYSQL_USER: ${USER_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${USER_DB_PASSWORD:?set USER_DB_PASSWORD in infra/.env}
+    ports:
+      # Standard MySQL port, matching the default connection string in the
+      # service's appsettings.json. A locally installed MySQL will claim this
+      # port first if its service is running - stop it, or set that service to
+      # start manually.
+      - "3306:3306"
+    volumes:
+      - user-db-data:/var/lib/mysql
+      # No schema is mounted here. The User Service applies its own migrations at
+      # startup with DbUp, which runs only the scripts a database has not seen —
+      # unlike docker-entrypoint-initdb.d, which runs once on a brand-new volume
+      # and would leave every later schema change unapplied.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  project-db:
+    image: mysql:8.0
+    container_name: buildnexus-project-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PROJECT_DB_ROOT_PASSWORD:?set PROJECT_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_project_db
+      MYSQL_USER: ${PROJECT_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${PROJECT_DB_PASSWORD:?set PROJECT_DB_PASSWORD in infra/.env}
+    ports:
+      # 3307, not 3306: user-db already publishes that one. One schema per
+      # service means one MySQL container per service, so each needs a port of
+      # its own on the host. Matches the default connection string in the
+      # service's appsettings.json.
+      - "3307:3306"
+    volumes:
+      - project-db-data:/var/lib/mysql
+      # No schema is mounted here — the Project Service applies its own
+      # migrations at startup with DbUp, exactly as the User Service does.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # Catches every email the stack sends instead of delivering it, and serves an
+  # inbox at http://localhost:8025 to read them in. Nothing leaves the machine:
+  # it speaks SMTP, accepts anything, and forwards nowhere.
+  #
+  # Local development only. A deployed environment points Email__SmtpHost at a
+  # real relay and never runs this.
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: buildnexus-mailpit
+    restart: unless-stopped
+    environment:
+      # Keep the whole inbox for the session rather than rolling it over, so a
+      # demo can scroll back to an earlier message.
+      MP_MAX_MESSAGES: "0"
+    ports:
+      # The web inbox. This is the one a person opens.
+      - "8025:8025"
+      # SMTP. The service reaches Mailpit as `mailpit:1025` over the compose
+      # network and does not need this; it is published so a native `dotnet run`
+      # can send here too — see services/user-service/README.md.
+      - "1025:1025"
+
+  user-service:
+    build:
+      context: ../services/user-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-user-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__UserDb: >-
+        Server=user-db;Port=3306;Database=buildnexus_user_db;User Id=${USER_DB_USER:-buildnexus};Password=${USER_DB_PASSWORD};
+      # The shared convention: every service that validates a BuildNexus token -
+      # the User Service that signs them and the API Gateway that checks them -
+      # must be given these three identical values. The names carry through from
+      # infra/.env unchanged, so there is only ever one name per setting.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # Not part of the shared convention: the lifetime is baked into the token's
+      # exp claim when the User Service issues it, and every other service simply
+      # checks whether exp has passed. User Service only.
+      Jwt__AccessTokenLifetimeMinutes: "20"
+      # US-04. The emailed reset link points at the React app, not at this
+      # service, so it is built from the same frontend origin the gateway
+      # allows through CORS.
+      PasswordReset__TokenLifetimeMinutes: "30"
+      PasswordReset__ResetUrlTemplate: ${FRONTEND_ORIGIN:-http://localhost:5173}/reset-password?token={token}
+      Email__FromAddress: no-reply@buildnexus.local
+      # Reset emails are really sent, over SMTP, to the Mailpit container above —
+      # which keeps them instead of delivering them. So the flow exercises the
+      # same SmtpEmailSender a deployment uses, and the message is read in an
+      # inbox at http://localhost:8025 rather than out of a log line.
+      Email__SmtpHost: mailpit
+      Email__SmtpPort: "1025"
+      # Mailpit's SMTP listener speaks plain SMTP unless it is given
+      # certificates, and SmtpEmailSender maps UseStartTls onto EnableSsl — left
+      # at its `true` default every send would fail trying to start TLS. Off
+      # here because nothing leaves the machine; on in anything real.
+      Email__UseStartTls: "false"
+    ports:
+      - "5001:8080"
+    depends_on:
+      user-db:
+        condition: service_healthy
+      # Start order only. Mailpit being down must not stop the service coming
+      # up: a reset email that cannot be sent is logged and the request still
+      # answers, which is the behaviour US-04 asks for.
+      mailpit:
+        condition: service_started
+
+  # The message bus the Project, Design, Construction and Payment services use
+  # to tell each other what has happened. The User Service is REST-only and
+  # never touches it.
+  #
+  # KRaft mode — Kafka runs its own metadata quorum, so there is no ZooKeeper
+  # container to keep alive alongside it. One node, which is all a development
+  # stack needs; the replication factors below are 1 for the same reason and
+  # would be raised in a real cluster.
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: buildnexus-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Two ways in, because a service can reach Kafka from either side of the
+      # compose network. PLAINTEXT is what the containers use (kafka:9092);
+      # PLAINTEXT_HOST is published below so a native `dotnet run` can publish
+      # here too, the same arrangement as Mailpit's SMTP port.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # No wait before the first consumer group rebalance; the default 3s just
+      # slows down every local start.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # project-events and the other three topics appear on first publish, so
+      # nobody has to create them by hand before the stack works.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      # The host listener. Containers do not need this; it is published so a
+      # service running outside compose can still reach the broker.
+      - "29092:29092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  project-service:
+    build:
+      context: ../services/project-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-project-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__ProjectDb: >-
+        Server=project-db;Port=3306;Database=buildnexus_project_db;User Id=${PROJECT_DB_USER:-buildnexus};Password=${PROJECT_DB_PASSWORD};
+      # The shared convention. Identical to the values the User Service signs
+      # with, or every token it issues is refused here.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # No Jwt__AccessTokenLifetimeMinutes here: the lifetime is baked into a
+      # token's exp claim by the User Service, and this side only checks it.
+      # The broker, under the shared name every publishing service uses. The
+      # internal listener, since this runs on the compose network.
+      Kafka__BootstrapServers: kafka:9092
+    ports:
+      - "5002:8080"
+    depends_on:
+      project-db:
+        condition: service_healthy
+      # Start order only. Kafka being down must not stop the service coming up:
+      # a project is saved before its event is published, and a publish that
+      # cannot reach the broker is logged rather than failing the request.
+      kafka:
+        condition: service_started
+
+  # The single entry point. The frontend talks only to this; the five services
+  # behind it are reachable on the compose network by service name and never
+  # need a published port of their own for the app to work. The ports the
+  # services do publish below are a debugging convenience, not the path the
+  # React app takes.
+  api-gateway:
+    build:
+      context: ../api-gateway
+      dockerfile: Dockerfile
+    container_name: buildnexus-api-gateway
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      # Same three values as every service that validates a BuildNexus token.
+      # The gateway checks the signature before it proxies anything; a service
+      # given a different key would refuse every token the User Service issues.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # CORS lives here and nowhere else, so the five services never repeat it.
+      Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      # Where each cluster in appsettings.json actually points once containerised.
+      # The file ships localhost ports for `dotnet run`; these override them with
+      # compose service names, which is also the shape a deployment overrides.
+      # The three services below do not exist yet — their routes answer 502
+      # until the stories that build them land, which is why the gateway does
+      # not wait on them to start.
+      ReverseProxy__Clusters__user__Destinations__primary__Address: http://user-service:8080/
+      ReverseProxy__Clusters__project__Destinations__primary__Address: http://project-service:8080/
+      ReverseProxy__Clusters__design__Destinations__primary__Address: http://design-service:8080/
+      ReverseProxy__Clusters__construction__Destinations__primary__Address: http://construction-service:8080/
+      ReverseProxy__Clusters__payment__Destinations__primary__Address: http://payment-service:8080/
+    ports:
+      - "5000:8080"
+    depends_on:
+      # Start order only, deliberately not a health condition: the gateway must
+      # come up and serve /health whether or not a service behind it is running,
+      # so one service being down never takes the entry point with it.
+      - user-service
+      - project-service
+
+volumes:
+  user-db-data:
+  project-db-data:
+  kafka-data:

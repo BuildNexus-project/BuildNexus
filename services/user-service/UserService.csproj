@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BuildNexus.UserService</RootNamespace>
+    <AssemblyName>BuildNexus.UserService</AssemblyName>
+    <UserSecretsId>2da9d1bf-a1e7-4bc5-8294-aebdd1bf0e9b</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embedded so a published container carries the schema it expects, rather
+         than depending on files being mounted next to it. -->
+    <EmbeddedResource Include="Migrations\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="dbup-mysql" Version="6.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageReference Include="MySqlConnector" Version="2.4.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+</Project>
