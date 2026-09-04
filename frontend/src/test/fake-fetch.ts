@@ -4,7 +4,10 @@ import { vi } from 'vitest'
 export type RecordedRequest = {
   path: string
   method?: string
-  /** The JSON body, already parsed. */
+  /**
+   * The JSON body, already parsed — or, for a multipart upload, its fields as a
+   * plain object (a `File` field stays a `File`).
+   */
   body: unknown
 }
 
@@ -18,6 +21,29 @@ export function apiResponse(status: number, body: unknown): Response {
     status,
     text: () => Promise.resolve(JSON.stringify(body)),
   } as unknown as Response
+}
+
+/**
+ * A stand-in for a binary response — a file download, which goes straight
+ * through `fetch` rather than the JSON client and reads `blob()` instead of
+ * `text()`.
+ */
+export function fileResponse(status: number, blob: Blob): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: () => Promise.resolve(''),
+    blob: () => Promise.resolve(blob),
+  } as unknown as Response
+}
+
+/** A `FormData`'s fields as a plain object, for asserting on a multipart request. */
+function formDataToObject(form: FormData): Record<string, FormDataEntryValue> {
+  const object: Record<string, FormDataEntryValue> = {}
+  form.forEach((value, key) => {
+    object[key] = value
+  })
+  return object
 }
 
 /**
@@ -40,7 +66,12 @@ export function stubFetch(...responses: Array<Response | Error>): RecordedReques
     requests.push({
       path,
       method: init.method,
-      body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+      body:
+        typeof init.body === 'string'
+          ? JSON.parse(init.body)
+          : init.body instanceof FormData
+            ? formDataToObject(init.body)
+            : undefined,
     })
 
     // The last response stands in for every call past it, so a test that only
