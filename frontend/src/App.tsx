@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
+import { DesignDocumentsPage } from '@/pages/DesignDocumentsPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
 import { LandingPage } from '@/pages/LandingPage'
@@ -71,6 +72,18 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ProjectDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Same guard as the project itself: which project a caller may open
+            is a per-project question the service answers, not a role. An
+            Architect uploads here; every role on the project can review and
+            download. */}
+        <Route
+          path="/projects/:projectId/designs"
+          element={
+            <ProtectedRoute>
+              <DesignDocumentsPage />
             </ProtectedRoute>
           }
         />
