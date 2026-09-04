@@ -141,6 +141,17 @@ jobs:
       PROJECT_DB_USER: buildnexus
       PROJECT_DB_PASSWORD: buildnexus-dev
 
+      # --- Why the Design Service database credentials are here ------------
+      # No design-db container is started in this job yet — no test in
+      # services/design-service-tests needs one. But compose interpolates the
+      # WHOLE file before it starts anything, so the `${DESIGN_DB_*:?...}`
+      # variables on the design-db and design-service blocks must be set or
+      # `docker compose up user-db project-db` fails to parse. Same reason,
+      # and same published development values, as the two blocks above.
+      DESIGN_DB_ROOT_PASSWORD: buildnexus-root-dev
+      DESIGN_DB_USER: buildnexus
+      DESIGN_DB_PASSWORD: buildnexus-dev
+
       # --- Why the JWT values are here at all -------------------------------
       # Compose interpolates the WHOLE file before it starts anything, so the
       # required `${Jwt__*:?...}` variables declared on the user-service and
