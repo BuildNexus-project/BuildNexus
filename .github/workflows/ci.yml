@@ -65,6 +65,7 @@ jobs:
         run: |
           dotnet restore services/user-service/UserService.csproj
           dotnet restore services/project-service/ProjectService.csproj
+          dotnet restore services/design-service/DesignService.csproj
           dotnet restore api-gateway/BuildNexus.ApiGateway.csproj
           dotnet restore services/user-service-tests/UserService.Tests.csproj
           dotnet restore services/project-service-tests/ProjectService.Tests.csproj
@@ -75,6 +76,7 @@ jobs:
         run: |
           dotnet build services/user-service/UserService.csproj -c Release --no-restore
           dotnet build services/project-service/ProjectService.csproj -c Release --no-restore
+          dotnet build services/design-service/DesignService.csproj -c Release --no-restore
           dotnet build api-gateway/BuildNexus.ApiGateway.csproj -c Release --no-restore
           dotnet build services/user-service-tests/UserService.Tests.csproj -c Release --no-restore
           dotnet build services/project-service-tests/ProjectService.Tests.csproj -c Release --no-restore
