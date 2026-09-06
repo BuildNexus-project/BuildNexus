@@ -106,12 +106,28 @@ function signInAs(role: Role, userId: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, `header.${payload}.signature`)
 }
 
+/** An empty page of assignable staff, the shape {@link fetchAllUsers} returns. */
+function emptyStaffPage() {
+  return apiResponse(200, { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 1 })
+}
+
 function renderPage(
   who: { role: Role; userId: string },
   ...responses: Array<Response | Error>
 ): RecordedRequest[] {
   signInAs(who.role, who.userId)
-  const requests = stubFetch(...responses)
+
+  // An Admin render also loads the assignable Architects and Project Managers
+  // for the Team section — two GET /api/users calls that land after the project
+  // and its events. Slotted in here so a test only has to say what it cares
+  // about (the project, the events, a status change) and not repeat the staff
+  // lists every time.
+  const withStaff =
+    who.role === 'Admin'
+      ? [...responses.slice(0, 2), emptyStaffPage(), emptyStaffPage(), ...responses.slice(2)]
+      : responses
+
+  const requests = stubFetch(...withStaff)
 
   render(
     <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}`]}>
@@ -413,7 +429,9 @@ describe('ProjectDetailPage integration events', () => {
     )
 
     await screen.findByText('Integration events')
-    expect(requests.map((request) => request.path)).toEqual([
+    // The events call targets the project in the route — the first two calls
+    // the page makes, before the Team section's staff lists.
+    expect(requests.slice(0, 2).map((request) => request.path)).toEqual([
       `/api/projects/${PROJECT_ID}`,
       `/api/projects/${PROJECT_ID}/events`,
     ])
@@ -524,7 +542,11 @@ describe('ProjectDetailPage integration events', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move to Design Approved' }))
 
     await waitFor(() => expect(eventRows()).toHaveLength(2))
-    expect(requests.map((request) => request.path)).toEqual([
+    // The project/events sequence around the change — the Team section's staff
+    // lists are not what this test is about.
+    expect(
+      requests.map((request) => request.path).filter((path) => !path.startsWith('/api/users')),
+    ).toEqual([
       `/api/projects/${PROJECT_ID}`,
       `/api/projects/${PROJECT_ID}/events`,
       `/api/projects/${PROJECT_ID}/status`,
