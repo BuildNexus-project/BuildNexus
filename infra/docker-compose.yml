@@ -60,6 +60,32 @@ services:
       retries: 20
       start_period: 30s
 
+  design-db:
+    image: mysql:8.0
+    container_name: buildnexus-design-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DESIGN_DB_ROOT_PASSWORD:?set DESIGN_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_design_db
+      MYSQL_USER: ${DESIGN_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${DESIGN_DB_PASSWORD:?set DESIGN_DB_PASSWORD in infra/.env}
+    ports:
+      # 3309: user-db has 3306, project-db has 3307, and the local override
+      # moves user-db to 3308. One schema per service means one MySQL container
+      # per service, so each needs a host port of its own. Matches the default
+      # connection string in the service's appsettings.json.
+      - "3309:3306"
+    volumes:
+      - design-db-data:/var/lib/mysql
+      # No schema is mounted here — the Design Service applies its own
+      # migrations at startup with DbUp, exactly as the other services do.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
   # Catches every email the stack sends instead of delivering it, and serves an
   # inbox at http://localhost:8025 to read them in. Nothing leaves the machine:
   # it speaks SMTP, accepts anything, and forwards nowhere.
@@ -211,6 +237,36 @@ services:
       kafka:
         condition: service_started
 
+  design-service:
+    build:
+      context: ../services/design-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-design-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DesignDb: >-
+        Server=design-db;Port=3306;Database=buildnexus_design_db;User Id=${DESIGN_DB_USER:-buildnexus};Password=${DESIGN_DB_PASSWORD};
+      # The shared convention. Identical to the values the User Service signs
+      # with, or every token it issues is refused here.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # US-09 decides whether a caller may touch a project by asking the Project
+      # Service, forwarding the caller's own token. The internal listener, since
+      # this runs on the compose network.
+      Services__ProjectService__BaseUrl: http://project-service:8080/
+    ports:
+      - "5003:8080"
+    depends_on:
+      design-db:
+        condition: service_healthy
+      # Start order only. The Project Service being down means an upload cannot
+      # be authorised and answers 502, not that this service fails to boot.
+      project-service:
+        condition: service_started
+
   # The single entry point. The frontend talks only to this; the five services
   # behind it are reachable on the compose network by service name and never
   # need a published port of their own for the app to work. The ports the
@@ -236,9 +292,9 @@ services:
       # Where each cluster in appsettings.json actually points once containerised.
       # The file ships localhost ports for `dotnet run`; these override them with
       # compose service names, which is also the shape a deployment overrides.
-      # The three services below do not exist yet — their routes answer 502
-      # until the stories that build them land, which is why the gateway does
-      # not wait on them to start.
+      # construction-service and payment-service do not exist yet — their routes
+      # answer 502 until the stories that build them land, which is why the
+      # gateway does not wait on them to start.
       ReverseProxy__Clusters__user__Destinations__primary__Address: http://user-service:8080/
       ReverseProxy__Clusters__project__Destinations__primary__Address: http://project-service:8080/
       ReverseProxy__Clusters__design__Destinations__primary__Address: http://design-service:8080/
@@ -252,8 +308,10 @@ services:
       # so one service being down never takes the entry point with it.
       - user-service
       - project-service
+      - design-service
 
 volumes:
   user-db-data:
   project-db-data:
+  design-db-data:
   kafka-data:
