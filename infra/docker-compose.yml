@@ -226,6 +226,10 @@ services:
       # The broker, under the shared name every publishing service uses. The
       # internal listener, since this runs on the compose network.
       Kafka__BootstrapServers: kafka:9092
+      # US-07 asks the User Service what role an account holds before assigning
+      # it to a project, forwarding the Admin's own token. The internal
+      # listener, since this runs on the compose network.
+      Services__UserService__BaseUrl: http://user-service:8080/
     ports:
       - "5002:8080"
     depends_on:
@@ -235,6 +239,10 @@ services:
       # a project is saved before its event is published, and a publish that
       # cannot reach the broker is logged rather than failing the request.
       kafka:
+        condition: service_started
+      # Start order only. The User Service being down means an assignment cannot
+      # be role-checked and answers 502, not that this service fails to boot.
+      user-service:
         condition: service_started
 
   design-service:

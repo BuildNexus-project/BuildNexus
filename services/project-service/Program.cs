@@ -3,6 +3,7 @@ using BuildNexus.ProjectService.Authorization;
 using BuildNexus.ProjectService.Configuration;
 using BuildNexus.ProjectService.Data;
 using BuildNexus.ProjectService.Messaging;
+using BuildNexus.ProjectService.Users;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -28,6 +29,26 @@ builder.Services.AddSingleton<IProjectEventPublisher, KafkaProjectEventPublisher
 // transaction that made the change, and this drains them onto the topic
 // afterwards. Nothing on the request path waits for the broker.
 builder.Services.AddHostedService<OutboxDispatcher>();
+
+// The User Service, asked over HTTP — with the Admin's own token — what role an
+// account holds before it is assigned to a project. Its address is validated at
+// startup for the same reason the JWT settings are: a service that cannot reach
+// it would refuse every assignment at runtime, and a log line after the first
+// one is too late.
+builder.Services.AddOptions<UserServiceOptions>()
+    .Bind(builder.Configuration.GetSection(UserServiceOptions.SectionName))
+    .Validate(
+        o => Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _),
+        "Services:UserService:BaseUrl must be an absolute URL.")
+    .Validate(o => o.TimeoutSeconds > 0, "Services:UserService:TimeoutSeconds must be greater than zero.")
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IUserDirectoryClient, HttpUserDirectoryClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<UserServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
