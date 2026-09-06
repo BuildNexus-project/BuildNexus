@@ -2,6 +2,7 @@ using System.Text;
 using BuildNexus.DesignService.Authorization;
 using BuildNexus.DesignService.Configuration;
 using BuildNexus.DesignService.Data;
+using BuildNexus.DesignService.Projects;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,25 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IDesignDocumentRepository, DesignDocumentRepository>();
+
+// The Project Service, asked over HTTP — with the caller's own token — whether
+// a caller may touch a project. Its address is validated at startup for the
+// same reason the JWT settings are: a service that cannot reach it would refuse
+// every upload at runtime, and a log line after the first one is too late.
+builder.Services.AddOptions<ProjectServiceOptions>()
+    .Bind(builder.Configuration.GetSection(ProjectServiceOptions.SectionName))
+    .Validate(
+        o => Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _),
+        "Services:ProjectService:BaseUrl must be an absolute URL.")
+    .Validate(o => o.TimeoutSeconds > 0, "Services:ProjectService:TimeoutSeconds must be greater than zero.")
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IProjectAccessClient, HttpProjectAccessClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<ProjectServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();

@@ -465,6 +465,10 @@ export function ProjectDetailPage() {
             </>
           )}
 
+          <Button render={<Link to={`/projects/${project.id}/designs`} />} variant="outline" className="w-full">
+            Design documents
+          </Button>
+
           <p className="text-muted-foreground text-center text-sm">
             <Link to="/projects" className="text-foreground underline underline-offset-4">
               Back to projects
