@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -106,25 +107,67 @@ function signInAs(role: Role, userId: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, `header.${payload}.signature`)
 }
 
-/** An empty page of assignable staff, the shape {@link fetchAllUsers} returns. */
-function emptyStaffPage() {
-  return apiResponse(200, { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 1 })
+/** A page of assignable staff, the shape {@link fetchAllUsers} returns. */
+function staffPage(members: Array<Record<string, unknown>>) {
+  return apiResponse(200, {
+    items: members,
+    page: 1,
+    pageSize: 100,
+    totalCount: members.length,
+    totalPages: 1,
+  })
 }
+
+function emptyStaffPage() {
+  return staffPage([])
+}
+
+/** One assignable account, as the directory returns it. */
+function staffMember(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '5aff0000-0000-4000-8000-000000000001',
+    fullName: 'Priya Silva',
+    email: 'priya@example.com',
+    role: 'Architect',
+    isActive: true,
+    createdAt: '2026-07-01T09:00:00',
+    ...overrides,
+  }
+}
+
+/**
+ * Set by {@link renderPageWithStaff}, for the pointer sequence a Base UI select
+ * needs — a bare click on an option is ignored. Everything else stays on
+ * `fireEvent`, as the rest of this file does.
+ */
+let user: UserEvent
 
 function renderPage(
   who: { role: Role; userId: string },
   ...responses: Array<Response | Error>
 ): RecordedRequest[] {
-  signInAs(who.role, who.userId)
+  return renderPageWithStaff(who, [emptyStaffPage(), emptyStaffPage()], ...responses)
+}
 
-  // An Admin render also loads the assignable Architects and Project Managers
-  // for the Team section — two GET /api/users calls that land after the project
-  // and its events. Slotted in here so a test only has to say what it cares
-  // about (the project, the events, a status change) and not repeat the staff
-  // lists every time.
+/**
+ * Like {@link renderPage}, but with the Team section's Architect and Project
+ * Manager lists spelled out.
+ *
+ * An Admin render loads them from two GET /api/users calls that land after the
+ * project and its events, so they are slotted in there — a test that does not
+ * care passes empty pages through {@link renderPage} instead.
+ */
+function renderPageWithStaff(
+  who: { role: Role; userId: string },
+  staff: [Response, Response],
+  ...responses: Array<Response | Error>
+): RecordedRequest[] {
+  signInAs(who.role, who.userId)
+  user = userEvent.setup()
+
   const withStaff =
     who.role === 'Admin'
-      ? [...responses.slice(0, 2), emptyStaffPage(), emptyStaffPage(), ...responses.slice(2)]
+      ? [...responses.slice(0, 2), ...staff, ...responses.slice(2)]
       : responses
 
   const requests = stubFetch(...withStaff)
@@ -140,6 +183,15 @@ function renderPage(
   )
 
   return requests
+}
+
+/**
+ * Picks an option from a Base UI select — the popup is portalled and only
+ * mounted while the select is open, so the trigger is clicked first.
+ */
+async function choose(triggerName: string, optionName: string) {
+  await user.click(screen.getByRole('combobox', { name: triggerName }))
+  await user.click(await screen.findByRole('option', { name: optionName }))
 }
 
 const asOwningClient = { role: 'Client' as Role, userId: CLIENT_ID }
@@ -574,5 +626,129 @@ describe('ProjectDetailPage integration events', () => {
 
     expect(screen.queryByText('Integration events')).not.toBeInTheDocument()
     expect(requests).toHaveLength(1)
+  })
+})
+
+describe('ProjectDetailPage staff assignment', () => {
+  const ARCHITECT = staffMember({
+    id: 'a11c0000-0000-4000-8000-000000000001',
+    fullName: 'Priya Silva',
+    role: 'Architect',
+  })
+  const RETIRED_ARCHITECT = staffMember({
+    id: 'a11c0000-0000-4000-8000-000000000002',
+    fullName: 'Retired Architect',
+    role: 'Architect',
+    isActive: false,
+  })
+  const PROJECT_MANAGER = staffMember({
+    id: '9c710000-0000-4000-8000-000000000001',
+    fullName: 'Ravi Kumar',
+    role: 'ProjectManager',
+  })
+
+  function pendingProject(overrides: Record<string, unknown> = {}) {
+    return projectDetail({
+      status: 'Pending',
+      assignedArchitectId: null,
+      assignedProjectManagerId: null,
+      allowedNextStatuses: ['Designing'],
+      ...overrides,
+    })
+  }
+
+  it('offers an admin the active architects and project managers to assign', async () => {
+    renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT, RETIRED_ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, pendingProject()),
+      apiResponse(200, []),
+    )
+
+    await screen.findByText('Integration events')
+
+    await user.click(screen.getByRole('combobox', { name: 'Assign architect' }))
+    expect(await screen.findByRole('option', { name: 'Priya Silva' })).toBeInTheDocument()
+    // Deactivated accounts cannot be given work, so the dropdown leaves them out.
+    expect(screen.queryByRole('option', { name: 'Retired Architect' })).not.toBeInTheDocument()
+  })
+
+  it('assigns the chosen architect and shows the project as it comes back', async () => {
+    const requests = renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, pendingProject()),
+      apiResponse(200, []),
+      // The reply: assigning on a Pending project moved it to Designing.
+      apiResponse(200, projectDetail({ assignedArchitectId: ARCHITECT.id })),
+      apiResponse(200, []),
+    )
+
+    await screen.findByText('Integration events')
+    // The project loaded Pending.
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+
+    await choose('Assign architect', 'Priya Silva')
+    fireEvent.click(screen.getByRole('button', { name: 'Assign architect' }))
+
+    // The page updates from the reply, so the status it shows changes.
+    await waitFor(() => expect(screen.getByText('Designing')).toBeInTheDocument())
+
+    const put = requests.find((request) => request.path === `/api/projects/${PROJECT_ID}/architect`)
+    expect(put?.method).toBe('PUT')
+    expect(put?.body).toEqual({ architectId: ARCHITECT.id })
+  })
+
+  it('shows the service’s refusal when the account is not the right role', async () => {
+    renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, pendingProject()),
+      apiResponse(200, []),
+      apiResponse(400, {
+        title: 'One or more validation errors occurred.',
+        errors: { ArchitectId: ['That account is not an Architect.'] },
+      }),
+    )
+
+    await screen.findByText('Integration events')
+
+    await choose('Assign architect', 'Priya Silva')
+    fireEvent.click(screen.getByRole('button', { name: 'Assign architect' }))
+
+    expect(await screen.findByText('That account is not an Architect.')).toBeInTheDocument()
+  })
+
+  it('assigns a project manager without expecting a status change', async () => {
+    const requests = renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, projectDetail({ status: 'DesignApproved', assignedProjectManagerId: null })),
+      apiResponse(200, []),
+      apiResponse(200, projectDetail({ status: 'DesignApproved', assignedProjectManagerId: PROJECT_MANAGER.id })),
+    )
+
+    await screen.findByText('Integration events')
+
+    await choose('Assign project manager', 'Ravi Kumar')
+    fireEvent.click(screen.getByRole('button', { name: 'Assign project manager' }))
+
+    await waitFor(() => {
+      const put = requests.find(
+        (request) => request.path === `/api/projects/${PROJECT_ID}/project-manager`,
+      )
+      expect(put?.method).toBe('PUT')
+      expect(put?.body).toEqual({ projectManagerId: PROJECT_MANAGER.id })
+    })
+    expect(screen.getByText('Design Approved')).toBeInTheDocument()
+  })
+
+  it('shows a non-admin no assignment controls', async () => {
+    renderPage(asOwningClient, apiResponse(200, projectDetail()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByRole('combobox', { name: 'Assign architect' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Assign project manager' })).not.toBeInTheDocument()
   })
 })

@@ -140,7 +140,9 @@ function AssignRow({
         </Select>
       </Field>
 
-      <Button onClick={onAssign} disabled={!value || busy}>
+      {/* aria-label so the two "Assign" buttons on the page are told apart —
+          by a screen reader, and by a test. */}
+      <Button aria-label={label} onClick={onAssign} disabled={!value || busy}>
         {busy ? 'Assigning…' : 'Assign'}
       </Button>
     </div>
