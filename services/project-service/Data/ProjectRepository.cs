@@ -213,6 +213,103 @@ public class ProjectRepository : IProjectRepository
         return true;
     }
 
+    public async Task<bool> AssignArchitectAsync(
+        Guid projectId,
+        Guid architectId,
+        ProjectStatusChange? transition,
+        IReadOnlyList<OutboxEvent> outboxEvents,
+        DateTime updatedAtUtc)
+    {
+        // No transition: the project is already past Pending and the Architect
+        // is just being set or replaced. One column moves, nothing else — no
+        // history row, no event, because nothing about the lifecycle changed.
+        if (transition is null)
+        {
+            const string sql = @"
+                UPDATE projects
+                SET assigned_architect_id = @architectId,
+                    updated_at            = @updatedAt
+                WHERE id = @id;";
+
+            await using var connection = await _connectionFactory.OpenConnectionAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            AddParameter(command, "@architectId", architectId);
+            AddParameter(command, "@updatedAt", updatedAtUtc);
+            AddParameter(command, "@id", projectId);
+
+            return await command.ExecuteNonQueryAsync() == 1;
+        }
+
+        // With a transition: the same shape as UpdateStatusAsync, with the
+        // Architect set in the same UPDATE. `status = @fromStatus` is the
+        // concurrency guard — if somebody moved the project off Pending in
+        // between, no row matches and nothing is written.
+        const string transitionSql = @"
+            UPDATE projects
+            SET assigned_architect_id = @architectId,
+                status                = @toStatus,
+                updated_at            = @updatedAt
+            WHERE id = @id
+              AND status = @fromStatus;";
+
+        await using var transitionConnection = await _connectionFactory.OpenConnectionAsync();
+        // The assignment, the move, its history row and its event are one write
+        // or none: an Architect set without the Designing transition it triggers
+        // — or the other way round — is exactly the half-done state the
+        // transaction exists to rule out.
+        await using var dbTransaction = await transitionConnection.BeginTransactionAsync();
+
+        await using (var command = transitionConnection.CreateCommand())
+        {
+            command.Transaction = dbTransaction;
+            command.CommandText = transitionSql;
+            AddParameter(command, "@architectId", architectId);
+            AddParameter(command, "@toStatus", transition.ToStatus.ToString());
+            AddParameter(command, "@updatedAt", updatedAtUtc);
+            AddParameter(command, "@id", projectId);
+            // Pending on every US-07 transition — the assignment only moves a
+            // project that has not moved yet.
+            AddParameter(command, "@fromStatus", transition.FromStatus?.ToString());
+
+            if (await command.ExecuteNonQueryAsync() == 0)
+            {
+                await dbTransaction.RollbackAsync();
+                return false;
+            }
+        }
+
+        await InsertStatusChangeAsync(transitionConnection, dbTransaction, transition);
+
+        // Only reached when the guarded UPDATE actually moved the project.
+        await InsertOutboxEventsAsync(transitionConnection, dbTransaction, outboxEvents);
+
+        await dbTransaction.CommitAsync();
+
+        return true;
+    }
+
+    public async Task<bool> AssignProjectManagerAsync(
+        Guid projectId,
+        Guid projectManagerId,
+        DateTime updatedAtUtc)
+    {
+        const string sql = @"
+            UPDATE projects
+            SET assigned_project_manager_id = @projectManagerId,
+                updated_at                  = @updatedAt
+            WHERE id = @id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@projectManagerId", projectManagerId);
+        AddParameter(command, "@updatedAt", updatedAtUtc);
+        AddParameter(command, "@id", projectId);
+
+        return await command.ExecuteNonQueryAsync() == 1;
+    }
+
     /// <summary>
     /// Appends one history row on an existing connection and transaction, so it
     /// lands with the project write it belongs to.
