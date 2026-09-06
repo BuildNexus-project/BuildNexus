@@ -209,3 +209,43 @@ export function updateProjectStatus(
     json: { status },
   })
 }
+
+/**
+ * Puts an Architect on a project and returns it as it now stands.
+ *
+ * Admin only. Assigning an Architect to a project that is still `Pending` also
+ * moves it to `Designing` — the returned {@link ProjectDetail} carries the new
+ * status and history entry. A project already past `Pending` just has the slot
+ * set or replaced.
+ *
+ * The account must hold the Architect role: an unknown id or the wrong role
+ * comes back as {@link ApiError} with status 400 and an `ArchitectId` field
+ * error, an id that is not a project as a 404, a 409 means somebody moved the
+ * project off `Pending` first, and a 502 means the User Service could not be
+ * reached to check the role.
+ */
+export function assignArchitect(authFetch: AuthFetch, projectId: string, architectId: string) {
+  return authFetch<ProjectDetail>(`/api/projects/${projectId}/architect`, {
+    method: 'PUT',
+    json: { architectId },
+  })
+}
+
+/**
+ * Puts a Project Manager on a project and returns it as it now stands.
+ *
+ * Admin only, and the mirror of {@link assignArchitect} for the PM slot —
+ * except there is no status change: a PM is put on a project without moving it.
+ * A `ProjectManagerId` field error means an unknown id or an account that is
+ * not a Project Manager.
+ */
+export function assignProjectManager(
+  authFetch: AuthFetch,
+  projectId: string,
+  projectManagerId: string,
+) {
+  return authFetch<ProjectDetail>(`/api/projects/${projectId}/project-manager`, {
+    method: 'PUT',
+    json: { projectManagerId },
+  })
+}
