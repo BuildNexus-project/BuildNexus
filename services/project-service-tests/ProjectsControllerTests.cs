@@ -287,5 +287,20 @@ public class ProjectsControllerTests
             DateTime updatedAtUtc,
             IReadOnlyList<OutboxEvent> outboxEvents) =>
             Task.FromResult(false);
+
+        // US-07 staff assignment is not exercised by the US-05 create tests.
+        public Task<bool> AssignArchitectAsync(
+            Guid projectId,
+            Guid architectId,
+            ProjectStatusChange? transition,
+            IReadOnlyList<OutboxEvent> outboxEvents,
+            DateTime updatedAtUtc) =>
+            Task.FromResult(false);
+
+        public Task<bool> AssignProjectManagerAsync(
+            Guid projectId,
+            Guid projectManagerId,
+            DateTime updatedAtUtc) =>
+            Task.FromResult(false);
     }
 }
