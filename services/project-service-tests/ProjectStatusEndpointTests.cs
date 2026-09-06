@@ -347,6 +347,7 @@ public class ProjectStatusEndpointTests
         var controller = new ProjectsController(
             repository,
             new FakeOutboxRepository(),
+            new FakeUserDirectoryClient(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext

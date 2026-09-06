@@ -232,7 +232,8 @@ public class ProjectEventIntegrationTests
         var repository = new StubRepository();
         var outbox = new FakeOutboxRepository();
 
-        var controller = new ProjectsController(repository, outbox, NullLogger<ProjectsController>.Instance)
+        var controller = new ProjectsController(
+            repository, outbox, new FakeUserDirectoryClient(), NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {
