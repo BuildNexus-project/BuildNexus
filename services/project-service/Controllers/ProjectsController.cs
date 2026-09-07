@@ -5,6 +5,7 @@ using BuildNexus.ProjectService.Contracts;
 using BuildNexus.ProjectService.Data;
 using BuildNexus.ProjectService.Messaging;
 using BuildNexus.ProjectService.Models;
+using BuildNexus.ProjectService.Users;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -30,15 +31,18 @@ public class ProjectsController : ControllerBase
 {
     private readonly IProjectRepository _projectRepository;
     private readonly IOutboxRepository _outboxRepository;
+    private readonly IUserDirectoryClient _userDirectory;
     private readonly ILogger<ProjectsController> _logger;
 
     public ProjectsController(
         IProjectRepository projectRepository,
         IOutboxRepository outboxRepository,
+        IUserDirectoryClient userDirectory,
         ILogger<ProjectsController> logger)
     {
         _projectRepository = projectRepository;
         _outboxRepository = outboxRepository;
+        _userDirectory = userDirectory;
         _logger = logger;
     }
 
@@ -331,6 +335,197 @@ public class ProjectsController : ControllerBase
     }
 
     /// <summary>
+    /// Puts an Architect on a project. Allowed roles: Admin.
+    /// </summary>
+    /// <remarks>
+    /// US-07: only an Admin assigns staff, and the account named must actually
+    /// hold the Architect role — checked against the User Service with the
+    /// Admin's own forwarded token, since this service holds no copy of who is
+    /// what.
+    /// <para>
+    /// Assigning an Architect to a project that is still <c>Pending</c> also
+    /// moves it to <c>Designing</c>: the same transition
+    /// <c>PATCH /status</c> would make, with the same history row and the same
+    /// <c>ProjectUpdated</c> event, written in one transaction with the
+    /// assignment. A project already past <c>Pending</c> just has the slot set
+    /// or replaced, and nothing about the lifecycle changes.
+    /// </para>
+    /// <para>
+    /// Whether the account is still active is not checked here — <c>GET
+    /// /api/users/{id}</c> reports the role but not the status. The directory
+    /// the Admin picks from lists only active staff, and tightening this needs
+    /// the User Service to carry <c>isActive</c> on that response.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The project as it now stands, with the new history entry if it moved.</response>
+    /// <response code="400">The payload failed validation, or the account is unknown or not an Architect.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller holds a valid token but is not an Admin.</response>
+    /// <response code="404">No project has that id.</response>
+    /// <response code="409">Somebody moved the project off Pending first.</response>
+    /// <response code="502">The User Service could not be reached to check the account's role.</response>
+    [HttpPut("{id:guid}/architect")]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(ProjectDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<IActionResult> AssignArchitect(
+        Guid id,
+        [FromBody] AssignArchitectRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetCallerId(out var adminId) || CallerBearerToken() is not { } token)
+        {
+            return Unauthorized();
+        }
+
+        var project = await _projectRepository.GetByIdAsync(id);
+
+        if (project is null)
+        {
+            return ProjectNotFound(id);
+        }
+
+        var architectId = request.ArchitectId!.Value;
+
+        if (await CheckAssigneeRoleAsync(
+                architectId, PlatformRoles.Architect, "an Architect", nameof(request.ArchitectId), token, cancellationToken)
+            is { } refusal)
+        {
+            return refusal;
+        }
+
+        var now = DateTime.UtcNow;
+
+        // Pending → Designing rides along only when the project has not moved
+        // yet. Built here because that is what the write is given; ForStatusChange
+        // returns just ProjectUpdated for this move, since Designing is not the
+        // approval milestone.
+        ProjectStatusChange? transition = project.Status == ProjectStatus.Pending
+            ? new ProjectStatusChange
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = project.Id,
+                FromStatus = ProjectStatus.Pending,
+                ToStatus = ProjectStatus.Designing,
+                ChangedByUserId = adminId,
+                ChangedByRole = CallerRole() ?? string.Empty,
+                ChangedAt = now
+            }
+            : null;
+
+        var raised = transition is null
+            ? []
+            : ProjectEvents.ForStatusChange(project, transition);
+
+        if (!await _projectRepository.AssignArchitectAsync(project.Id, architectId, transition, raised, now))
+        {
+            return ProjectMovedOn();
+        }
+
+        _logger.LogInformation(
+            "Admin {AdminId} assigned architect {ArchitectId} to project {ProjectId}{Transition}.",
+            adminId,
+            architectId,
+            project.Id,
+            transition is null ? string.Empty : "; project moved Pending -> Designing");
+
+        // Answer with the project as it now stands rather than re-reading it.
+        project.AssignedArchitectId = architectId;
+        project.UpdatedAt = now;
+
+        if (transition is not null)
+        {
+            project.Status = ProjectStatus.Designing;
+        }
+
+        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
+
+        return Ok(ProjectDetailResponse.From(project, history));
+    }
+
+    /// <summary>
+    /// Puts a Project Manager on a project. Allowed roles: Admin.
+    /// </summary>
+    /// <remarks>
+    /// US-07: only an Admin assigns staff, and the account named must hold the
+    /// Project Manager role — checked against the User Service the same way
+    /// <see cref="AssignArchitect"/> checks the Architect.
+    /// <para>
+    /// No status change and nothing announced. A PM is typically put on a
+    /// project around or after its design is approved, but that is a matter of
+    /// when an Admin does this, not a rule this endpoint enforces — the slot can
+    /// be filled or changed at any point in the lifecycle.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The project as it now stands.</response>
+    /// <response code="400">The payload failed validation, or the account is unknown or not a Project Manager.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller holds a valid token but is not an Admin.</response>
+    /// <response code="404">No project has that id.</response>
+    /// <response code="409">The project was removed first.</response>
+    /// <response code="502">The User Service could not be reached to check the account's role.</response>
+    [HttpPut("{id:guid}/project-manager")]
+    [Authorize(Roles = PlatformRoles.Admin)]
+    [ProducesResponseType(typeof(ProjectDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<IActionResult> AssignProjectManager(
+        Guid id,
+        [FromBody] AssignProjectManagerRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetCallerId(out var adminId) || CallerBearerToken() is not { } token)
+        {
+            return Unauthorized();
+        }
+
+        var project = await _projectRepository.GetByIdAsync(id);
+
+        if (project is null)
+        {
+            return ProjectNotFound(id);
+        }
+
+        var projectManagerId = request.ProjectManagerId!.Value;
+
+        if (await CheckAssigneeRoleAsync(
+                projectManagerId, PlatformRoles.ProjectManager, "a Project Manager", nameof(request.ProjectManagerId), token, cancellationToken)
+            is { } refusal)
+        {
+            return refusal;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (!await _projectRepository.AssignProjectManagerAsync(project.Id, projectManagerId, now))
+        {
+            return ProjectMovedOn();
+        }
+
+        _logger.LogInformation(
+            "Admin {AdminId} assigned project manager {ProjectManagerId} to project {ProjectId}.",
+            adminId,
+            projectManagerId,
+            project.Id);
+
+        project.AssignedProjectManagerId = projectManagerId;
+        project.UpdatedAt = now;
+
+        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
+
+        return Ok(ProjectDetailResponse.From(project, history));
+    }
+
+    /// <summary>
     /// The events this service has raised for one project, and whether each one
     /// reached the message bus. Allowed roles: Admin.
     /// </summary>
@@ -391,6 +586,83 @@ public class ProjectsController : ControllerBase
     /// names. Recorded on a status change exactly as it was at the time.
     /// </summary>
     private string? CallerRole() => User.FindFirstValue(JwtOptions.RoleClaimType);
+
+    /// <summary>
+    /// The raw access token from the <c>Authorization</c> header, without the
+    /// <c>Bearer </c> prefix — forwarded to the User Service so it decides the
+    /// <c>GET /api/users/{id}</c> read as if the Admin asked it directly.
+    /// </summary>
+    private string? CallerBearerToken()
+    {
+        var header = Request.Headers.Authorization.ToString();
+
+        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header["Bearer ".Length..].Trim() is { Length: > 0 } value ? value : null
+            : null;
+    }
+
+    /// <summary>
+    /// Asks the User Service whether <paramref name="assigneeId"/> holds
+    /// <paramref name="expectedRole"/>. Returns <c>null</c> to carry on, or the
+    /// response to send back instead.
+    /// </summary>
+    private async Task<IActionResult?> CheckAssigneeRoleAsync(
+        Guid assigneeId,
+        string expectedRole,
+        string humanRole,
+        string field,
+        string token,
+        CancellationToken cancellationToken)
+    {
+        var lookup = await _userDirectory.GetUserAsync(assigneeId, token, cancellationToken);
+
+        switch (lookup.Outcome)
+        {
+            case UserLookupOutcome.Found when lookup.HasRole(expectedRole):
+                return null;
+
+            case UserLookupOutcome.Found:
+                return AssigneeRejected(field, $"That account is not {humanRole}.");
+
+            case UserLookupOutcome.NotFound:
+                return AssigneeRejected(field, "No account with that id.");
+
+            default:
+                _logger.LogWarning(
+                    "Could not check the role of {AssigneeId} with the User Service; assignment refused.", assigneeId);
+
+                return Problem(
+                    statusCode: StatusCodes.Status502BadGateway,
+                    title: "Could not verify the account",
+                    detail: "The account's role could not be checked with the User Service right now. "
+                            + "Try again in a moment.");
+        }
+    }
+
+    /// <summary>
+    /// A bad assignee — unknown, or the wrong role. Returned as a field error so
+    /// the offending control in the form is the one that lights up.
+    /// </summary>
+    private IActionResult AssigneeRejected(string field, string message)
+    {
+        _logger.LogWarning("Assignment refused: {Field} — {Message}", field, message);
+
+        return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+        {
+            [field] = [message]
+        }));
+    }
+
+    /// <summary>
+    /// The project changed under the caller between the read and the write —
+    /// moved off Pending, or removed. Same wording as a status-change conflict.
+    /// </summary>
+    private IActionResult ProjectMovedOn() =>
+        Problem(
+            statusCode: StatusCodes.Status409Conflict,
+            title: "The project has moved on",
+            detail: "Somebody changed this project while you were looking at it. "
+                    + "Reload it to see where it stands now.");
 
     /// <summary>No project with that id — as far as this service is concerned, it does not exist.</summary>
     private IActionResult ProjectNotFound(Guid id) =>

@@ -347,6 +347,7 @@ public class ProjectStatusEndpointTests
         var controller = new ProjectsController(
             repository,
             new FakeOutboxRepository(),
+            new FakeUserDirectoryClient(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -512,6 +513,21 @@ public class ProjectStatusEndpointTests
 
             return Task.FromResult(true);
         }
+
+        // US-07 staff assignment is not exercised by these US-06 status tests.
+        public Task<bool> AssignArchitectAsync(
+            Guid projectId,
+            Guid architectId,
+            ProjectStatusChange? transition,
+            IReadOnlyList<OutboxEvent> outboxEvents,
+            DateTime updatedAtUtc) =>
+            Task.FromResult(false);
+
+        public Task<bool> AssignProjectManagerAsync(
+            Guid projectId,
+            Guid projectManagerId,
+            DateTime updatedAtUtc) =>
+            Task.FromResult(false);
     }
 
 }

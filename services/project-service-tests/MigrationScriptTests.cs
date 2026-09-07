@@ -31,6 +31,7 @@ public class MigrationScriptTests
     [InlineData("002_add_project_status_history.sql")]
     [InlineData("003_add_status_history_sequence.sql")]
     [InlineData("004_create_project_outbox.sql")]
+    [InlineData("005_index_projects_assigned_staff.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));
@@ -211,6 +212,19 @@ public class MigrationScriptTests
 
         Assert.Contains("envelope        LONGTEXT", sql, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"(?i)envelope\s+JSON", sql);
+    }
+
+    [Fact]
+    public void The_assigned_staff_columns_are_indexed_for_the_dashboard_query()
+    {
+        // 002 added the columns; nothing wrote them until US-07, so 005 is where
+        // they earn an index. ListForUserAsync filters on all three of
+        // client_id, assigned_architect_id and assigned_project_manager_id, and
+        // the first has been indexed since 001.
+        var sql = StripComments(ReadScript(Script("005_index_projects_assigned_staff.sql")));
+
+        Assert.Contains("ON projects (assigned_architect_id)", sql, StringComparison.Ordinal);
+        Assert.Contains("ON projects (assigned_project_manager_id)", sql, StringComparison.Ordinal);
     }
 
     [Fact]

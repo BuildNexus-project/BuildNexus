@@ -5,6 +5,14 @@ import { useAuth } from '@/auth/auth-context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldLabel } from '@/components/ui/field'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import {
   Table,
@@ -14,8 +22,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { apiErrorMessage } from '@/lib/api'
+import { ApiError, apiErrorMessage } from '@/lib/api'
+import { fetchAllUsers, type AdminUserSummary } from '@/lib/auth-api'
 import {
+  assignArchitect,
+  assignProjectManager,
   fetchProject,
   fetchProjectEvents,
   updateProjectStatus,
@@ -65,6 +76,78 @@ function describeChange(change: ProjectStatusChange): string {
 
 /** Shown when the delivery log itself cannot be read. */
 const EVENTS_LOAD_FAILED = 'Could not load this project’s events.'
+
+/** Shown when the list of assignable staff cannot be read. */
+const STAFF_LOAD_FAILED = 'Could not load the list of staff to assign.'
+
+/**
+ * The message for a failed assignment. A 400 from the service names the field
+ * that was wrong — an unknown id, or an account that is not the right role —
+ * and that specific message beats "one or more validation errors occurred".
+ */
+function describeAssignFailure(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    const fieldMessages = Object.values(error.fieldErrors).flat()
+
+    if (fieldMessages.length > 0) {
+      return fieldMessages.join(' ')
+    }
+  }
+
+  return apiErrorMessage(error, fallback)
+}
+
+/**
+ * One assignment control: a dropdown of the staff who may fill a slot, and a
+ * button to commit the choice. Only ever rendered for an Admin.
+ */
+function AssignRow({
+  label,
+  placeholder,
+  staff,
+  value,
+  onValueChange,
+  onAssign,
+  busy,
+}: {
+  label: string
+  placeholder: string
+  /** `null` while the list is still loading. */
+  staff: AdminUserSummary[] | null
+  value: string | null
+  onValueChange: (value: string | null) => void
+  onAssign: () => void
+  busy: boolean
+}) {
+  const nameFor = (id: string | null) =>
+    staff?.find((person) => person.id === id)?.fullName ?? placeholder
+
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+      <Field className="flex-1">
+        <FieldLabel htmlFor={label}>{label}</FieldLabel>
+        <Select value={value} onValueChange={onValueChange} disabled={staff === null || busy}>
+          <SelectTrigger id={label} className="w-full">
+            <SelectValue placeholder={placeholder}>{(id: string | null) => nameFor(id)}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {(staff ?? []).map((person) => (
+              <SelectItem key={person.id} value={person.id}>
+                {person.fullName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+
+      {/* aria-label so the two "Assign" buttons on the page are told apart —
+          by a screen reader, and by a test. */}
+      <Button aria-label={label} onClick={onAssign} disabled={!value || busy}>
+        {busy ? 'Assigning…' : 'Assign'}
+      </Button>
+    </div>
+  )
+}
 
 /**
  * How one event's delivery reads.
@@ -136,9 +219,17 @@ export function ProjectDetailPage() {
   const [events, setEvents] = useState<ProjectEvent[] | null>(null)
   const [eventsError, setEventsError] = useState<string | null>(null)
 
+  const [architects, setArchitects] = useState<AdminUserSummary[] | null>(null)
+  const [projectManagers, setProjectManagers] = useState<AdminUserSummary[] | null>(null)
+  const [architectChoice, setArchitectChoice] = useState<string | null>(null)
+  const [pmChoice, setPmChoice] = useState<string | null>(null)
+  const [assigning, setAssigning] = useState<'architect' | 'projectManager' | null>(null)
+  const [assignError, setAssignError] = useState<string | null>(null)
+
   // The events view is the integration answering for itself, and the service
   // refuses it to everybody else with a 403. Asking anyway would show every
-  // Client an error for something that is not theirs to see.
+  // Client an error for something that is not theirs to see. Staff assignment
+  // is Admin-only for the same reason.
   const isAdmin = user !== null && ADMIN_ROLES.includes(user.role)
 
   useEffect(() => {
@@ -198,6 +289,40 @@ export function ProjectDetailPage() {
   }, [authFetch, isAdmin, projectId])
 
   /**
+   * Loads the staff an Admin can assign — active Architects and Project
+   * Managers only. The role filter is the service's (`GET /api/users?role=`),
+   * so the dropdowns cannot offer somebody the assign endpoint would refuse;
+   * deactivated accounts are dropped here.
+   */
+  useEffect(() => {
+    if (!isAdmin) {
+      return
+    }
+
+    let cancelled = false
+
+    Promise.all([
+      fetchAllUsers(authFetch, { role: 'Architect', pageSize: 100 }),
+      fetchAllUsers(authFetch, { role: 'ProjectManager', pageSize: 100 }),
+    ])
+      .then(([architectPage, projectManagerPage]) => {
+        if (!cancelled) {
+          setArchitects(architectPage.items.filter((person) => person.isActive))
+          setProjectManagers(projectManagerPage.items.filter((person) => person.isActive))
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAssignError(apiErrorMessage(error, STAFF_LOAD_FAILED))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authFetch, isAdmin])
+
+  /**
    * Re-reads the delivery log after something has changed it.
    *
    * Not cancellation-guarded like the load above, because this only runs from a
@@ -242,6 +367,52 @@ export function ProjectDetailPage() {
       )
     } finally {
       setChangingTo(null)
+    }
+  }
+
+  /**
+   * Puts the chosen person in a slot. The service answers with the project as
+   * it now stands — an Architect assignment on a Pending project comes back
+   * Designing, history included — so the page updates from the reply.
+   */
+  async function assign(slot: 'architect' | 'projectManager') {
+    if (!projectId) {
+      return
+    }
+
+    const staffId = slot === 'architect' ? architectChoice : pmChoice
+
+    if (!staffId) {
+      return
+    }
+
+    setAssignError(null)
+    setAssigning(slot)
+
+    try {
+      const updated =
+        slot === 'architect'
+          ? await assignArchitect(authFetch, projectId, staffId)
+          : await assignProjectManager(authFetch, projectId, staffId)
+
+      setProject(updated)
+
+      if (slot === 'architect') {
+        setArchitectChoice(null)
+        // Assigning an Architect to a Pending project moves it to Designing,
+        // which raises an event — so the log below is out of date.
+        if (isAdmin) {
+          await refreshEvents(projectId)
+        }
+      } else {
+        setPmChoice(null)
+      }
+    } catch (error) {
+      setAssignError(
+        describeAssignFailure(error, 'Could not assign this person. Please try again.'),
+      )
+    } finally {
+      setAssigning(null)
     }
   }
 
@@ -330,6 +501,39 @@ export function ProjectDetailPage() {
                 )}
               </Detail>
             </div>
+
+            {isAdmin && (
+              <div className="flex flex-col gap-4">
+                <AssignRow
+                  label="Assign architect"
+                  placeholder={architects === null ? 'Loading…' : 'Choose an architect'}
+                  staff={architects}
+                  value={architectChoice}
+                  onValueChange={setArchitectChoice}
+                  onAssign={() => assign('architect')}
+                  busy={assigning === 'architect'}
+                />
+                <AssignRow
+                  label="Assign project manager"
+                  placeholder={projectManagers === null ? 'Loading…' : 'Choose a project manager'}
+                  staff={projectManagers}
+                  value={pmChoice}
+                  onValueChange={setPmChoice}
+                  onAssign={() => assign('projectManager')}
+                  busy={assigning === 'projectManager'}
+                />
+
+                <p className="text-muted-foreground text-sm">
+                  Assigning an architect while this project is still Pending moves it to Designing.
+                </p>
+
+                {assignError && (
+                  <p role="alert" className="text-destructive text-sm">
+                    {assignError}
+                  </p>
+                )}
+              </div>
+            )}
           </section>
 
           <Separator />

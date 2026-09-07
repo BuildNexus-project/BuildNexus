@@ -321,6 +321,95 @@ public class ProjectRepositoryDatabaseTests
         Assert.DoesNotContain(await _fixture.Outbox.ListPendingAsync(100), e => e.Id == stored.Id);
     }
 
+    // ------------------------------------------- staff assignment (US-07) ----
+
+    [Fact]
+    public async Task Assigning_an_architect_with_a_transition_moves_the_project_and_records_it()
+    {
+        // Against the real UPDATE: the slot, the Pending -> Designing move, the
+        // history row and the event are one write, and the move is guarded on
+        // the project still holding Pending.
+        var project = await CreateProjectAsync();
+        var architectId = ChangeId("a5519111");
+
+        var transition = Change(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+        var accepted = await _fixture.Repository.AssignArchitectAsync(
+            project.Id, architectId, transition, ProjectEvents.ForStatusChange(project, transition), SameSecond);
+
+        Assert.True(accepted);
+
+        var stored = await _fixture.Repository.GetByIdAsync(project.Id);
+        Assert.Equal(ProjectStatus.Designing, stored!.Status);
+        Assert.Equal(architectId, stored.AssignedArchitectId);
+
+        var history = await _fixture.Repository.GetStatusHistoryAsync(project.Id);
+        Assert.Equal([ProjectStatus.Pending, ProjectStatus.Designing], history.Select(change => change.ToStatus));
+
+        var raised = Assert.Single(await _fixture.Outbox.ListForProjectAsync(project.Id));
+        Assert.Equal(ProjectEventTypes.ProjectUpdated, raised.EventType);
+    }
+
+    [Fact]
+    public async Task The_architect_transition_is_refused_when_the_project_is_no_longer_pending()
+    {
+        var project = await CreateProjectAsync();
+        await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+
+        // The transition still reads Pending -> Designing, but the project has
+        // already moved. The guard matches no row.
+        var stale = Change(project, SecondMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+        var accepted = await _fixture.Repository.AssignArchitectAsync(
+            project.Id, ChangeId("a5519222"), stale, ProjectEvents.ForStatusChange(project, stale), SameSecond);
+
+        Assert.False(accepted);
+
+        var stored = await _fixture.Repository.GetByIdAsync(project.Id);
+        Assert.Null(stored!.AssignedArchitectId);
+        Assert.Equal(2, (await _fixture.Repository.GetStatusHistoryAsync(project.Id)).Count);
+    }
+
+    [Fact]
+    public async Task Assigning_an_architect_without_a_transition_sets_only_the_slot()
+    {
+        var project = await CreateProjectAsync();
+        await MoveAsync(project, FirstMoveId, ProjectStatus.Pending, ProjectStatus.Designing);
+        var architectId = ChangeId("a5519333");
+
+        var accepted = await _fixture.Repository.AssignArchitectAsync(project.Id, architectId, null, [], SameSecond);
+
+        Assert.True(accepted);
+
+        var stored = await _fixture.Repository.GetByIdAsync(project.Id);
+        Assert.Equal(architectId, stored!.AssignedArchitectId);
+        Assert.Equal(ProjectStatus.Designing, stored.Status);
+        Assert.Equal(2, (await _fixture.Repository.GetStatusHistoryAsync(project.Id)).Count);
+    }
+
+    [Fact]
+    public async Task Assigning_a_project_manager_sets_only_the_slot()
+    {
+        var project = await CreateProjectAsync();
+        var pmId = ChangeId("b7719111");
+
+        var accepted = await _fixture.Repository.AssignProjectManagerAsync(project.Id, pmId, SameSecond);
+
+        Assert.True(accepted);
+
+        var stored = await _fixture.Repository.GetByIdAsync(project.Id);
+        Assert.Equal(pmId, stored!.AssignedProjectManagerId);
+        Assert.Equal(ProjectStatus.Pending, stored.Status);
+        Assert.Single(await _fixture.Repository.GetStatusHistoryAsync(project.Id));
+    }
+
+    [Fact]
+    public async Task Assigning_to_a_project_that_does_not_exist_returns_false()
+    {
+        var missing = Guid.NewGuid();
+
+        Assert.False(await _fixture.Repository.AssignArchitectAsync(missing, Guid.NewGuid(), null, [], SameSecond));
+        Assert.False(await _fixture.Repository.AssignProjectManagerAsync(missing, Guid.NewGuid(), SameSecond));
+    }
+
     private async Task MoveAsync(Project project, Guid changeId, ProjectStatus from, ProjectStatus to)
     {
         Assert.True(
