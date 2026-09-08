@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -152,5 +152,59 @@ describe('ProjectsPage', () => {
         screen.getByText('Could not load your projects. Please try again.'),
       ).toBeInTheDocument(),
     )
+  })
+
+  // US-08: a cancelled project is not being worked on, so it is off the active
+  // list. The service does the filtering — this side only asks it to.
+  it('leaves cancelled projects out until the toggle is ticked', async () => {
+    const active = projects()
+    const withCancelled = [
+      ...active,
+      {
+        id: 'd4f6a8b0-3e5a-4f6b-0c1d-2e3f4a5b6c7d',
+        clientId: CLIENT_ID,
+        name: 'Hillside cabin',
+        location: 'Ella',
+        status: 'Cancelled',
+        createdAt: '2026-06-01T09:00:00',
+        updatedAt: '2026-06-10T09:00:00',
+      },
+    ]
+
+    const requests = renderPage(
+      'Client',
+      apiResponse(200, active),
+      apiResponse(200, withCancelled),
+    )
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByText('Hillside cabin')).not.toBeInTheDocument()
+    // Nothing asked for cancelled projects, so the plain list is requested.
+    expect(requests[0].path).toBe('/api/projects')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled projects' }))
+
+    expect(await screen.findByText('Hillside cabin')).toBeInTheDocument()
+    expect(requests).toHaveLength(2)
+    expect(requests[1].path).toBe('/api/projects?includeCancelled=true')
+  })
+
+  it('goes back to the active list when the toggle is switched off again', async () => {
+    const requests = renderPage(
+      'Client',
+      apiResponse(200, projects()),
+      apiResponse(200, projects()),
+    )
+
+    await screen.findByText('Beachfront villa')
+    const toggle = screen.getByRole('checkbox', { name: 'Show cancelled projects' })
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].path).toBe('/api/projects?includeCancelled=true')
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(requests[2].path).toBe('/api/projects')
   })
 })
