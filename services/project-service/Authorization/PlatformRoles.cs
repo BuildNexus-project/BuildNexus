@@ -55,6 +55,18 @@ public static class PlatformRoles
     /// </remarks>
     public const string ProjectStaffOrAdmin = $"{Architect},{ProjectManager},{Admin}";
 
+    /// <summary>
+    /// The two roles that may close a project out before it is built — the
+    /// owning Client and an Admin (US-08).
+    /// </summary>
+    /// <remarks>
+    /// The assigned Architect and Project Manager are outside it: abandoning a
+    /// project before construction is the customer's or the company's call, not
+    /// the people delivering it. Which of the two may cancel <em>this</em>
+    /// project is <see cref="ProjectAccessPolicy.CanCancel"/>'s answer.
+    /// </remarks>
+    public const string ClientOrAdmin = $"{Client},{Admin}";
+
     /// <summary>All four names, for code that has to enumerate the roles.</summary>
     public static readonly IReadOnlyList<string> All = [Client, Architect, ProjectManager, Admin];
 }

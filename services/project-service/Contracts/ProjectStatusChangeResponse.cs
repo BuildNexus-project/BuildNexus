@@ -34,6 +34,13 @@ public class ProjectStatusChangeResponse
     /// </summary>
     public string ChangedByRole { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Why the change was made, when there is a reason on record. <c>null</c>
+    /// for a move that speaks for itself; a cancellation records its reason
+    /// here (US-08).
+    /// </summary>
+    public string? Note { get; set; }
+
     public DateTime ChangedAt { get; set; }
 
     public static ProjectStatusChangeResponse From(ProjectStatusChange change) => new()
@@ -45,6 +52,7 @@ public class ProjectStatusChangeResponse
         ToStatus = change.ToStatus.ToString(),
         ChangedByUserId = change.ChangedByUserId,
         ChangedByRole = change.ChangedByRole,
+        Note = change.Note,
         ChangedAt = change.ChangedAt
     };
 }
