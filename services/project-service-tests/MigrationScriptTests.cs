@@ -32,6 +32,7 @@ public class MigrationScriptTests
     [InlineData("003_add_status_history_sequence.sql")]
     [InlineData("004_create_project_outbox.sql")]
     [InlineData("005_index_projects_assigned_staff.sql")]
+    [InlineData("006_add_cancelled_status.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));
@@ -114,11 +115,12 @@ public class MigrationScriptTests
     [Fact]
     public void Every_status_the_service_can_produce_is_allowed_by_the_schema()
     {
-        // Written over the enum rather than over today's five names: a status
-        // added in a later story without a matching migration would otherwise
+        // Written over the enum rather than over today's names, and across every
+        // script rather than one: a status added in a later story without a
+        // matching migration — wherever that migration lands — would otherwise
         // only surface as a constraint violation the first time somebody tried
-        // to use it.
-        var sql = ReadScript(Script("002_add_project_status_history.sql"));
+        // to use it. 002 defined the lifecycle; 006 added Cancelled.
+        var sql = string.Concat(ScriptNames().Select(ReadScript));
 
         var missing = Enum.GetNames<ProjectStatus>()
             .Where(status => !sql.Contains($"'{status}'", StringComparison.Ordinal))
@@ -128,6 +130,18 @@ public class MigrationScriptTests
             missing.Count == 0,
             "These statuses exist in ProjectStatus but no migration allows them in the database: "
             + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_terminal_cancelled_status_and_its_reason_column_arrive_in_006()
+    {
+        // US-08: a Cancelled status the three constraints now allow, and a note
+        // column on the history row for the reason a change was made.
+        var sql = StripComments(ReadScript(Script("006_add_cancelled_status.sql")));
+
+        Assert.Contains("'Cancelled'", sql, StringComparison.Ordinal);
+        // The reason lives with the transition it explains, on the history row.
+        Assert.Matches(@"(?is)ALTER TABLE project_status_history\s+ADD COLUMN note\b", sql);
     }
 
     [Fact]
