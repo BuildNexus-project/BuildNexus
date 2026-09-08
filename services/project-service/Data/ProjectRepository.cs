@@ -15,7 +15,7 @@ public class ProjectRepository : IProjectRepository
         + "assigned_project_manager_id, created_at, updated_at";
 
     private const string SelectHistoryColumns =
-        "id, project_id, from_status, to_status, changed_by_user_id, changed_by_role, changed_at";
+        "id, project_id, from_status, to_status, changed_by_user_id, changed_by_role, note, changed_at";
 
     private readonly IDbConnectionFactory _connectionFactory;
 
@@ -321,9 +321,9 @@ public class ProjectRepository : IProjectRepository
     {
         const string sql = @"
             INSERT INTO project_status_history
-                (id, project_id, from_status, to_status, changed_by_user_id, changed_by_role, changed_at)
+                (id, project_id, from_status, to_status, changed_by_user_id, changed_by_role, note, changed_at)
             VALUES
-                (@id, @projectId, @fromStatus, @toStatus, @changedByUserId, @changedByRole, @changedAt);";
+                (@id, @projectId, @fromStatus, @toStatus, @changedByUserId, @changedByRole, @note, @changedAt);";
 
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -335,6 +335,8 @@ public class ProjectRepository : IProjectRepository
         AddParameter(command, "@toStatus", change.ToStatus.ToString());
         AddParameter(command, "@changedByUserId", change.ChangedByUserId);
         AddParameter(command, "@changedByRole", change.ChangedByRole);
+        // NULL for a move that speaks for itself; the reason for a cancellation.
+        AddParameter(command, "@note", change.Note);
         AddParameter(command, "@changedAt", change.ChangedAt);
 
         await command.ExecuteNonQueryAsync();
@@ -438,6 +440,7 @@ public class ProjectRepository : IProjectRepository
         ToStatus = Enum.Parse<ProjectStatus>(reader.GetString(reader.GetOrdinal("to_status"))),
         ChangedByUserId = reader.GetGuid(reader.GetOrdinal("changed_by_user_id")),
         ChangedByRole = reader.GetString(reader.GetOrdinal("changed_by_role")),
+        Note = GetNullableString(reader, "note"),
         ChangedAt = reader.GetDateTime(reader.GetOrdinal("changed_at"))
     };
 }
