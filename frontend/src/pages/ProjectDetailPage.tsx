@@ -22,11 +22,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { ApiError, apiErrorMessage } from '@/lib/api'
 import { fetchAllUsers, type AdminUserSummary } from '@/lib/auth-api'
 import {
   assignArchitect,
   assignProjectManager,
+  cancelProject,
   fetchProject,
   fetchProjectEvents,
   updateProjectStatus,
@@ -81,11 +83,13 @@ const EVENTS_LOAD_FAILED = 'Could not load this project’s events.'
 const STAFF_LOAD_FAILED = 'Could not load the list of staff to assign.'
 
 /**
- * The message for a failed assignment. A 400 from the service names the field
- * that was wrong — an unknown id, or an account that is not the right role —
- * and that specific message beats "one or more validation errors occurred".
+ * The message for a failed mutation. A 400 from the service names the field
+ * that was wrong — an unknown id, an account that is not the right role, a
+ * blank reason — and that specific message beats "one or more validation
+ * errors occurred". Anything without a field falls back to the reason the
+ * service gave, then the caller's wording.
  */
-function describeAssignFailure(error: unknown, fallback: string): string {
+function describeFailure(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
     const fieldMessages = Object.values(error.fieldErrors).flat()
 
@@ -225,6 +229,10 @@ export function ProjectDetailPage() {
   const [pmChoice, setPmChoice] = useState<string | null>(null)
   const [assigning, setAssigning] = useState<'architect' | 'projectManager' | null>(null)
   const [assignError, setAssignError] = useState<string | null>(null)
+
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
 
   // The events view is the integration answering for itself, and the service
   // refuses it to everybody else with a 403. Asking anyway would show every
@@ -409,10 +417,38 @@ export function ProjectDetailPage() {
       }
     } catch (error) {
       setAssignError(
-        describeAssignFailure(error, 'Could not assign this person. Please try again.'),
+        describeFailure(error, 'Could not assign this person. Please try again.'),
       )
     } finally {
       setAssigning(null)
+    }
+  }
+
+  /**
+   * Closes the project out (US-08). Terminal — the service answers with the
+   * project as it now stands, Cancelled, its history carrying the reason — so
+   * the page updates from the reply.
+   */
+  async function cancel() {
+    if (!projectId || cancelReason.trim().length === 0) {
+      return
+    }
+
+    setCancelError(null)
+    setCancelling(true)
+
+    try {
+      setProject(await cancelProject(authFetch, projectId, cancelReason.trim()))
+      setCancelReason('')
+
+      // Cancellation raises a ProjectUpdated, so the log below is out of date.
+      if (isAdmin) {
+        await refreshEvents(projectId)
+      }
+    } catch (error) {
+      setCancelError(describeFailure(error, 'Could not cancel this project. Please try again.'))
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -448,6 +484,15 @@ export function ProjectDetailPage() {
   // try, which is the answer that counts.
   const canChangeStatus = user !== null && STATUS_CHANGE_ROLES.includes(user.role)
   const nextStatuses = canChangeStatus ? project.allowedNextStatuses : []
+
+  // US-08: the owning Client or an Admin, and only before construction starts.
+  // The service enforces both — this just decides whether to show the control.
+  const isOwningClient = user !== null && user.role === 'Client' && project.clientId === user.id
+  const canCancel =
+    (isAdmin || isOwningClient) &&
+    (project.status === 'Pending' ||
+      project.status === 'Designing' ||
+      project.status === 'DesignApproved')
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col justify-center gap-4 p-6">
@@ -555,7 +600,14 @@ export function ProjectDetailPage() {
                     re-sorts, so the page cannot disagree with the record. */}
                 {project.statusHistory.map((change) => (
                   <TableRow key={change.id}>
-                    <TableCell className="font-medium">{describeChange(change)}</TableCell>
+                    <TableCell className="font-medium">
+                      {describeChange(change)}
+                      {change.note && (
+                        <span className="text-muted-foreground block text-xs font-normal">
+                          {change.note}
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <span className="block">{ROLE_LABELS[change.changedByRole]}</span>
                       <span className="text-muted-foreground block text-xs">
@@ -600,6 +652,46 @@ export function ProjectDetailPage() {
                 {statusError && (
                   <p role="alert" className="text-destructive text-sm">
                     {statusError}
+                  </p>
+                )}
+              </section>
+            </>
+          )}
+
+          {canCancel && (
+            <>
+              <Separator />
+
+              <section className="flex flex-col gap-3">
+                <h2 className="text-sm font-medium">Cancel this project</h2>
+
+                <p className="text-muted-foreground text-sm">
+                  Closes the project out before construction starts. It cannot be undone — the
+                  project stays viewable, but it drops off the active project list.
+                </p>
+
+                <Field>
+                  <FieldLabel htmlFor="cancelReason">Reason</FieldLabel>
+                  <Textarea
+                    id="cancelReason"
+                    rows={2}
+                    value={cancelReason}
+                    onChange={(event) => setCancelReason(event.target.value)}
+                  />
+                </Field>
+
+                <Button
+                  variant="destructive"
+                  className="w-fit"
+                  onClick={cancel}
+                  disabled={cancelReason.trim().length === 0 || cancelling}
+                >
+                  {cancelling ? 'Cancelling…' : 'Cancel project'}
+                </Button>
+
+                {cancelError && (
+                  <p role="alert" className="text-destructive text-sm">
+                    {cancelError}
                   </p>
                 )}
               </section>

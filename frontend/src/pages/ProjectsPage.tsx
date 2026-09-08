@@ -41,11 +41,14 @@ export function ProjectsPage() {
 
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [includeCancelled, setIncludeCancelled] = useState(false)
 
   useEffect(() => {
     let cancelled = false
 
-    fetchProjects(authFetch)
+    // US-08: cancelled projects are off the active list unless asked for. The
+    // service does the filtering; toggling this just refetches.
+    fetchProjects(authFetch, { includeCancelled })
       .then((loaded) => {
         if (!cancelled) {
           setProjects(loaded)
@@ -61,7 +64,7 @@ export function ProjectsPage() {
     return () => {
       cancelled = true
     }
-  }, [authFetch])
+  }, [authFetch, includeCancelled])
 
   const isClient = user !== null && CLIENT_ROLES.includes(user.role)
 
@@ -83,6 +86,16 @@ export function ProjectsPage() {
               {loadError}
             </p>
           )}
+
+          <label className="text-muted-foreground flex w-fit items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeCancelled}
+              onChange={(event) => setIncludeCancelled(event.target.checked)}
+              className="border-input size-4 rounded"
+            />
+            Show cancelled projects
+          </label>
 
           {!loadError && !projects && (
             <p className="text-muted-foreground text-sm">Loading your projects…</p>

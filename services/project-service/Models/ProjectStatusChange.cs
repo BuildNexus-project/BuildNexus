@@ -36,6 +36,13 @@ public class ProjectStatusChange
     public DateTime ChangedAt { get; set; }
 
     /// <summary>
+    /// Why the change was made, when there is a reason worth keeping — US-08's
+    /// cancellation records the Client's or Admin's reason here. <c>null</c> for
+    /// a move that speaks for itself, which is every transition so far.
+    /// </summary>
+    public string? Note { get; set; }
+
+    /// <summary>
     /// The opening entry for a project that has just been created — from
     /// nothing, to whatever status it was created in, by the Client who
     /// submitted it, at the moment it was stored.

@@ -96,6 +96,15 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Admin], RolesFor("AssignProjectManager"));
     }
 
+    [Fact]
+    public void Cancelling_a_project_is_the_client_or_an_admin()
+    {
+        // US-08: the customer whose project it is, or the company — not the
+        // Architect or Project Manager delivering it. The per-project half
+        // (owning Client vs any Client) is ProjectAccessPolicy.CanCancel's.
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Admin], RolesFor("CancelProject"));
+    }
+
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()

@@ -1,7 +1,8 @@
 /**
- * The project lifecycle, exactly as the Project Service spells it, in the order
- * a project moves through it:
- * `Pending → Designing → DesignApproved → Construction → Completed`.
+ * The project statuses, exactly as the Project Service spells them:
+ * `Pending → Designing → DesignApproved → Construction → Completed` along the
+ * forward path, plus `Cancelled` — a terminal state a project can be closed out
+ * into before construction starts (US-08).
  */
 export const PROJECT_STATUSES = [
   'Pending',
@@ -9,6 +10,7 @@ export const PROJECT_STATUSES = [
   'DesignApproved',
   'Construction',
   'Completed',
+  'Cancelled',
 ] as const
 
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number]
@@ -27,4 +29,5 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   DesignApproved: 'Design Approved',
   Construction: 'Construction',
   Completed: 'Completed',
+  Cancelled: 'Cancelled',
 }

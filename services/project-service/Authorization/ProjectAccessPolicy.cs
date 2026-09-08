@@ -51,6 +51,19 @@ public static class ProjectAccessPolicy
     public static bool SeesEveryProject(string? role) => IsAdmin(role);
 
     /// <summary>
+    /// Whether the caller may cancel the project — US-08: the owning Client, or
+    /// an Admin.
+    /// </summary>
+    /// <remarks>
+    /// Narrower than <see cref="CanUpdateStatus"/> in a different direction: the
+    /// assigned Architect and Project Manager, who move a project forward, are
+    /// deliberately out here. The decision to abandon a project before it is
+    /// built is the customer's or the company's, not the people delivering it.
+    /// </remarks>
+    public static bool CanCancel(Project project, Guid userId, string? role) =>
+        IsAdmin(role) || IsOwningClient(project, userId);
+
+    /// <summary>
     /// Compared with <see cref="StringComparison.Ordinal"/>: the role claim is
     /// a wire value the User Service signs, not free text, and a case-insensitive
     /// match here would accept a token this service should not be trusting.

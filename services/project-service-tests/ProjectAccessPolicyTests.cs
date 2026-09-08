@@ -99,6 +99,35 @@ public class ProjectAccessPolicyTests
         Assert.False(ProjectAccessPolicy.CanUpdateStatus(Staffed(), Outsider, role));
     }
 
+    [Fact]
+    public void The_owning_client_and_an_admin_may_cancel_the_project()
+    {
+        // US-08: the customer whose project it is, or the company. Note the
+        // owning Client can cancel even though they cannot move the status
+        // forward — the two rules part ways in both directions.
+        var project = Staffed();
+
+        Assert.True(ProjectAccessPolicy.CanCancel(project, Owner, PlatformRoles.Client));
+        Assert.True(ProjectAccessPolicy.CanCancel(project, Outsider, PlatformRoles.Admin));
+    }
+
+    [Fact]
+    public void The_assigned_staff_may_not_cancel_the_project()
+    {
+        // They deliver a project; abandoning it before it is built is not their
+        // call. This is where CanCancel and CanUpdateStatus diverge.
+        var project = Staffed();
+
+        Assert.False(ProjectAccessPolicy.CanCancel(project, Architect, PlatformRoles.Architect));
+        Assert.False(ProjectAccessPolicy.CanCancel(project, ProjectManager, PlatformRoles.ProjectManager));
+    }
+
+    [Fact]
+    public void A_client_who_did_not_submit_the_project_may_not_cancel_it()
+    {
+        Assert.False(ProjectAccessPolicy.CanCancel(Staffed(), Outsider, PlatformRoles.Client));
+    }
+
     [Theory]
     [InlineData(PlatformRoles.Client)]
     [InlineData(PlatformRoles.Architect)]
@@ -123,6 +152,7 @@ public class ProjectAccessPolicyTests
         Assert.False(ProjectAccessPolicy.SeesEveryProject(role));
         Assert.False(ProjectAccessPolicy.CanView(Staffed(), Outsider, role));
         Assert.False(ProjectAccessPolicy.CanUpdateStatus(Staffed(), Outsider, role));
+        Assert.False(ProjectAccessPolicy.CanCancel(Staffed(), Outsider, role));
     }
 
     /// <summary>A project nobody has been put on — every project today.</summary>

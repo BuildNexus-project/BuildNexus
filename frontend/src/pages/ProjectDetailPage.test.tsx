@@ -752,3 +752,186 @@ describe('ProjectDetailPage staff assignment', () => {
     expect(screen.queryByRole('combobox', { name: 'Assign project manager' })).not.toBeInTheDocument()
   })
 })
+
+/**
+ * US-08 from the browser's side: closing a project out before construction
+ * starts.
+ *
+ * Who may do it — the owning Client or an Admin, never the staff delivering the
+ * project — and when — only before Construction — are both the service's to
+ * enforce, and it does. These cover the half this page owns: whether the
+ * control is offered, that a submission sends the trimmed reason, that the page
+ * re-renders from the reply, and that a refusal is shown with the reason the
+ * service gave.
+ */
+describe('ProjectDetailPage cancellation', () => {
+  const CANCEL_PATH = `/api/projects/${PROJECT_ID}/cancellation`
+
+  /** The project once it has been cancelled, as the POST reply carries it. */
+  function cancelledReply(reason = 'Client is relocating overseas') {
+    const project = projectDetail()
+
+    return {
+      ...project,
+      status: 'Cancelled',
+      statusHistory: [
+        ...project.statusHistory,
+        {
+          id: 'aaaaaaaa-0000-4000-8000-000000000009',
+          fromStatus: 'Designing',
+          toStatus: 'Cancelled',
+          changedByUserId: CLIENT_ID,
+          changedByRole: 'Client',
+          note: reason,
+          changedAt: '2026-08-12T09:00:00',
+        },
+      ],
+      allowedNextStatuses: [],
+    }
+  }
+
+  const cancelButton = () => screen.getByRole('button', { name: 'Cancel project' })
+
+  it('offers the owning client the control while the project is pre-construction', async () => {
+    renderPage(asOwningClient, apiResponse(200, projectDetail({ status: 'Designing' })))
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.getByRole('heading', { name: 'Cancel this project' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Reason')).toBeInTheDocument()
+    expect(cancelButton()).toBeInTheDocument()
+  })
+
+  it('offers an admin the control too', async () => {
+    renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail({ status: 'Pending', allowedNextStatuses: ['Designing'] })),
+      apiResponse(200, []),
+    )
+
+    await screen.findByText('Integration events')
+    expect(cancelButton()).toBeInTheDocument()
+  })
+
+  it('withholds the control once construction has started', async () => {
+    // The one AC line this page can act on before the service ever hears about
+    // it: past Construction there is nothing to close out.
+    renderPage(asOwningClient, apiResponse(200, projectDetail({ status: 'Construction' })))
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('withholds the control from the staff assigned to the project', async () => {
+    // They deliver the project; whether it goes ahead is the customer's call or
+    // the company's, not theirs.
+    renderPage(asAssignedArchitect, apiResponse(200, projectDetail({ status: 'Designing' })))
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('withholds the control from a client who is not the one who submitted it', async () => {
+    renderPage(
+      { role: 'Client', userId: '33333333-3333-4333-8333-333333333333' },
+      apiResponse(200, projectDetail({ status: 'Designing' })),
+    )
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the button disabled until a reason is entered', async () => {
+    renderPage(asOwningClient, apiResponse(200, projectDetail()))
+
+    const button = await screen.findByRole('button', { name: 'Cancel project' })
+    expect(button).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'No longer going ahead' } })
+    expect(button).toBeEnabled()
+
+    // Whitespace is not a reason.
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: '   ' } })
+    expect(button).toBeDisabled()
+  })
+
+  it('sends the trimmed reason and re-renders the project from the reply', async () => {
+    // The last AC line from this side: the reply carries the project as it now
+    // stands — Cancelled, history included — so nothing is refetched or guessed.
+    const requests = renderPage(
+      asOwningClient,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, cancelledReply()),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Reason'), {
+      target: { value: '  Client is relocating overseas  ' },
+    })
+    fireEvent.click(cancelButton())
+
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].path).toBe(CANCEL_PATH)
+    expect(requests[1].method).toBe('POST')
+    expect(requests[1].body).toEqual({ reason: 'Client is relocating overseas' })
+
+    // The badge follows the reply, and the control drops away with the project
+    // now terminal.
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('shows the reason the service gave when it refuses the cancellation', async () => {
+    renderPage(
+      asOwningClient,
+      apiResponse(200, projectDetail({ status: 'DesignApproved' })),
+      apiResponse(400, {
+        title: 'This project cannot be cancelled',
+        detail:
+          'A Construction project cannot be cancelled — cancellation is only possible before construction starts.',
+      }),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Reason'), {
+      target: { value: 'Changed our minds' },
+    })
+    fireEvent.click(cancelButton())
+
+    expect(
+      await screen.findByText(/cancellation is only possible before construction starts/),
+    ).toBeInTheDocument()
+    // The project is still shown at the status it was actually left at.
+    expect(screen.getByText('Design Approved')).toBeInTheDocument()
+  })
+
+  it('surfaces a field error the service raised against the reason', async () => {
+    // Nothing here caps the length — the service does — so its per-field message
+    // is what the client needs to see, not "one or more validation errors".
+    renderPage(
+      asOwningClient,
+      apiResponse(200, projectDetail()),
+      apiResponse(400, {
+        title: 'One or more validation errors occurred.',
+        errors: { Reason: ['The reason must be between 1 and 500 characters.'] },
+      }),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'x'.repeat(600) } })
+    fireEvent.click(cancelButton())
+
+    expect(
+      await screen.findByText('The reason must be between 1 and 500 characters.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows a cancellation’s reason in the status history', async () => {
+    // The third AC line: a cancelled project stays viewable, and the record
+    // says why it was closed out.
+    renderPage(asOwningClient, apiResponse(200, cancelledReply('Client withdrew funding')))
+
+    await screen.findByText('Beachfront villa')
+
+    const rows = historyRows()
+    expect(rows).toHaveLength(3)
+    expect(within(rows[2]).getByText('Designing → Cancelled')).toBeInTheDocument()
+    expect(within(rows[2]).getByText('Client withdrew funding')).toBeInTheDocument()
+  })
+})
