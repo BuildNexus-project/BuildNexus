@@ -70,8 +70,15 @@ function VersionRow({
   isDownloading: boolean
 }) {
   return (
-    <TableRow>
-      <TableCell className="font-medium">{version.displayName}</TableCell>
+    // Current is highlighted on the row itself, not only in the Status
+    // column, so it reads at a glance in a document with many versions.
+    <TableRow className={version.isCurrent ? 'bg-primary/5' : undefined}>
+      <TableCell className="font-medium">
+        <div className="flex items-center gap-2">
+          {version.displayName}
+          {version.isCurrent && <Badge variant="default">Current</Badge>}
+        </div>
+      </TableCell>
       <TableCell>{formatMoment(version.uploadedAt)}</TableCell>
       <TableCell className="text-muted-foreground text-xs">{version.uploadedBy}</TableCell>
       <TableCell>
@@ -225,8 +232,9 @@ export function DesignDocumentsPage() {
         <CardHeader>
           <CardTitle>Design documents</CardTitle>
           <CardDescription>
-            Every revision an Architect has uploaded, with the latest version at the bottom of
-            each list.
+            Every revision an Architect has uploaded, oldest to newest. The version marked
+            “Current” is the latest one under review or approved — a document with none yet has
+            no version marked.
           </CardDescription>
         </CardHeader>
 
