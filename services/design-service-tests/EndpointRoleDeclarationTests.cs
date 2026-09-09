@@ -76,6 +76,16 @@ public class EndpointRoleDeclarationTests
         Assert.Equal(PlatformRoles.All, RolesFor("DownloadVersionFile"));
     }
 
+    [Fact]
+    public void Reviewing_a_design_document_version_is_the_clients_alone()
+    {
+        // US-11: "As a Client, I want to either approve... or request changes."
+        // Architects submit the work; only the Client who is or is not
+        // satisfied with it decides what happens next.
+        Assert.Equal([PlatformRoles.Client], RolesFor("Approve"));
+        Assert.Equal([PlatformRoles.Client], RolesFor("RequestRevision"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)

@@ -54,6 +54,22 @@ public class DesignVersionResponse
     /// </summary>
     public bool IsCurrent { get; set; }
 
+    /// <summary>
+    /// The Client who approved this version or asked for a revision on it
+    /// (US-11), or <c>null</c> before either has happened.
+    /// </summary>
+    public Guid? ReviewedBy { get; set; }
+
+    /// <summary><c>null</c> until <see cref="ReviewedBy"/> is set — the two always arrive together.</summary>
+    public DateTime? ReviewedAt { get; set; }
+
+    /// <summary>
+    /// The Client's note on what needs to change — the whole point of showing
+    /// this to the Architect. Set only when the decision was a request for
+    /// revision; <c>null</c> for an approval or a version nobody has reviewed.
+    /// </summary>
+    public string? ReviewComment { get; set; }
+
     public static DesignVersionResponse From(DesignDocument document, DesignDocumentVersion version, bool isCurrent) => new()
     {
         Id = version.Id,
@@ -69,6 +85,9 @@ public class DesignVersionResponse
         RevisionComment = version.RevisionComment,
         UploadedBy = version.UploadedBy,
         UploadedAt = version.UploadedAt,
-        IsCurrent = isCurrent
+        IsCurrent = isCurrent,
+        ReviewedBy = version.ReviewedBy,
+        ReviewedAt = version.ReviewedAt,
+        ReviewComment = version.ReviewComment
     };
 }
