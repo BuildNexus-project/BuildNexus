@@ -7,6 +7,14 @@ import { useAuth } from '@/auth/auth-context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
@@ -21,13 +29,21 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { apiErrorMessage } from '@/lib/api'
 import {
+  approveDesignVersion,
   downloadDesignVersionFile,
   fetchProjectDesignDocuments,
+  requestDesignRevision,
   uploadDesignDocument,
   type DesignDocument,
   type DesignVersion,
 } from '@/lib/design-api'
-import { DESIGN_FILE_ACCEPT, uploadDesignSchema, type UploadDesignValues } from '@/lib/design-schemas'
+import {
+  DESIGN_FILE_ACCEPT,
+  requestRevisionSchema,
+  uploadDesignSchema,
+  type RequestRevisionValues,
+  type UploadDesignValues,
+} from '@/lib/design-schemas'
 import { applyApiErrorToForm } from '@/lib/form-errors'
 
 const LOAD_FAILED = 'Could not load this project’s design documents.'
@@ -59,15 +75,28 @@ function saveBlob(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url)
 }
 
-/** One version's row: its metadata and a button to fetch its file. */
+/**
+ * One version's row: its metadata, a button to fetch its file, and — for a
+ * Client reviewing a version nobody has decided on yet — the actions to
+ * approve it or ask for a revision (US-11).
+ */
 function VersionRow({
   version,
   onDownload,
   isDownloading,
+  canReview,
+  onApprove,
+  onRequestRevision,
+  isReviewing,
 }: {
   version: DesignVersion
   onDownload: (version: DesignVersion) => void
   isDownloading: boolean
+  /** True for a Client, on a version nobody has decided on, in a document with no Approved version yet. */
+  canReview: boolean
+  onApprove: (version: DesignVersion) => void
+  onRequestRevision: (version: DesignVersion) => void
+  isReviewing: boolean
 }) {
   return (
     // Current is highlighted on the row itself, not only in the Status
@@ -86,19 +115,133 @@ function VersionRow({
       </TableCell>
       <TableCell className="text-muted-foreground max-w-56 text-sm text-wrap">
         {version.revisionComment ?? '—'}
+        {version.reviewComment && (
+          <p className="text-foreground mt-1 border-t pt-1">
+            <span className="font-medium">Revision requested:</span> {version.reviewComment}
+          </p>
+        )}
       </TableCell>
       <TableCell>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onDownload(version)}
-          disabled={isDownloading}
-        >
-          {isDownloading ? 'Downloading…' : 'Download'}
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onDownload(version)}
+            disabled={isDownloading}
+          >
+            {isDownloading ? 'Downloading…' : 'Download'}
+          </Button>
+
+          {canReview && (
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onApprove(version)}
+                disabled={isReviewing}
+              >
+                {isReviewing ? 'Approving…' : 'Approve'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onRequestRevision(version)}
+                disabled={isReviewing}
+              >
+                Request revision
+              </Button>
+            </div>
+          )}
+        </div>
       </TableCell>
     </TableRow>
+  )
+}
+
+/**
+ * The comment form behind a revision request. Mounted only while a version is
+ * selected, so the form starts fresh rather than needing to be reset when the
+ * selection changes.
+ */
+function RequestRevisionDialog({
+  version,
+  onClose,
+  onSubmitted,
+}: {
+  version: DesignVersion
+  onClose: () => void
+  onSubmitted: () => void
+}) {
+  const { authFetch } = useAuth()
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<RequestRevisionValues>({
+    resolver: zodResolver(requestRevisionSchema),
+    defaultValues: { comment: '' },
+  })
+
+  async function onSubmit(values: RequestRevisionValues) {
+    setFormError(null)
+
+    try {
+      await requestDesignRevision(authFetch, version.id, values.comment)
+      onSubmitted()
+    } catch (error) {
+      setFormError(
+        applyApiErrorToForm(error, setError, 'Could not request this revision. Please try again.'),
+      )
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose()
+        }
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Request a revision on {version.displayName}</DialogTitle>
+          <DialogDescription>
+            Tell the Architect what needs to change. They’ll be notified by email.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
+          <Field>
+            <FieldLabel htmlFor="comment">Comment</FieldLabel>
+            <Textarea id="comment" rows={4} aria-invalid={Boolean(errors.comment)} {...register('comment')} />
+            <FieldError errors={[errors.comment]} />
+          </Field>
+
+          {formError && (
+            <p role="alert" className="text-destructive text-sm">
+              {formError}
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? 'Requesting…' : 'Request revision'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -120,8 +263,12 @@ export function DesignDocumentsPage() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [reviewingVersionId, setReviewingVersionId] = useState<string | null>(null)
+  const [requestingRevisionFor, setRequestingRevisionFor] = useState<DesignVersion | null>(null)
 
   const isArchitect = user?.role === 'Architect'
+  const isClient = user?.role === 'Client'
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const {
@@ -207,6 +354,24 @@ export function DesignDocumentsPage() {
     }
   }
 
+  async function handleApprove(version: DesignVersion) {
+    if (!projectId) {
+      return
+    }
+
+    setReviewError(null)
+    setReviewingVersionId(version.id)
+
+    try {
+      await approveDesignVersion(authFetch, version.id)
+      await reload(projectId)
+    } catch (error) {
+      setReviewError(apiErrorMessage(error, 'Could not approve this version. Please try again.'))
+    } finally {
+      setReviewingVersionId(null)
+    }
+  }
+
   if (loadError) {
     return (
       <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
@@ -247,43 +412,61 @@ export function DesignDocumentsPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-6">
-              {documents.map((document) => (
-                <section key={document.id} className="flex flex-col gap-2">
-                  <h2 className="text-sm font-medium">{document.name}</h2>
+              {documents.map((document) => {
+                // Proactive, not just cosmetic: once any version is Approved,
+                // the service refuses a decision on every other version of
+                // this document (409) — matching that here means a Client
+                // never sees review buttons for an action that would fail.
+                const documentApproved = document.versions.some((v) => v.status === 'Approved')
 
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Version</TableHead>
-                        <TableHead>Uploaded</TableHead>
-                        <TableHead>Uploaded by</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Comment</TableHead>
-                        <TableHead />
-                      </TableRow>
-                    </TableHeader>
+                return (
+                  <section key={document.id} className="flex flex-col gap-2">
+                    <h2 className="text-sm font-medium">{document.name}</h2>
 
-                    <TableBody>
-                      {/* Oldest first, exactly as the service sent it — the
-                          latest revision is the last row. */}
-                      {document.versions.map((version) => (
-                        <VersionRow
-                          key={version.id}
-                          version={version}
-                          onDownload={handleDownload}
-                          isDownloading={downloadingId === version.id}
-                        />
-                      ))}
-                    </TableBody>
-                  </Table>
-                </section>
-              ))}
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Version</TableHead>
+                          <TableHead>Uploaded</TableHead>
+                          <TableHead>Uploaded by</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Comment</TableHead>
+                          <TableHead />
+                        </TableRow>
+                      </TableHeader>
+
+                      <TableBody>
+                        {/* Oldest first, exactly as the service sent it — the
+                            latest revision is the last row. */}
+                        {document.versions.map((version) => (
+                          <VersionRow
+                            key={version.id}
+                            version={version}
+                            onDownload={handleDownload}
+                            isDownloading={downloadingId === version.id}
+                            canReview={isClient && !documentApproved && version.status === 'Submitted'}
+                            onApprove={handleApprove}
+                            onRequestRevision={setRequestingRevisionFor}
+                            isReviewing={reviewingVersionId === version.id}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </section>
+                )
+              })}
             </div>
           )}
 
           {downloadError && (
             <p role="alert" className="text-destructive text-sm">
               {downloadError}
+            </p>
+          )}
+
+          {reviewError && (
+            <p role="alert" className="text-destructive text-sm">
+              {reviewError}
             </p>
           )}
 
@@ -364,6 +547,20 @@ export function DesignDocumentsPage() {
           </p>
         </CardContent>
       </Card>
+
+      {requestingRevisionFor && (
+        <RequestRevisionDialog
+          version={requestingRevisionFor}
+          onClose={() => setRequestingRevisionFor(null)}
+          onSubmitted={() => {
+            setRequestingRevisionFor(null)
+
+            if (projectId) {
+              void reload(projectId)
+            }
+          }}
+        />
+      )}
     </main>
   )
 }
