@@ -5,12 +5,12 @@ import { ApiError } from './api'
 type AuthFetch = <T>(path: string, options?: Omit<ApiFetchOptions, 'token'>) => Promise<T>
 
 /**
- * Where a design document version sits in review. Every upload still lands as
- * `Submitted` — nothing in the service moves a version off it yet, that
- * arrives with the review-workflow story. `UnderReview` and `Approved` exist
- * so US-10 can identify a document's current version.
+ * Where a design document version sits in review. Every upload lands as
+ * `Submitted`; a Client's review (US-11) moves it straight to `Approved` or
+ * `RevisionRequested`. `UnderReview` stays reserved for a future "picked up
+ * for review" step — nothing sets it yet.
  */
-export type DesignDocumentStatus = 'Submitted' | 'UnderReview' | 'Approved'
+export type DesignDocumentStatus = 'Submitted' | 'UnderReview' | 'Approved' | 'RevisionRequested'
 
 /**
  * One uploaded version of a design document, with the metadata US-09 keeps
@@ -44,6 +44,31 @@ export type DesignVersion = {
    * version standing in for one.
    */
   isCurrent: boolean
+  /** The Client who approved this version or asked for a revision on it, or `null` before either has happened. */
+  reviewedBy: string | null
+  /** ISO-8601, or `null` until `reviewedBy` is set — the two always arrive together. */
+  reviewedAt: string | null
+  /**
+   * The Client's note on what needs to change — the whole point of showing
+   * this to the Architect. Set only when the decision was a request for
+   * revision.
+   */
+  reviewComment: string | null
+}
+
+/**
+ * What a review action (US-11) recorded: the version, the decision, who made
+ * it, when, and — for a revision request — what they asked for.
+ */
+export type ReviewDecision = {
+  versionId: string
+  documentId: string
+  displayName: string
+  /** `'Approved'` or `'RevisionRequested'`. */
+  status: DesignDocumentStatus
+  reviewedBy: string
+  reviewedAt: string
+  reviewComment: string | null
 }
 
 /**
@@ -103,6 +128,34 @@ export function uploadDesignDocument(
   return authFetch<DesignVersion>(`/api/designs/projects/${projectId}/documents`, {
     method: 'POST',
     body: form,
+  })
+}
+
+/**
+ * Approves a design document version.
+ *
+ * Client only, and only for a version whose project they are on. Any other
+ * role gets {@link ApiError} with status 403, a project that is not theirs a
+ * 403, an unknown version a 404, and a version already decided — or belonging
+ * to a document with another version already approved — a 409.
+ */
+export function approveDesignVersion(authFetch: AuthFetch, versionId: string) {
+  return authFetch<ReviewDecision>(`/api/designs/versions/${versionId}/approve`, {
+    method: 'POST',
+  })
+}
+
+/**
+ * Asks for changes on a design document version, with a comment on what needs
+ * to change.
+ *
+ * Same access rules as {@link approveDesignVersion}. No document is ever
+ * marked current by this outcome — only an approval qualifies.
+ */
+export function requestDesignRevision(authFetch: AuthFetch, versionId: string, comment: string) {
+  return authFetch<ReviewDecision>(`/api/designs/versions/${versionId}/request-revision`, {
+    method: 'POST',
+    json: { comment },
   })
 }
 

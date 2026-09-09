@@ -44,3 +44,18 @@ export const uploadDesignSchema = z.object({
 })
 
 export type UploadDesignValues = z.infer<typeof uploadDesignSchema>
+
+/**
+ * The request-revision form: the Client's note on what needs to change.
+ * Mirrors the Design Service's own `RequestRevisionRequest` — required, unlike
+ * the upload's revision comment.
+ */
+export const requestRevisionSchema = z.object({
+  comment: z
+    .string()
+    .trim()
+    .min(1, 'A comment is required.')
+    .max(2000, 'Comment must not exceed 2000 characters.'),
+})
+
+export type RequestRevisionValues = z.infer<typeof requestRevisionSchema>
