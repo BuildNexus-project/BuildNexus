@@ -36,7 +36,8 @@ public class UserServiceFactory : WebApplicationFactory<Program>
                 ["Jwt:Issuer"] = "BuildNexusAuth",
                 ["Jwt:Audience"] = "BuildNexusServices",
                 ["Jwt:SigningKey"] = "integration-test-signing-key-not-used-anywhere-else",
-                ["Jwt:AccessTokenLifetimeMinutes"] = "60"
+                ["Jwt:AccessTokenLifetimeMinutes"] = "60",
+                ["InternalService:ApiKey"] = "integration-test-internal-api-key-not-used-anywhere-else"
             });
         });
     }
