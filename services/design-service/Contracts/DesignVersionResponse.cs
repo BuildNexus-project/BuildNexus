@@ -35,7 +35,7 @@ public class DesignVersionResponse
 
     public long FileSizeBytes { get; set; }
 
-    /// <summary>The status name — <c>Submitted</c> for every upload so far.</summary>
+    /// <summary>The status name — <c>Submitted</c> until a review records a decision.</summary>
     public string Status { get; set; } = string.Empty;
 
     public string? RevisionComment { get; set; }
@@ -45,7 +45,16 @@ public class DesignVersionResponse
 
     public DateTime UploadedAt { get; set; }
 
-    public static DesignVersionResponse From(DesignDocument document, DesignDocumentVersion version) => new()
+    /// <summary>
+    /// True for the one version US-10 shows as current: the latest, by version
+    /// number, that is <see cref="DesignDocumentStatus.UnderReview"/> or
+    /// <see cref="DesignDocumentStatus.Approved"/>. False for every version of a
+    /// document where none has reached either state yet — nothing is highlighted
+    /// rather than a <c>Submitted</c> version standing in for one.
+    /// </summary>
+    public bool IsCurrent { get; set; }
+
+    public static DesignVersionResponse From(DesignDocument document, DesignDocumentVersion version, bool isCurrent) => new()
     {
         Id = version.Id,
         DocumentId = version.DocumentId,
@@ -59,6 +68,7 @@ public class DesignVersionResponse
         Status = version.Status.ToString(),
         RevisionComment = version.RevisionComment,
         UploadedBy = version.UploadedBy,
-        UploadedAt = version.UploadedAt
+        UploadedAt = version.UploadedAt,
+        IsCurrent = isCurrent
     };
 }

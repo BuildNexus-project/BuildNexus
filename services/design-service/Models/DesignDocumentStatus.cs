@@ -5,14 +5,23 @@ namespace BuildNexus.DesignService.Models;
 /// in <c>design_document_versions.status</c>.
 /// </summary>
 /// <remarks>
-/// US-09 defines one value: every upload lands as <see cref="Submitted"/>. The
-/// review outcomes that follow (approved, rejected) arrive with the story that
-/// adds them, alongside the migration that widens
-/// <c>ck_design_document_versions_status</c> to match. The name is what is
-/// stored and compared, never the underlying number.
+/// Every upload still lands as <see cref="Submitted"/> — nothing in this
+/// service moves a version off it yet, that arrives with the review-workflow
+/// story. <see cref="UnderReview"/> and <see cref="Approved"/> exist now so
+/// US-10 can identify the current version: the latest one in either of those
+/// two states. <c>Rejected</c> is deliberately not here — add it, and widen
+/// <c>ck_design_document_versions_status</c> again, alongside the story that
+/// first sets it. The name is what is stored and compared, never the
+/// underlying number.
 /// </remarks>
 public enum DesignDocumentStatus
 {
     /// <summary>Uploaded by the Architect and waiting on review.</summary>
-    Submitted
+    Submitted,
+
+    /// <summary>A reviewer has picked it up; no decision is recorded yet.</summary>
+    UnderReview,
+
+    /// <summary>Signed off. The version US-10 shows as current, until a later one is.</summary>
+    Approved
 }

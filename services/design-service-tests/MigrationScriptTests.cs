@@ -106,11 +106,12 @@ public class MigrationScriptTests
     [Fact]
     public void Every_status_the_service_can_produce_is_allowed_by_the_schema()
     {
-        // Written over the enum rather than over today's single name: a status
-        // added in a later story without a matching migration would otherwise
+        // Written over the enum rather than over today's names, and across every
+        // script rather than one: a status added in a later story without a
+        // matching migration — wherever that migration lands — would otherwise
         // only surface as a constraint violation the first time somebody used
-        // it.
-        var sql = ReadScript(Script("001_create_design_documents.sql"));
+        // it. 001 defined Submitted; 002 added UnderReview and Approved.
+        var sql = string.Concat(ScriptNames().Select(ReadScript));
 
         var missing = Enum.GetNames<Models.DesignDocumentStatus>()
             .Where(status => !sql.Contains($"'{status}'", StringComparison.Ordinal))
@@ -120,6 +121,17 @@ public class MigrationScriptTests
             missing.Count == 0,
             "These statuses exist in DesignDocumentStatus but no migration allows them in the database: "
             + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_review_statuses_arrive_in_002()
+    {
+        // US-10: the two states 002 adds on top of Submitted, so the "current"
+        // version can be identified.
+        var sql = StripComments(ReadScript(Script("002_add_design_document_review_statuses.sql")));
+
+        Assert.Contains("'UnderReview'", sql, StringComparison.Ordinal);
+        Assert.Contains("'Approved'", sql, StringComparison.Ordinal);
     }
 
     private static string Script(string fileName) =>
