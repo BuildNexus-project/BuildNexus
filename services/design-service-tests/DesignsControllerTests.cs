@@ -41,6 +41,8 @@ public class DesignsControllerTests
         Assert.Equal("Submitted", body.Status);
         Assert.Equal(ProjectId, body.ProjectId);
         Assert.Equal(1, body.VersionNumber);
+        // A fresh upload is Submitted, and Submitted is never current.
+        Assert.False(body.IsCurrent);
 
         Assert.NotNull(repository.LastUpload);
         Assert.Equal(ProjectId, repository.LastUpload!.ProjectId);
@@ -175,7 +177,8 @@ public class DesignsControllerTests
     public async Task List_returns_the_projects_documents_for_an_allowed_caller()
     {
         var (controller, repository, _) = ControllerFor();
-        repository.Documents.Add(DocumentWithVersions("GroundFloorPlan", versions: 2));
+        repository.Documents.Add(DocumentWithVersions(
+            "GroundFloorPlan", DesignDocumentStatus.Submitted, DesignDocumentStatus.Submitted));
 
         var result = Assert.IsType<OkObjectResult>(await controller.ListForProject(ProjectId, default));
 
@@ -184,6 +187,41 @@ public class DesignsControllerTests
         Assert.Equal("GroundFloorPlan", documents[0].Name);
         Assert.Equal(["GroundFloorPlan_v1", "GroundFloorPlan_v2"], documents[0].Versions.Select(v => v.DisplayName));
         Assert.Equal(2, documents[0].LatestVersionNumber);
+    }
+
+    [Fact]
+    public async Task List_marks_no_version_current_while_none_has_been_reviewed()
+    {
+        var (controller, repository, _) = ControllerFor();
+        repository.Documents.Add(DocumentWithVersions(
+            "GroundFloorPlan", DesignDocumentStatus.Submitted, DesignDocumentStatus.Submitted));
+
+        var result = Assert.IsType<OkObjectResult>(await controller.ListForProject(ProjectId, default));
+
+        var versions = Assert.IsAssignableFrom<IEnumerable<DesignDocumentResponse>>(result.Value).Single().Versions;
+        Assert.All(versions, version => Assert.False(version.IsCurrent));
+    }
+
+    [Fact]
+    public async Task List_marks_the_highest_numbered_approved_or_under_review_version_current()
+    {
+        var (controller, repository, _) = ControllerFor();
+        // v2 is Approved and comes first, but v4 is UnderReview and has the
+        // higher number — v4 is current, not v2, and neither Submitted version
+        // (v1, v3) ever qualifies.
+        repository.Documents.Add(DocumentWithVersions(
+            "GroundFloorPlan",
+            DesignDocumentStatus.Submitted,
+            DesignDocumentStatus.Approved,
+            DesignDocumentStatus.Submitted,
+            DesignDocumentStatus.UnderReview));
+
+        var result = Assert.IsType<OkObjectResult>(await controller.ListForProject(ProjectId, default));
+
+        var versions = Assert.IsAssignableFrom<IEnumerable<DesignDocumentResponse>>(result.Value)
+            .Single().Versions.ToDictionary(v => v.VersionNumber, v => v.IsCurrent);
+
+        Assert.Equal(new Dictionary<int, bool> { [1] = false, [2] = false, [3] = false, [4] = true }, versions);
     }
 
     [Theory]
@@ -298,7 +336,8 @@ public class DesignsControllerTests
         };
     }
 
-    private static DesignDocumentWithVersions DocumentWithVersions(string name, int versions)
+    /// <summary>One version per status given, numbered 1, 2, 3... in that order.</summary>
+    private static DesignDocumentWithVersions DocumentWithVersions(string name, params DesignDocumentStatus[] statuses)
     {
         var documentId = Guid.NewGuid();
         var document = new DesignDocument
@@ -310,17 +349,22 @@ public class DesignsControllerTests
             CreatedAt = new DateTime(2026, 9, 4, 9, 0, 0, DateTimeKind.Utc)
         };
 
-        var versionRows = Enumerable.Range(1, versions).Select(n => new DesignDocumentVersion
+        var versionRows = statuses.Select((status, index) =>
         {
-            Id = Guid.NewGuid(),
-            DocumentId = documentId,
-            VersionNumber = n,
-            FileName = "plan.pdf",
-            ContentType = "application/pdf",
-            FileSizeBytes = 8,
-            Status = DesignDocumentStatus.Submitted,
-            UploadedBy = ArchitectId,
-            UploadedAt = document.CreatedAt.AddMinutes(n)
+            var n = index + 1;
+
+            return new DesignDocumentVersion
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = documentId,
+                VersionNumber = n,
+                FileName = "plan.pdf",
+                ContentType = "application/pdf",
+                FileSizeBytes = 8,
+                Status = status,
+                UploadedBy = ArchitectId,
+                UploadedAt = document.CreatedAt.AddMinutes(n)
+            };
         }).ToList();
 
         return new DesignDocumentWithVersions { Document = document, Versions = versionRows };

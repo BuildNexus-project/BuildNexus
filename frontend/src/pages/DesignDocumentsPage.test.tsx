@@ -37,6 +37,7 @@ function designDocument(overrides: Record<string, unknown> = {}) {
         revisionComment: null,
         uploadedBy: ARCHITECT_ID,
         uploadedAt: '2026-09-01T09:00:00',
+        isCurrent: false,
       },
     ],
     ...overrides,
@@ -59,6 +60,7 @@ function uploadedVersion(overrides: Record<string, unknown> = {}) {
     revisionComment: 'First cut',
     uploadedBy: ARCHITECT_ID,
     uploadedAt: '2026-09-01T09:00:00',
+    isCurrent: false,
     ...overrides,
   }
 }
@@ -178,6 +180,40 @@ describe('DesignDocumentsPage', () => {
 
     expect(await screen.findByText('GroundFloorPlan_v1')).toBeInTheDocument()
     expect(screen.getByText('GroundFloorPlan_v2')).toBeInTheDocument()
+  })
+
+  it('marks no version current when none has been reviewed yet', async () => {
+    renderPage(asOwningClient, apiResponse(200, [designDocument()]))
+
+    await screen.findByText('GroundFloorPlan_v1')
+    expect(screen.queryByText('Current')).not.toBeInTheDocument()
+  })
+
+  it('highlights only the version marked current', async () => {
+    renderPage(
+      asOwningClient,
+      apiResponse(200, [
+        designDocument({
+          latestVersionNumber: 2,
+          versions: [
+            designDocument().versions[0],
+            {
+              ...designDocument().versions[0],
+              id: 'v2',
+              versionNumber: 2,
+              displayName: 'GroundFloorPlan_v2',
+              status: 'Approved',
+              isCurrent: true,
+            },
+          ],
+        }),
+      ]),
+    )
+
+    await screen.findByText('GroundFloorPlan_v2')
+
+    expect(screen.getByText('GroundFloorPlan_v1').closest('tr')).not.toHaveTextContent('Current')
+    expect(screen.getByText('GroundFloorPlan_v2').closest('tr')).toHaveTextContent('Current')
   })
 
   it('shows an Architect the upload form', async () => {
