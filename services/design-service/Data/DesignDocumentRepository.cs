@@ -21,7 +21,7 @@ public class DesignDocumentRepository : IDesignDocumentRepository
     /// </summary>
     private const string VersionMetadataColumns =
         "id, document_id, version_number, file_name, content_type, file_size_bytes, "
-        + "status, revision_comment, uploaded_by, uploaded_at";
+        + "status, revision_comment, uploaded_by, uploaded_at, reviewed_by, reviewed_at, review_comment";
 
     /// <summary>
     /// One upload racing another for the same next version number loses to
@@ -104,7 +104,8 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         // versions carry no project_id of their own, by design.
         const string versionsSql = $@"
             SELECT v.id, v.document_id, v.version_number, v.file_name, v.content_type,
-                   v.file_size_bytes, v.status, v.revision_comment, v.uploaded_by, v.uploaded_at
+                   v.file_size_bytes, v.status, v.revision_comment, v.uploaded_by, v.uploaded_at,
+                   v.reviewed_by, v.reviewed_at, v.review_comment
             FROM design_document_versions v
             INNER JOIN design_documents d ON d.id = v.document_id
             WHERE d.project_id = @projectId
@@ -469,6 +470,18 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
+    private static Guid? GetNullableGuid(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
+    }
+
+    private static DateTime? GetNullableDateTime(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetDateTime(ordinal);
+    }
+
     private static DesignDocument MapDocument(DbDataReader reader) => new()
     {
         // MySqlConnector surfaces CHAR(36) as a Guid, not a string.
@@ -490,6 +503,9 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         Status = Enum.Parse<DesignDocumentStatus>(reader.GetString(reader.GetOrdinal("status"))),
         RevisionComment = GetNullableString(reader, "revision_comment"),
         UploadedBy = reader.GetGuid(reader.GetOrdinal("uploaded_by")),
-        UploadedAt = reader.GetDateTime(reader.GetOrdinal("uploaded_at"))
+        UploadedAt = reader.GetDateTime(reader.GetOrdinal("uploaded_at")),
+        ReviewedBy = GetNullableGuid(reader, "reviewed_by"),
+        ReviewedAt = GetNullableDateTime(reader, "reviewed_at"),
+        ReviewComment = GetNullableString(reader, "review_comment")
     };
 }

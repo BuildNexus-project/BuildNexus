@@ -42,6 +42,9 @@ public class DesignDatabaseFixture : IAsyncLifetime
 
     public DesignDocumentRepository Repository { get; private set; } = null!;
 
+    /// <summary>For reading back what <see cref="Repository"/> wrote to the outbox alongside a decision.</summary>
+    public OutboxRepository Outbox { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         // The production migration path, not a hand-written schema: DbUp records
@@ -56,7 +59,9 @@ public class DesignDatabaseFixture : IAsyncLifetime
             })
             .Build();
 
-        Repository = new DesignDocumentRepository(new MySqlConnectionFactory(configuration));
+        var connectionFactory = new MySqlConnectionFactory(configuration);
+        Repository = new DesignDocumentRepository(connectionFactory);
+        Outbox = new OutboxRepository(connectionFactory);
 
         return Task.CompletedTask;
     }

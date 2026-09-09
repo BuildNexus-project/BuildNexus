@@ -20,6 +20,7 @@ namespace BuildNexus.DesignService.Tests;
 public class DesignsControllerTests
 {
     private static readonly Guid ArchitectId = Guid.Parse("a11ce000-0000-4000-8000-000000000001");
+    private static readonly Guid ClientId = Guid.Parse("c11e0000-0000-4000-8000-000000000002");
     private static readonly Guid ProjectId = Guid.Parse("9f01d000-0000-4000-8000-000000000009");
     private const string Token = "forwarded.access.token";
 
@@ -286,6 +287,167 @@ public class DesignsControllerTests
         var result = Assert.IsType<ObjectResult>(await controller.DownloadVersionFile(versionId, default));
 
         Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task Approve_records_the_decision_enqueues_its_event_and_answers_200()
+    {
+        var (controller, repository, notifier) = ControllerForReview();
+        var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.Submitted);
+        repository.Documents.Add(document);
+        var versionId = document.Versions[0].Id;
+
+        var result = Assert.IsType<OkObjectResult>(await controller.Approve(versionId, default));
+
+        var body = Assert.IsType<ReviewDecisionResponse>(result.Value);
+        Assert.Equal("Approved", body.Status);
+        Assert.Equal(ClientId, body.ReviewedBy);
+        Assert.Null(body.ReviewComment);
+
+        Assert.NotNull(repository.LastReviewDecision);
+        Assert.Equal(DesignDocumentStatus.Approved, repository.LastReviewDecision!.Status);
+        var enqueued = Assert.Single(repository.LastOutboxEvents);
+        Assert.Equal("DesignApproved", enqueued.EventType);
+
+        // Approval notifies nobody — only a revision request does.
+        Assert.Null(notifier.LastNotification);
+    }
+
+    [Fact]
+    public async Task Approve_is_404_for_a_version_that_does_not_exist()
+    {
+        var (controller, repository, _) = ControllerForReview();
+
+        var result = Assert.IsType<ObjectResult>(await controller.Approve(Guid.NewGuid(), default));
+
+        Assert.Equal(StatusCodes.Status404NotFound, result.StatusCode);
+        Assert.Null(repository.LastReviewDecision);
+    }
+
+    [Fact]
+    public async Task Approve_is_403_when_the_caller_is_not_on_the_project()
+    {
+        var (controller, repository, _) = ControllerForReview(access: ProjectAccess.Forbidden);
+        var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.Submitted);
+        repository.Documents.Add(document);
+
+        var result = Assert.IsType<ObjectResult>(await controller.Approve(document.Versions[0].Id, default));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
+        Assert.Null(repository.LastReviewDecision);
+    }
+
+    [Fact]
+    public async Task Approve_is_409_when_the_version_was_already_decided()
+    {
+        var (controller, repository, _) = ControllerForReview();
+        var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.RevisionRequested);
+        repository.Documents.Add(document);
+
+        var result = Assert.IsType<ObjectResult>(await controller.Approve(document.Versions[0].Id, default));
+
+        Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task Approve_is_409_when_another_version_of_the_document_is_already_approved()
+    {
+        var (controller, repository, _) = ControllerForReview();
+        // v1 Approved, v2 still Submitted — v1 being Approved locks v2 too.
+        var document = DocumentWithVersions(
+            "GroundFloorPlan", DesignDocumentStatus.Approved, DesignDocumentStatus.Submitted);
+        repository.Documents.Add(document);
+
+        var result = Assert.IsType<ObjectResult>(await controller.Approve(document.Versions[1].Id, default));
+
+        Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task RequestRevision_records_the_comment_notifies_the_architect_and_raises_no_event()
+    {
+        var (controller, repository, notifier) = ControllerForReview();
+        var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.Submitted);
+        repository.Documents.Add(document);
+        var versionId = document.Versions[0].Id;
+
+        var result = Assert.IsType<OkObjectResult>(
+            await controller.RequestRevision(
+                versionId, new RequestRevisionRequest { Comment = "Move the stairs to the east wall." }, default));
+
+        var body = Assert.IsType<ReviewDecisionResponse>(result.Value);
+        Assert.Equal("RevisionRequested", body.Status);
+        Assert.Equal("Move the stairs to the east wall.", body.ReviewComment);
+
+        Assert.Empty(repository.LastOutboxEvents);
+
+        Assert.NotNull(notifier.LastNotification);
+        Assert.Equal(ArchitectId, notifier.LastNotification!.Value.ArchitectId);
+        Assert.Equal("Move the stairs to the east wall.", notifier.LastNotification.Value.Comment);
+    }
+
+    [Fact]
+    public async Task RequestRevision_still_answers_200_when_the_notification_fails()
+    {
+        var notifier = new FakeRevisionRequestNotifier { ThrowOnNotify = new InvalidOperationException("Mail server unreachable.") };
+        var (controller, repository, _) = ControllerForReview(notifier: notifier);
+        var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.Submitted);
+        repository.Documents.Add(document);
+
+        // The decision is already recorded by the time the notifier is asked —
+        // a mail server being down must not turn that into a failed request.
+        var result = Assert.IsType<OkObjectResult>(
+            await controller.RequestRevision(
+                document.Versions[0].Id, new RequestRevisionRequest { Comment = "Fix the roof line." }, default));
+
+        Assert.Equal("RevisionRequested", Assert.IsType<ReviewDecisionResponse>(result.Value).Status);
+    }
+
+    [Fact]
+    public async Task RequestRevision_is_409_when_the_document_already_has_an_approved_version()
+    {
+        var (controller, repository, _) = ControllerForReview();
+        var document = DocumentWithVersions(
+            "GroundFloorPlan", DesignDocumentStatus.Approved, DesignDocumentStatus.Submitted);
+        repository.Documents.Add(document);
+
+        var result = Assert.IsType<ObjectResult>(
+            await controller.RequestRevision(
+                document.Versions[1].Id, new RequestRevisionRequest { Comment = "Too late." }, default));
+
+        Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
+    }
+
+    /// <summary>
+    /// Like <see cref="ControllerFor"/>, but signed in as a Client — the only
+    /// role <see cref="DesignsController.Approve"/> and
+    /// <see cref="DesignsController.RequestRevision"/> accept — and with a
+    /// <see cref="FakeRevisionRequestNotifier"/> exposed for assertion.
+    /// </summary>
+    private static (DesignsController Controller, FakeDesignDocumentRepository Repository, FakeRevisionRequestNotifier Notifier)
+        ControllerForReview(ProjectAccess? access = null, FakeRevisionRequestNotifier? notifier = null)
+    {
+        var repository = new FakeDesignDocumentRepository();
+        var accessClient = new FakeProjectAccessClient { Result = access ?? ProjectAccess.Allowed(null) };
+        var fakeNotifier = notifier ?? new FakeRevisionRequestNotifier();
+
+        var httpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(JwtRegisteredClaimNames.Sub, ClientId.ToString()),
+                new Claim(JwtOptions.RoleClaimType, "Client")
+            ], "TestAuth"))
+        };
+        httpContext.Request.Headers.Authorization = $"Bearer {Token}";
+
+        var controller = new DesignsController(
+            repository, accessClient, fakeNotifier, NullLogger<DesignsController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = httpContext }
+        };
+
+        return (controller, repository, fakeNotifier);
     }
 
     private static (DesignsController Controller, FakeDesignDocumentRepository Repository, FakeProjectAccessClient Access)

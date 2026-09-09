@@ -1,3 +1,4 @@
+using BuildNexus.DesignService.Messaging;
 using BuildNexus.DesignService.Models;
 
 namespace BuildNexus.DesignService.Tests;
@@ -110,6 +111,204 @@ public class DesignDocumentRepositoryDatabaseTests
     public async Task Returns_null_for_a_version_id_that_does_not_exist()
     {
         Assert.Null(await _fixture.Repository.GetVersionFileAsync(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task GetVersionForReviewAsync_returns_the_version_with_its_document_and_project_context()
+    {
+        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+
+        var forReview = await _fixture.Repository.GetVersionForReviewAsync(stored.Version.Id);
+
+        Assert.NotNull(forReview);
+        Assert.Equal(stored.Version.Id, forReview!.VersionId);
+        Assert.Equal(stored.Document.Id, forReview.DocumentId);
+        Assert.Equal(ProjectId, forReview.ProjectId);
+        Assert.Equal(stored.Document.Name, forReview.DocumentName);
+        Assert.Equal(1, forReview.VersionNumber);
+        Assert.Equal(stored.Version.UploadedBy, forReview.UploadedBy);
+        Assert.Equal(DesignDocumentStatus.Submitted, forReview.Status);
+    }
+
+    [Fact]
+    public async Task GetVersionForReviewAsync_returns_null_for_a_version_that_does_not_exist()
+    {
+        Assert.Null(await _fixture.Repository.GetVersionForReviewAsync(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task RecordReviewDecisionAsync_approves_a_submitted_version_and_writes_its_outbox_event()
+    {
+        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var reviewerId = Guid.Parse($"{_run}-3333-4333-8333-333333333333");
+        var reviewedAt = UploadedAt.AddHours(1);
+
+        var forReview = await _fixture.Repository.GetVersionForReviewAsync(stored.Version.Id);
+        var outboxEvent = DesignEvents.Approved(forReview!, reviewerId, reviewedAt);
+
+        var outcome = await _fixture.Repository.RecordReviewDecisionAsync(
+            new ReviewDecision
+            {
+                VersionId = stored.Version.Id,
+                DocumentId = stored.Document.Id,
+                Status = DesignDocumentStatus.Approved,
+                ReviewedBy = reviewerId,
+                ReviewedAtUtc = reviewedAt
+            },
+            [outboxEvent]);
+
+        Assert.Equal(ReviewDecisionOutcome.Recorded, outcome);
+
+        var afterwards = await _fixture.Repository.GetVersionForReviewAsync(stored.Version.Id);
+        Assert.Equal(DesignDocumentStatus.Approved, afterwards!.Status);
+
+        // The event committed in the same transaction as the decision — reading
+        // it back through the outbox repository is what proves that, rather
+        // than just trusting RecordReviewDecisionAsync said it did.
+        var onOutbox = await _fixture.Outbox.ListForDocumentAsync(stored.Document.Id);
+        Assert.Contains(onOutbox, e => e.Id == outboxEvent.Id && e.EventType == "DesignApproved");
+    }
+
+    [Fact]
+    public async Task RecordReviewDecisionAsync_records_a_revision_request_with_its_comment_and_raises_no_event()
+    {
+        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var reviewerId = Guid.Parse($"{_run}-4444-4444-8444-444444444444");
+        var reviewedAt = UploadedAt.AddHours(1);
+
+        var outcome = await _fixture.Repository.RecordReviewDecisionAsync(
+            new ReviewDecision
+            {
+                VersionId = stored.Version.Id,
+                DocumentId = stored.Document.Id,
+                Status = DesignDocumentStatus.RevisionRequested,
+                ReviewedBy = reviewerId,
+                ReviewedAtUtc = reviewedAt,
+                ReviewComment = "Move the stairs to the east wall."
+            },
+            []);
+
+        Assert.Equal(ReviewDecisionOutcome.Recorded, outcome);
+
+        var afterwards = await _fixture.Repository.GetVersionForReviewAsync(stored.Version.Id);
+        Assert.Equal(DesignDocumentStatus.RevisionRequested, afterwards!.Status);
+
+        var onOutbox = await _fixture.Outbox.ListForDocumentAsync(stored.Document.Id);
+        Assert.Empty(onOutbox);
+    }
+
+    [Fact]
+    public async Task RecordReviewDecisionAsync_refuses_a_version_that_is_already_decided()
+    {
+        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var reviewerId = Guid.Parse($"{_run}-5555-4555-8555-555555555555");
+
+        var decision = new ReviewDecision
+        {
+            VersionId = stored.Version.Id,
+            DocumentId = stored.Document.Id,
+            Status = DesignDocumentStatus.Approved,
+            ReviewedBy = reviewerId,
+            ReviewedAtUtc = UploadedAt.AddHours(1)
+        };
+
+        Assert.Equal(
+            ReviewDecisionOutcome.Recorded, await _fixture.Repository.RecordReviewDecisionAsync(decision, []));
+
+        // The same decision again — as a second reviewer, or a retried request,
+        // would find it.
+        Assert.Equal(
+            ReviewDecisionOutcome.AlreadyDecided, await _fixture.Repository.RecordReviewDecisionAsync(decision, []));
+    }
+
+    [Fact]
+    public async Task RecordReviewDecisionAsync_refuses_when_another_version_of_the_document_is_already_approved()
+    {
+        var name = DocName("plan");
+        var first = await _fixture.Repository.AddVersionAsync(Upload(name, "%PDF-one"u8.ToArray()));
+        var second = await _fixture.Repository.AddVersionAsync(Upload(name, "%PDF-two"u8.ToArray()));
+        var reviewerId = Guid.Parse($"{_run}-6666-4666-8666-666666666666");
+
+        Assert.Equal(
+            ReviewDecisionOutcome.Recorded,
+            await _fixture.Repository.RecordReviewDecisionAsync(
+                new ReviewDecision
+                {
+                    VersionId = first.Version.Id,
+                    DocumentId = first.Document.Id,
+                    Status = DesignDocumentStatus.Approved,
+                    ReviewedBy = reviewerId,
+                    ReviewedAtUtc = UploadedAt.AddHours(1)
+                },
+                []));
+
+        // v2 is still Submitted — untouched — but v1 being Approved locks it too.
+        Assert.Equal(
+            ReviewDecisionOutcome.DocumentAlreadyApproved,
+            await _fixture.Repository.RecordReviewDecisionAsync(
+                new ReviewDecision
+                {
+                    VersionId = second.Version.Id,
+                    DocumentId = second.Document.Id,
+                    Status = DesignDocumentStatus.RevisionRequested,
+                    ReviewedBy = reviewerId,
+                    ReviewedAtUtc = UploadedAt.AddHours(2),
+                    ReviewComment = "Too late — already approved."
+                },
+                []));
+    }
+
+    [Fact]
+    public async Task ListForProjectAsync_reflects_a_recorded_review_decision()
+    {
+        // Regression: ListForProjectAsync's own SELECT once left out
+        // reviewed_by/reviewed_at/review_comment, so the listing kept
+        // returning null for all three even after a decision was recorded —
+        // a fake repository over the same in-memory object never catches
+        // this, since it never runs the SQL.
+        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var reviewerId = Guid.Parse($"{_run}-7777-4777-8777-777777777777");
+        var reviewedAt = UploadedAt.AddHours(1);
+
+        await _fixture.Repository.RecordReviewDecisionAsync(
+            new ReviewDecision
+            {
+                VersionId = stored.Version.Id,
+                DocumentId = stored.Document.Id,
+                Status = DesignDocumentStatus.RevisionRequested,
+                ReviewedBy = reviewerId,
+                ReviewedAtUtc = reviewedAt,
+                ReviewComment = "Move the stairs to the east wall."
+            },
+            []);
+
+        var documents = await _fixture.Repository.ListForProjectAsync(ProjectId);
+        var version = documents.Single(d => d.Document.Id == stored.Document.Id).Versions.Single();
+
+        Assert.Equal(DesignDocumentStatus.RevisionRequested, version.Status);
+        Assert.Equal(reviewerId, version.ReviewedBy);
+        Assert.Equal(reviewedAt, version.ReviewedAt);
+        Assert.Equal("Move the stairs to the east wall.", version.ReviewComment);
+    }
+
+    [Fact]
+    public async Task RecordReviewDecisionAsync_returns_VersionNotFound_for_a_version_that_does_not_exist()
+    {
+        var documentId = Guid.NewGuid();
+        var versionId = Guid.NewGuid();
+
+        var outcome = await _fixture.Repository.RecordReviewDecisionAsync(
+            new ReviewDecision
+            {
+                VersionId = versionId,
+                DocumentId = documentId,
+                Status = DesignDocumentStatus.Approved,
+                ReviewedBy = Guid.NewGuid(),
+                ReviewedAtUtc = UploadedAt
+            },
+            []);
+
+        Assert.Equal(ReviewDecisionOutcome.VersionNotFound, outcome);
     }
 
     private DesignUpload Upload(
