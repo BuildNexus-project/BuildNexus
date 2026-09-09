@@ -55,6 +55,13 @@ public interface IDesignDocumentRepository
     /// transaction as the write, with the document row locked for its length —
     /// two reviews racing for the same document resolve one after the other,
     /// never both.
+    /// <para>
+    /// <paramref name="outboxEvents"/> is written in that same transaction, the
+    /// same way <see cref="AddVersionAsync"/> would if a story ever asked it to:
+    /// an approval and its <c>DesignApproved</c> event commit together or not at
+    /// all. Empty for a revision request — US-11 raises no event for that
+    /// outcome.
+    /// </para>
     /// </remarks>
-    Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(ReviewDecision decision);
+    Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents);
 }

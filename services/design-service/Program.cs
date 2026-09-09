@@ -2,6 +2,7 @@ using System.Text;
 using BuildNexus.DesignService.Authorization;
 using BuildNexus.DesignService.Configuration;
 using BuildNexus.DesignService.Data;
+using BuildNexus.DesignService.Messaging;
 using BuildNexus.DesignService.Projects;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -17,6 +18,17 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IDesignDocumentRepository, DesignDocumentRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
+
+// One producer for the process, held open. Building a Kafka producer starts
+// background threads and a connection pool, so one per request would spend more
+// on setup than on the publish itself.
+builder.Services.AddSingleton<IDesignEventPublisher, KafkaDesignEventPublisher>();
+
+// The other half of a reliable publish: the endpoints record events inside the
+// transaction that made the change, and this drains them onto the topic
+// afterwards. Nothing on the request path waits for the broker.
+builder.Services.AddHostedService<OutboxDispatcher>();
 
 // The Project Service, asked over HTTP — with the caller's own token — whether
 // a caller may touch a project. Its address is validated at startup for the
@@ -51,6 +63,24 @@ builder.Services.AddOptions<JwtOptions>()
     .Validate(
         o => Encoding.UTF8.GetByteCount(o.SigningKey) >= JwtOptions.MinimumSigningKeyBytes,
         $"Jwt:SigningKey must be at least {JwtOptions.MinimumSigningKeyBytes} bytes for HMAC-SHA256.")
+    .ValidateOnStart();
+
+// Broker address, validated at startup for the same reason as the JWT settings:
+// a service that cannot say where Kafka is will publish nothing, and finding
+// that out from a log line after the first approval is too late.
+builder.Services.AddOptions<KafkaOptions>()
+    .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
+    .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    .ValidateOnStart();
+
+// Dispatcher tuning. Both settings have working defaults, unlike the broker
+// address, so this only guards against a deployment configuring them to
+// something that cannot work.
+builder.Services.AddOptions<OutboxOptions>()
+    .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName))
+    .Validate(o => o.PollIntervalSeconds > 0, "Outbox:PollIntervalSeconds must be greater than zero.")
+    .Validate(o => o.BatchSize > 0, "Outbox:BatchSize must be greater than zero.")
     .ValidateOnStart();
 
 builder.Services

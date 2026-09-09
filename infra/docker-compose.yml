@@ -268,6 +268,9 @@ services:
       # Service, forwarding the caller's own token. The internal listener, since
       # this runs on the compose network.
       Services__ProjectService__BaseUrl: http://project-service:8080/
+      # US-11. The broker, under the shared name every publishing service uses.
+      # The internal listener, since this runs on the compose network.
+      Kafka__BootstrapServers: kafka:9092
     ports:
       - "5003:8080"
     depends_on:
@@ -276,6 +279,12 @@ services:
       # Start order only. The Project Service being down means an upload cannot
       # be authorised and answers 502, not that this service fails to boot.
       project-service:
+        condition: service_started
+      # Start order only. A version is approved before its event is published,
+      # and a publish that cannot reach the broker is logged rather than
+      # failing the request — Kafka being down must not stop the service
+      # coming up.
+      kafka:
         condition: service_started
 
   # The single entry point. The frontend talks only to this; the five services

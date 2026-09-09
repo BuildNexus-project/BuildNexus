@@ -30,6 +30,9 @@ public sealed class FakeDesignDocumentRepository : IDesignDocumentRepository
     /// <summary>The last decision the controller asked to record, or <c>null</c> if none.</summary>
     public ReviewDecision? LastReviewDecision { get; private set; }
 
+    /// <summary>The outbox events the controller asked to record alongside the last decision.</summary>
+    public IReadOnlyList<OutboxEvent> LastOutboxEvents { get; private set; } = [];
+
     public Task<DesignUploadResult> AddVersionAsync(DesignUpload upload)
     {
         LastUpload = upload;
@@ -96,9 +99,11 @@ public sealed class FakeDesignDocumentRepository : IDesignDocumentRepository
     /// version already — over the in-memory <see cref="Documents"/> instead of
     /// SQL, so the controller suite can pin the refusals without MySQL.
     /// </summary>
-    public Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(ReviewDecision decision)
+    public Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(
+        ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents)
     {
         LastReviewDecision = decision;
+        LastOutboxEvents = outboxEvents;
 
         var entry = Documents.FirstOrDefault(d => d.Document.Id == decision.DocumentId);
         var version = entry?.Versions.FirstOrDefault(v => v.Id == decision.VersionId);

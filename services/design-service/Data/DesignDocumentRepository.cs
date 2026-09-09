@@ -335,7 +335,8 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         };
     }
 
-    public async Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(ReviewDecision decision)
+    public async Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(
+        ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents)
     {
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         // One transaction, the document row locked for its length: two review
@@ -367,6 +368,14 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         }
 
         await ApplyReviewDecisionAsync(connection, transaction, decision);
+
+        // Written in the same transaction as the decision, so a DesignApproved
+        // event commits with the approval it describes or not at all — the
+        // reason the outbox pattern exists at all.
+        foreach (var outboxEvent in outboxEvents)
+        {
+            await OutboxRepository.InsertAsync(connection, transaction, outboxEvent);
+        }
 
         await transaction.CommitAsync();
 
