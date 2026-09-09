@@ -110,7 +110,8 @@ public class MigrationScriptTests
         // script rather than one: a status added in a later story without a
         // matching migration — wherever that migration lands — would otherwise
         // only surface as a constraint violation the first time somebody used
-        // it. 001 defined Submitted; 002 added UnderReview and Approved.
+        // it. 001 defined Submitted; 002 added UnderReview and Approved; 003
+        // added RevisionRequested.
         var sql = string.Concat(ScriptNames().Select(ReadScript));
 
         var missing = Enum.GetNames<Models.DesignDocumentStatus>()
@@ -132,6 +133,20 @@ public class MigrationScriptTests
 
         Assert.Contains("'UnderReview'", sql, StringComparison.Ordinal);
         Assert.Contains("'Approved'", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_revision_requested_status_and_review_columns_arrive_in_003()
+    {
+        // US-11: the status a Client's revision request moves a version to, and
+        // the columns that record who reviewed a version, when, and what a
+        // revision request asked for.
+        var sql = StripComments(ReadScript(Script("003_add_design_document_review_decision.sql")));
+
+        Assert.Contains("'RevisionRequested'", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?is)ADD COLUMN reviewed_by\b", sql);
+        Assert.Matches(@"(?is)ADD COLUMN reviewed_at\b", sql);
+        Assert.Matches(@"(?is)ADD COLUMN review_comment\b", sql);
     }
 
     private static string Script(string fileName) =>
