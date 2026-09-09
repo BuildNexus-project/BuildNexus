@@ -304,7 +304,8 @@ public class DesignsControllerTests
         };
         httpContext.Request.Headers.Authorization = $"Bearer {Token}";
 
-        var controller = new DesignsController(repository, accessClient, NullLogger<DesignsController>.Instance)
+        var controller = new DesignsController(
+            repository, accessClient, new FakeRevisionRequestNotifier(), NullLogger<DesignsController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = httpContext }
         };

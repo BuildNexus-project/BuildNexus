@@ -4,6 +4,8 @@ using BuildNexus.DesignService.Configuration;
 using BuildNexus.DesignService.Data;
 using BuildNexus.DesignService.Messaging;
 using BuildNexus.DesignService.Projects;
+using BuildNexus.DesignService.Services;
+using BuildNexus.DesignService.Users;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -48,6 +50,57 @@ builder.Services.AddHttpClient<IProjectAccessClient, HttpProjectAccessClient>((s
     client.BaseAddress = new Uri(options.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
 });
+
+// The User Service, asked over HTTP for a name and email to notify — see
+// HttpInternalUserClient. Same validation reasoning as ProjectServiceOptions.
+builder.Services.AddOptions<UserServiceOptions>()
+    .Bind(builder.Configuration.GetSection(UserServiceOptions.SectionName))
+    .Validate(
+        o => Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _),
+        "Services:UserService:BaseUrl must be an absolute URL.")
+    .Validate(o => o.TimeoutSeconds > 0, "Services:UserService:TimeoutSeconds must be greater than zero.")
+    .ValidateOnStart();
+
+// The shared secret this service presents to /api/internal on the User
+// Service. Validated at startup at the same 32-byte bar as the JWT signing key
+// — see user-service's identically-named options, which check the same value
+// on the receiving side.
+builder.Services.AddOptions<InternalServiceOptions>()
+    .Bind(builder.Configuration.GetSection(InternalServiceOptions.SectionName))
+    .Validate(
+        o => Encoding.UTF8.GetByteCount(o.ApiKey) >= InternalServiceOptions.MinimumApiKeyBytes,
+        $"InternalService:ApiKey must be at least {InternalServiceOptions.MinimumApiKeyBytes} bytes.")
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IInternalUserClient, HttpInternalUserClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<UserServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
+
+// Revision-request delivery. Both senders are registered; which one answers
+// IEmailSender is decided when it is resolved, from the options as they finally
+// stand — the same registration user-service uses for its own password-reset
+// email.
+builder.Services.AddSingleton<SmtpEmailSender>();
+builder.Services.AddSingleton<LoggingEmailSender>();
+builder.Services.AddSingleton<IEmailSender>(provider =>
+    string.IsNullOrWhiteSpace(provider.GetRequiredService<IOptions<EmailOptions>>().Value.SmtpHost)
+        ? provider.GetRequiredService<LoggingEmailSender>()
+        : provider.GetRequiredService<SmtpEmailSender>());
+
+// Scoped, not Singleton: it depends on IInternalUserClient, a typed HttpClient,
+// which AddHttpClient registers as Transient — a Singleton holding that
+// indefinitely is exactly the captive-dependency problem IHttpClientFactory
+// exists to avoid.
+builder.Services.AddScoped<IRevisionRequestNotifier, RevisionRequestNotifier>();
+
+builder.Services.AddOptions<EmailOptions>()
+    .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.FromAddress), "Email:FromAddress must be configured.")
+    .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be greater than zero.")
+    .ValidateOnStart();
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();

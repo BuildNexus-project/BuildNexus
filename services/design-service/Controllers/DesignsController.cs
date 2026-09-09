@@ -5,6 +5,7 @@ using BuildNexus.DesignService.Data;
 using BuildNexus.DesignService.Messaging;
 using BuildNexus.DesignService.Models;
 using BuildNexus.DesignService.Projects;
+using BuildNexus.DesignService.Services;
 using BuildNexus.DesignService.Validation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -31,15 +32,18 @@ public class DesignsController : ControllerBase
 {
     private readonly IDesignDocumentRepository _repository;
     private readonly IProjectAccessClient _projectAccess;
+    private readonly IRevisionRequestNotifier _revisionRequestNotifier;
     private readonly ILogger<DesignsController> _logger;
 
     public DesignsController(
         IDesignDocumentRepository repository,
         IProjectAccessClient projectAccess,
+        IRevisionRequestNotifier revisionRequestNotifier,
         ILogger<DesignsController> logger)
     {
         _repository = repository;
         _projectAccess = projectAccess;
+        _revisionRequestNotifier = revisionRequestNotifier;
         _logger = logger;
     }
 
@@ -322,6 +326,11 @@ public class DesignsController : ControllerBase
                 _logger.LogInformation(
                     "Client {ClientId} set {DisplayName} to {Status}.", clientId, displayName, status);
 
+                if (status == DesignDocumentStatus.RevisionRequested)
+                {
+                    await NotifyArchitectAsync(version, displayName, reviewComment!, cancellationToken);
+                }
+
                 return Ok(new ReviewDecisionResponse
                 {
                     VersionId = versionId,
@@ -355,6 +364,34 @@ public class DesignsController : ControllerBase
 
             default:
                 throw new InvalidOperationException($"Unhandled {nameof(ReviewDecisionOutcome)}: {outcome}.");
+        }
+    }
+
+    /// <summary>
+    /// Tells the Architect who uploaded the version that a revision was
+    /// requested, and what for.
+    /// </summary>
+    /// <remarks>
+    /// The review decision is already recorded by the time this runs — a
+    /// notification that could not be sent (the User Service unreachable, the
+    /// mail server down) is logged and swallowed here rather than turned into a
+    /// failed request, the same reasoning <c>AuthController</c>'s password-reset
+    /// email follows.
+    /// </remarks>
+    private async Task NotifyArchitectAsync(
+        DesignVersionForReview version, string displayName, string comment, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _revisionRequestNotifier.NotifyAsync(version.UploadedBy, displayName, comment, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Could not notify Architect {ArchitectId} about the revision requested on {DisplayName}.",
+                version.UploadedBy,
+                displayName);
         }
     }
 
