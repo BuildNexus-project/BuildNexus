@@ -5,10 +5,12 @@ import { ApiError } from './api'
 type AuthFetch = <T>(path: string, options?: Omit<ApiFetchOptions, 'token'>) => Promise<T>
 
 /**
- * Where a design document version sits in review. US-09 defines one value —
- * every upload lands as `Submitted`.
+ * Where a design document version sits in review. Every upload still lands as
+ * `Submitted` — nothing in the service moves a version off it yet, that
+ * arrives with the review-workflow story. `UnderReview` and `Approved` exist
+ * so US-10 can identify a document's current version.
  */
-export type DesignDocumentStatus = 'Submitted'
+export type DesignDocumentStatus = 'Submitted' | 'UnderReview' | 'Approved'
 
 /**
  * One uploaded version of a design document, with the metadata US-09 keeps
@@ -35,6 +37,13 @@ export type DesignVersion = {
   uploadedBy: string
   /** ISO-8601, as the service serialises it. */
   uploadedAt: string
+  /**
+   * True for the single latest version of this document that is
+   * `UnderReview` or `Approved` — never for `Submitted`. False for every
+   * version when none has reached either state yet, rather than a `Submitted`
+   * version standing in for one.
+   */
+  isCurrent: boolean
 }
 
 /**
