@@ -171,6 +171,19 @@ jobs:
       # key length at startup and the host refuses to boot below it.
       Jwt__SigningKey: ${{ secrets.JWT_SIGNING_KEY }}
 
+      # --- Why the internal service key is here (US-11) ---------------------
+      # Same trap as the Jwt__* block above: docker-compose.yml's user-service
+      # block requires InternalService__ApiKey to parse, even though this job
+      # only starts user-db. UserServiceFactory supplies its own value through
+      # AddInMemoryCollection, so the test run itself does not depend on this —
+      # it is set at job level so that stays true rather than failing as a
+      # puzzle if the factory ever stops overriding it.
+      #
+      # Repository secret, the same class of value as the JWT signing key: a
+      # shared key with a minimum-length check at startup, not a throwaway dev
+      # password like the ones below.
+      InternalService__ApiKey: ${{ secrets.INTERNAL_SERVICE_API_KEY }}
+
     steps:
       - uses: actions/checkout@v4
 
