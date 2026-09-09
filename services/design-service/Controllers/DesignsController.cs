@@ -122,7 +122,9 @@ public class DesignsController : ControllerBase
 
         return StatusCode(
             StatusCodes.Status201Created,
-            DesignVersionResponse.From(stored.Document, stored.Version));
+            // Every upload lands as Submitted (see AddVersionAsync), and Submitted
+            // is never current — so a just-uploaded version never is either.
+            DesignVersionResponse.From(stored.Document, stored.Version, isCurrent: false));
     }
 
     /// <summary>
