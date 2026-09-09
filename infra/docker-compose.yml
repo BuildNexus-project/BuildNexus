@@ -130,6 +130,9 @@ services:
       # exp claim when the User Service issues it, and every other service simply
       # checks whether exp has passed. User Service only.
       Jwt__AccessTokenLifetimeMinutes: "20"
+      # US-11. Checked here, and sent by whichever service calls /api/internal —
+      # today that is the Design Service, below.
+      InternalService__ApiKey: ${InternalService__ApiKey:?set InternalService__ApiKey in infra/.env (min 32 bytes)}
       # US-04. The emailed reset link points at the React app, not at this
       # service, so it is built from the same frontend origin the gateway
       # allows through CORS.
