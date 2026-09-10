@@ -53,6 +53,22 @@ public class DesignsControllerTests
     }
 
     [Fact]
+    public async Task Upload_raises_a_single_DesignSubmitted_event_in_the_same_transaction()
+    {
+        var (controller, repository, _) = ControllerFor();
+
+        await controller.Upload(ProjectId, Request(name: "GroundFloorPlan"), default);
+
+        // US-23: every upload enqueues one DesignSubmitted on the outbox, built
+        // from the document and version the repository's transaction just made.
+        var enqueued = Assert.Single(repository.LastUploadOutboxEvents);
+        Assert.Equal("DesignSubmitted", enqueued.EventType);
+        Assert.NotEqual(Guid.Empty, enqueued.DocumentId);
+        // The row and its envelope share an id (traceability).
+        Assert.NotEqual(Guid.Empty, enqueued.Id);
+    }
+
+    [Fact]
     public async Task Upload_takes_the_content_type_from_the_bytes_not_the_form()
     {
         var (controller, repository, _) = ControllerFor();
