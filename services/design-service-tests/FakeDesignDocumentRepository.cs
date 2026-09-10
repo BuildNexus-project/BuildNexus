@@ -33,7 +33,12 @@ public sealed class FakeDesignDocumentRepository : IDesignDocumentRepository
     /// <summary>The outbox events the controller asked to record alongside the last decision.</summary>
     public IReadOnlyList<OutboxEvent> LastOutboxEvents { get; private set; } = [];
 
-    public Task<DesignUploadResult> AddVersionAsync(DesignUpload upload)
+    /// <summary>The outbox events the last upload's callback produced.</summary>
+    public IReadOnlyList<OutboxEvent> LastUploadOutboxEvents { get; private set; } = [];
+
+    public Task<DesignUploadResult> AddVersionAsync(
+        DesignUpload upload,
+        Func<DesignDocument, DesignDocumentVersion, IReadOnlyList<OutboxEvent>> buildOutboxEvents)
     {
         LastUpload = upload;
 
@@ -59,6 +64,10 @@ public sealed class FakeDesignDocumentRepository : IDesignDocumentRepository
             UploadedBy = upload.UploadedBy,
             UploadedAt = upload.UploadedAtUtc
         };
+
+        // Called the same way the real repository calls it — with the document
+        // and version this "transaction" just created.
+        LastUploadOutboxEvents = buildOutboxEvents(document, version);
 
         return Task.FromResult(new DesignUploadResult { Document = document, Version = version });
     }

@@ -105,18 +105,22 @@ public class DesignsController : ControllerBase
             return FileProblem(validation.Error!);
         }
 
-        var stored = await _repository.AddVersionAsync(new DesignUpload
-        {
-            ProjectId = projectId,
-            DocumentName = request.Name.Trim(),
-            UploadedBy = architectId,
-            FileName = request.File.FileName,
-            // The type the bytes actually are, not what the client labelled the part.
-            ContentType = validation.ContentType!,
-            Content = content,
-            RevisionComment = NullIfBlank(request.RevisionComment),
-            UploadedAtUtc = DateTime.UtcNow
-        });
+        var stored = await _repository.AddVersionAsync(
+            new DesignUpload
+            {
+                ProjectId = projectId,
+                DocumentName = request.Name.Trim(),
+                UploadedBy = architectId,
+                FileName = request.File.FileName,
+                // The type the bytes actually are, not what the client labelled the part.
+                ContentType = validation.ContentType!,
+                Content = content,
+                RevisionComment = NullIfBlank(request.RevisionComment),
+                UploadedAtUtc = DateTime.UtcNow
+            },
+            // Raised for every upload (US-23). The document and version are only
+            // known once the transaction has created them.
+            (document, version) => [DesignEvents.Submitted(document, version)]);
 
         _logger.LogInformation(
             "Architect {ArchitectId} uploaded {DisplayName} ({SizeBytes} bytes) to project {ProjectId}.",
