@@ -86,6 +86,32 @@ services:
       retries: 20
       start_period: 30s
 
+  construction-db:
+    image: mysql:8.0
+    container_name: buildnexus-construction-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CONSTRUCTION_DB_ROOT_PASSWORD:?set CONSTRUCTION_DB_ROOT_PASSWORD in infra/.env}
+      MYSQL_DATABASE: buildnexus_construction_db
+      MYSQL_USER: ${CONSTRUCTION_DB_USER:-buildnexus}
+      MYSQL_PASSWORD: ${CONSTRUCTION_DB_PASSWORD:?set CONSTRUCTION_DB_PASSWORD in infra/.env}
+    ports:
+      # 3310: 3306-3309 are taken by the four services above (user-db moves to
+      # 3308 via the local override). One schema per service, one container
+      # per service, one host port per container. Matches the default
+      # connection string in the service's appsettings.json.
+      - "3310:3306"
+    volumes:
+      - construction-db-data:/var/lib/mysql
+      # No schema is mounted here — the Construction Service applies its own
+      # migrations at startup with DbUp, exactly as the other services do.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
   # Catches every email the stack sends instead of delivering it, and serves an
   # inbox at http://localhost:8025 to read them in. Nothing leaves the machine:
   # it speaks SMTP, accepts anything, and forwards nowhere.
@@ -313,6 +339,36 @@ services:
       mailpit:
         condition: service_started
 
+  construction-service:
+    build:
+      context: ../services/construction-service
+      dockerfile: Dockerfile
+    container_name: buildnexus-construction-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__ConstructionDb: >-
+        Server=construction-db;Port=3306;Database=buildnexus_construction_db;User Id=${CONSTRUCTION_DB_USER:-buildnexus};Password=${CONSTRUCTION_DB_PASSWORD};
+      # The shared convention. Identical to the values the User Service signs
+      # with, or every token it issues is refused here.
+      Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
+      Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
+      Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # US-23. The broker, under the shared name every service that touches
+      # Kafka uses. The internal listener, since this runs on the compose
+      # network. This service consumes design-events; it publishes nothing.
+      Kafka__BootstrapServers: kafka:9092
+    ports:
+      - "5004:8080"
+    depends_on:
+      construction-db:
+        condition: service_healthy
+      # Start order only. Kafka being down means DesignApproved events pile up
+      # unconsumed until it is back — not that this service fails to boot.
+      kafka:
+        condition: service_started
+
   # The single entry point. The frontend talks only to this; the five services
   # behind it are reachable on the compose network by service name and never
   # need a published port of their own for the app to work. The ports the
@@ -338,9 +394,10 @@ services:
       # Where each cluster in appsettings.json actually points once containerised.
       # The file ships localhost ports for `dotnet run`; these override them with
       # compose service names, which is also the shape a deployment overrides.
-      # construction-service and payment-service do not exist yet — their routes
-      # answer 502 until the stories that build them land, which is why the
-      # gateway does not wait on them to start.
+      # payment-service does not exist yet — its route answers 502 until the
+      # story that builds it lands, which is why the gateway does not wait on
+      # it to start. construction-service (US-23) does exist now, but has no
+      # HTTP surface beyond a read endpoint and /health.
       ReverseProxy__Clusters__user__Destinations__primary__Address: http://user-service:8080/
       ReverseProxy__Clusters__project__Destinations__primary__Address: http://project-service:8080/
       ReverseProxy__Clusters__design__Destinations__primary__Address: http://design-service:8080/
@@ -355,9 +412,11 @@ services:
       - user-service
       - project-service
       - design-service
+      - construction-service
 
 volumes:
   user-db-data:
   project-db-data:
   design-db-data:
+  construction-db-data:
   kafka-data:
