@@ -86,6 +86,15 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Client], RolesFor("RequestRevision"));
     }
 
+    [Fact]
+    public void The_design_approval_report_is_the_admins_alone()
+    {
+        // US-20: architect performance and process bottlenecks are an
+        // administrator's concern, not something the architects being measured
+        // or the clients whose projects are counted get to see.
+        Assert.Equal([PlatformRoles.Admin], RolesFor("GetApprovalReport"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)
