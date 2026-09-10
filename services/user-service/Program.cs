@@ -3,6 +3,7 @@ using BuildNexus.UserService.Authorization;
 using BuildNexus.UserService.Configuration;
 using BuildNexus.UserService.Data;
 using BuildNexus.UserService.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -68,9 +69,24 @@ builder.Services.AddOptions<EmailOptions>()
     .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be greater than zero.")
     .ValidateOnStart();
 
+// The shared secret other services present to /api/internal — validated at
+// startup for the same reason the JWT signing key is: a weak or missing key
+// protecting a user directory lookup is not something to discover later.
+builder.Services.AddOptions<InternalServiceOptions>()
+    .Bind(builder.Configuration.GetSection(InternalServiceOptions.SectionName))
+    .Validate(
+        o => Encoding.UTF8.GetByteCount(o.ApiKey) >= InternalServiceOptions.MinimumApiKeyBytes,
+        $"InternalService:ApiKey must be at least {InternalServiceOptions.MinimumApiKeyBytes} bytes.")
+    .ValidateOnStart();
+
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer();
+    .AddJwtBearer()
+    // A second scheme, never the default: [Authorize] with no scheme named
+    // still means "a signed-in user," and only /api/internal opts into this one
+    // explicitly.
+    .AddScheme<AuthenticationSchemeOptions, InternalServiceAuthenticationHandler>(
+        InternalServiceAuthenticationHandler.SchemeName, _ => { });
 
 // Validation settings are taken from the same bound JwtOptions the token
 // service signs with, rather than from a snapshot read straight off the

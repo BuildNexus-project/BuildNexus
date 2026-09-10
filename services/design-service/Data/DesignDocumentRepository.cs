@@ -21,7 +21,7 @@ public class DesignDocumentRepository : IDesignDocumentRepository
     /// </summary>
     private const string VersionMetadataColumns =
         "id, document_id, version_number, file_name, content_type, file_size_bytes, "
-        + "status, revision_comment, uploaded_by, uploaded_at";
+        + "status, revision_comment, uploaded_by, uploaded_at, reviewed_by, reviewed_at, review_comment";
 
     /// <summary>
     /// One upload racing another for the same next version number loses to
@@ -104,7 +104,8 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         // versions carry no project_id of their own, by design.
         const string versionsSql = $@"
             SELECT v.id, v.document_id, v.version_number, v.file_name, v.content_type,
-                   v.file_size_bytes, v.status, v.revision_comment, v.uploaded_by, v.uploaded_at
+                   v.file_size_bytes, v.status, v.revision_comment, v.uploaded_by, v.uploaded_at,
+                   v.reviewed_by, v.reviewed_at, v.review_comment
             FROM design_document_versions v
             INNER JOIN design_documents d ON d.id = v.document_id
             WHERE d.project_id = @projectId
@@ -302,6 +303,157 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         await command.ExecuteNonQueryAsync();
     }
 
+    public async Task<DesignVersionForReview?> GetVersionForReviewAsync(Guid versionId)
+    {
+        const string sql = @"
+            SELECT v.id, v.document_id, v.version_number, v.status, v.uploaded_by, d.project_id, d.name
+            FROM design_document_versions v
+            INNER JOIN design_documents d ON d.id = v.document_id
+            WHERE v.id = @versionId
+            LIMIT 1;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@versionId", versionId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new DesignVersionForReview
+        {
+            VersionId = reader.GetGuid(reader.GetOrdinal("id")),
+            DocumentId = reader.GetGuid(reader.GetOrdinal("document_id")),
+            VersionNumber = reader.GetInt32(reader.GetOrdinal("version_number")),
+            Status = Enum.Parse<DesignDocumentStatus>(reader.GetString(reader.GetOrdinal("status"))),
+            UploadedBy = reader.GetGuid(reader.GetOrdinal("uploaded_by")),
+            ProjectId = reader.GetGuid(reader.GetOrdinal("project_id")),
+            DocumentName = reader.GetString(reader.GetOrdinal("name"))
+        };
+    }
+
+    public async Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(
+        ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents)
+    {
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        // One transaction, the document row locked for its length: two review
+        // decisions for the same document — even on two different versions —
+        // must resolve one after the other, never both, or the "one Approved
+        // version locks the rest" rule could be beaten by a race.
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        await LockDocumentAsync(connection, transaction, decision.DocumentId);
+
+        var currentStatus = await LockAndReadVersionStatusAsync(connection, transaction, decision.VersionId);
+
+        if (currentStatus is null)
+        {
+            await transaction.RollbackAsync();
+            return ReviewDecisionOutcome.VersionNotFound;
+        }
+
+        if (currentStatus != DesignDocumentStatus.Submitted)
+        {
+            await transaction.RollbackAsync();
+            return ReviewDecisionOutcome.AlreadyDecided;
+        }
+
+        if (await AnotherVersionIsApprovedAsync(connection, transaction, decision.DocumentId, decision.VersionId))
+        {
+            await transaction.RollbackAsync();
+            return ReviewDecisionOutcome.DocumentAlreadyApproved;
+        }
+
+        await ApplyReviewDecisionAsync(connection, transaction, decision);
+
+        // Written in the same transaction as the decision, so a DesignApproved
+        // event commits with the approval it describes or not at all — the
+        // reason the outbox pattern exists at all.
+        foreach (var outboxEvent in outboxEvents)
+        {
+            await OutboxRepository.InsertAsync(connection, transaction, outboxEvent);
+        }
+
+        await transaction.CommitAsync();
+
+        return ReviewDecisionOutcome.Recorded;
+    }
+
+    private static async Task LockDocumentAsync(DbConnection connection, DbTransaction transaction, Guid documentId)
+    {
+        const string sql = "SELECT id FROM design_documents WHERE id = @documentId FOR UPDATE;";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        AddParameter(command, "@documentId", documentId);
+
+        await command.ExecuteScalarAsync();
+    }
+
+    private static async Task<DesignDocumentStatus?> LockAndReadVersionStatusAsync(
+        DbConnection connection, DbTransaction transaction, Guid versionId)
+    {
+        const string sql = "SELECT status FROM design_document_versions WHERE id = @versionId FOR UPDATE;";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        AddParameter(command, "@versionId", versionId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        return await reader.ReadAsync() ? Enum.Parse<DesignDocumentStatus>(reader.GetString(0)) : null;
+    }
+
+    /// <summary>
+    /// True if some version of this document other than <paramref name="versionId"/>
+    /// is already Approved — the target version's own status is already known
+    /// to be Submitted by the time this runs, so excluding it only guards
+    /// against re-checking what the caller just confirmed.
+    /// </summary>
+    private static async Task<bool> AnotherVersionIsApprovedAsync(
+        DbConnection connection, DbTransaction transaction, Guid documentId, Guid versionId)
+    {
+        const string sql = @"
+            SELECT COUNT(*) FROM design_document_versions
+            WHERE document_id = @documentId AND status = 'Approved' AND id <> @versionId;";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        AddParameter(command, "@documentId", documentId);
+        AddParameter(command, "@versionId", versionId);
+
+        return Convert.ToInt64(await command.ExecuteScalarAsync()) > 0;
+    }
+
+    private static async Task ApplyReviewDecisionAsync(
+        DbConnection connection, DbTransaction transaction, ReviewDecision decision)
+    {
+        const string sql = @"
+            UPDATE design_document_versions
+            SET status = @status, reviewed_by = @reviewedBy, reviewed_at = @reviewedAt, review_comment = @reviewComment
+            WHERE id = @versionId;";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        // Stored as the enum's name, which is what ck_design_document_versions_status
+        // checks against — never its underlying number.
+        AddParameter(command, "@status", decision.Status.ToString());
+        AddParameter(command, "@reviewedBy", decision.ReviewedBy);
+        AddParameter(command, "@reviewedAt", decision.ReviewedAtUtc);
+        AddParameter(command, "@reviewComment", decision.ReviewComment);
+        AddParameter(command, "@versionId", decision.VersionId);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static void AddParameter(DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();
@@ -316,6 +468,18 @@ public class DesignDocumentRepository : IDesignDocumentRepository
     {
         var ordinal = reader.GetOrdinal(column);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static Guid? GetNullableGuid(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
+    }
+
+    private static DateTime? GetNullableDateTime(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetDateTime(ordinal);
     }
 
     private static DesignDocument MapDocument(DbDataReader reader) => new()
@@ -339,6 +503,9 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         Status = Enum.Parse<DesignDocumentStatus>(reader.GetString(reader.GetOrdinal("status"))),
         RevisionComment = GetNullableString(reader, "revision_comment"),
         UploadedBy = reader.GetGuid(reader.GetOrdinal("uploaded_by")),
-        UploadedAt = reader.GetDateTime(reader.GetOrdinal("uploaded_at"))
+        UploadedAt = reader.GetDateTime(reader.GetOrdinal("uploaded_at")),
+        ReviewedBy = GetNullableGuid(reader, "reviewed_by"),
+        ReviewedAt = GetNullableDateTime(reader, "reviewed_at"),
+        ReviewComment = GetNullableString(reader, "review_comment")
     };
 }

@@ -35,4 +35,33 @@ public interface IDesignDocumentRepository
     /// checked before the bytes are returned.
     /// </summary>
     Task<StoredDesignFile?> GetVersionFileAsync(Guid versionId);
+
+    /// <summary>
+    /// One version, read for a review decision — or <c>null</c> if there is no
+    /// version with that id. Read before <see cref="RecordReviewDecisionAsync"/>
+    /// so the caller's project access can be checked first.
+    /// </summary>
+    Task<DesignVersionForReview?> GetVersionForReviewAsync(Guid versionId);
+
+    /// <summary>
+    /// Records a Client's decision on one version (US-11) — approve, or request
+    /// a revision with a comment.
+    /// </summary>
+    /// <remarks>
+    /// Refuses rather than overwrites: a version that is no longer
+    /// <see cref="Models.DesignDocumentStatus.Submitted"/>, or whose document
+    /// already has an <see cref="Models.DesignDocumentStatus.Approved"/> version,
+    /// has already had its decision made. Both checks happen inside the same
+    /// transaction as the write, with the document row locked for its length —
+    /// two reviews racing for the same document resolve one after the other,
+    /// never both.
+    /// <para>
+    /// <paramref name="outboxEvents"/> is written in that same transaction, the
+    /// same way <see cref="AddVersionAsync"/> would if a story ever asked it to:
+    /// an approval and its <c>DesignApproved</c> event commit together or not at
+    /// all. Empty for a revision request — US-11 raises no event for that
+    /// outcome.
+    /// </para>
+    /// </remarks>
+    Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents);
 }

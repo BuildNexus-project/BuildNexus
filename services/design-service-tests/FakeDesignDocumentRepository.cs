@@ -27,6 +27,12 @@ public sealed class FakeDesignDocumentRepository : IDesignDocumentRepository
     /// <summary>What <see cref="GetVersionFileAsync"/> returns, when its id is asked for.</summary>
     public StoredDesignFile? StoredFile { get; set; }
 
+    /// <summary>The last decision the controller asked to record, or <c>null</c> if none.</summary>
+    public ReviewDecision? LastReviewDecision { get; private set; }
+
+    /// <summary>The outbox events the controller asked to record alongside the last decision.</summary>
+    public IReadOnlyList<OutboxEvent> LastOutboxEvents { get; private set; } = [];
+
     public Task<DesignUploadResult> AddVersionAsync(DesignUpload upload)
     {
         LastUpload = upload;
@@ -63,4 +69,65 @@ public sealed class FakeDesignDocumentRepository : IDesignDocumentRepository
 
     public Task<StoredDesignFile?> GetVersionFileAsync(Guid versionId) =>
         Task.FromResult(StoredFile is { } file && file.VersionId == versionId ? file : null);
+
+    public Task<DesignVersionForReview?> GetVersionForReviewAsync(Guid versionId)
+    {
+        var found = Documents
+            .Select(entry => (Entry: entry, Version: entry.Versions.FirstOrDefault(v => v.Id == versionId)))
+            .FirstOrDefault(pair => pair.Version is not null);
+
+        if (found.Version is null)
+        {
+            return Task.FromResult<DesignVersionForReview?>(null);
+        }
+
+        return Task.FromResult<DesignVersionForReview?>(new DesignVersionForReview
+        {
+            VersionId = found.Version.Id,
+            DocumentId = found.Entry.Document.Id,
+            ProjectId = found.Entry.Document.ProjectId,
+            DocumentName = found.Entry.Document.Name,
+            VersionNumber = found.Version.VersionNumber,
+            UploadedBy = found.Version.UploadedBy,
+            Status = found.Version.Status
+        });
+    }
+
+    /// <summary>
+    /// Applies the same rules <see cref="Data.DesignDocumentRepository"/> does —
+    /// refuse a version that is not Submitted, or a document with an Approved
+    /// version already — over the in-memory <see cref="Documents"/> instead of
+    /// SQL, so the controller suite can pin the refusals without MySQL.
+    /// </summary>
+    public Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(
+        ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents)
+    {
+        LastReviewDecision = decision;
+        LastOutboxEvents = outboxEvents;
+
+        var entry = Documents.FirstOrDefault(d => d.Document.Id == decision.DocumentId);
+        var version = entry?.Versions.FirstOrDefault(v => v.Id == decision.VersionId);
+
+        if (entry is null || version is null)
+        {
+            return Task.FromResult(ReviewDecisionOutcome.VersionNotFound);
+        }
+
+        if (version.Status != DesignDocumentStatus.Submitted)
+        {
+            return Task.FromResult(ReviewDecisionOutcome.AlreadyDecided);
+        }
+
+        if (entry.Versions.Any(v => v.Id != decision.VersionId && v.Status == DesignDocumentStatus.Approved))
+        {
+            return Task.FromResult(ReviewDecisionOutcome.DocumentAlreadyApproved);
+        }
+
+        version.Status = decision.Status;
+        version.ReviewedBy = decision.ReviewedBy;
+        version.ReviewedAt = decision.ReviewedAtUtc;
+        version.ReviewComment = decision.ReviewComment;
+
+        return Task.FromResult(ReviewDecisionOutcome.Recorded);
+    }
 }

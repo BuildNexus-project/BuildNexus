@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -61,6 +61,20 @@ function uploadedVersion(overrides: Record<string, unknown> = {}) {
     uploadedBy: ARCHITECT_ID,
     uploadedAt: '2026-09-01T09:00:00',
     isCurrent: false,
+    ...overrides,
+  }
+}
+
+/** What the service hands back from a review decision (US-11). */
+function reviewDecision(overrides: Record<string, unknown> = {}) {
+  return {
+    versionId: VERSION_ID,
+    documentId: 'dddddddd-0000-4000-8000-000000000001',
+    displayName: 'GroundFloorPlan_v1',
+    status: 'Approved',
+    reviewedBy: CLIENT_ID,
+    reviewedAt: '2026-09-01T10:00:00',
+    reviewComment: null,
     ...overrides,
   }
 }
@@ -214,6 +228,112 @@ describe('DesignDocumentsPage', () => {
 
     expect(screen.getByText('GroundFloorPlan_v1').closest('tr')).not.toHaveTextContent('Current')
     expect(screen.getByText('GroundFloorPlan_v2').closest('tr')).toHaveTextContent('Current')
+  })
+
+  it('lets a Client approve the current version', async () => {
+    const requests = renderPage(
+      asOwningClient,
+      apiResponse(200, [designDocument()]),
+      apiResponse(200, reviewDecision()),
+      apiResponse(200, [
+        designDocument({
+          versions: [{ ...designDocument().versions[0], status: 'Approved', isCurrent: true }],
+        }),
+      ]),
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(requests[1].path).toBe(`/api/designs/versions/${VERSION_ID}/approve`)
+    expect(requests[1].method).toBe('POST')
+
+    // The reloaded list is what is shown, not a locally-built guess.
+    expect(await screen.findByText('Approved')).toBeInTheDocument()
+  })
+
+  it('lets a Client request a revision, with a comment the Architect will see', async () => {
+    const requests = renderPage(
+      asOwningClient,
+      apiResponse(200, [designDocument()]),
+      apiResponse(200, reviewDecision({ status: 'RevisionRequested', reviewComment: 'Move the stairs.' })),
+      apiResponse(200, [
+        designDocument({
+          versions: [
+            {
+              ...designDocument().versions[0],
+              status: 'RevisionRequested',
+              reviewComment: 'Move the stairs.',
+            },
+          ],
+        }),
+      ]),
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Request revision' }))
+
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Comment'), { target: { value: 'Move the stairs.' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Request revision' }))
+
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(requests[1].path).toBe(`/api/designs/versions/${VERSION_ID}/request-revision`)
+    expect(requests[1].method).toBe('POST')
+    expect(requests[1].body).toEqual({ comment: 'Move the stairs.' })
+
+    expect(await screen.findByText(/Revision requested:/)).toBeInTheDocument()
+    expect(screen.getByText(/Move the stairs\./)).toBeInTheDocument()
+  })
+
+  it('refuses to submit a revision request with a blank comment', async () => {
+    const requests = renderPage(asOwningClient, apiResponse(200, [designDocument()]))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Request revision' }))
+
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Request revision' }))
+
+    expect(await within(dialog).findByText('A comment is required.')).toBeInTheDocument()
+    // Only the initial list load — the blank comment never went anywhere.
+    expect(requests).toHaveLength(1)
+  })
+
+  it('hides review actions once the document already has an Approved version', async () => {
+    renderPage(
+      asOwningClient,
+      apiResponse(200, [
+        designDocument({
+          latestVersionNumber: 2,
+          versions: [
+            { ...designDocument().versions[0], status: 'Approved' },
+            {
+              ...designDocument().versions[0],
+              id: 'v2',
+              versionNumber: 2,
+              displayName: 'GroundFloorPlan_v2',
+              status: 'Submitted',
+            },
+          ],
+        }),
+      ]),
+    )
+
+    await screen.findByText('GroundFloorPlan_v2')
+
+    // Neither the Approved version nor the still-Submitted one offers a
+    // review action — the whole document is read-only history once one
+    // version is Approved.
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Request revision' })).not.toBeInTheDocument()
+  })
+
+  it('does not offer review actions to an Architect', async () => {
+    renderPage(asArchitect, apiResponse(200, [designDocument()]))
+
+    await screen.findByText('GroundFloorPlan_v1')
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Request revision' })).not.toBeInTheDocument()
   })
 
   it('shows an Architect the upload form', async () => {

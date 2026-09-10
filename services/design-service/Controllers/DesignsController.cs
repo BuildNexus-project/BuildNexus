@@ -2,8 +2,10 @@ using System.Security.Claims;
 using BuildNexus.DesignService.Authorization;
 using BuildNexus.DesignService.Contracts;
 using BuildNexus.DesignService.Data;
+using BuildNexus.DesignService.Messaging;
 using BuildNexus.DesignService.Models;
 using BuildNexus.DesignService.Projects;
+using BuildNexus.DesignService.Services;
 using BuildNexus.DesignService.Validation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -30,15 +32,18 @@ public class DesignsController : ControllerBase
 {
     private readonly IDesignDocumentRepository _repository;
     private readonly IProjectAccessClient _projectAccess;
+    private readonly IRevisionRequestNotifier _revisionRequestNotifier;
     private readonly ILogger<DesignsController> _logger;
 
     public DesignsController(
         IDesignDocumentRepository repository,
         IProjectAccessClient projectAccess,
+        IRevisionRequestNotifier revisionRequestNotifier,
         ILogger<DesignsController> logger)
     {
         _repository = repository;
         _projectAccess = projectAccess;
+        _revisionRequestNotifier = revisionRequestNotifier;
         _logger = logger;
     }
 
@@ -192,10 +197,7 @@ public class DesignsController : ControllerBase
 
         if (file is null)
         {
-            return Problem(
-                statusCode: StatusCodes.Status404NotFound,
-                title: "Version not found",
-                detail: $"No design document version with id '{versionId}' exists.");
+            return VersionNotFoundProblem(versionId);
         }
 
         // The access check is on the project the version belongs to, read from
@@ -206,6 +208,191 @@ public class DesignsController : ControllerBase
         }
 
         return File(file.Content, file.ContentType, file.FileName);
+    }
+
+    /// <summary>
+    /// Approves a design document version. Allowed roles: Client.
+    /// </summary>
+    /// <remarks>
+    /// Records the approving user and timestamp, and enqueues a
+    /// <c>DesignApproved</c> event in the same transaction as the decision —
+    /// see <see cref="IDesignDocumentRepository.RecordReviewDecisionAsync"/>.
+    /// Refused with 409 if the version has already been decided, or if another
+    /// version of the same document is already approved: once one is, every
+    /// other version of that document is read-only history.
+    /// </remarks>
+    /// <response code="200">Recorded — the decision, who made it, and when.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is not a Client, or is not party to this project.</response>
+    /// <response code="404">No version has that id.</response>
+    /// <response code="409">The version was already decided, or the document already has an approved version.</response>
+    /// <response code="502">The Project Service could not be reached to check access.</response>
+    [HttpPost("versions/{versionId:guid}/approve")]
+    [Authorize(Roles = PlatformRoles.Client)]
+    [ProducesResponseType(typeof(ReviewDecisionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public Task<IActionResult> Approve(Guid versionId, CancellationToken cancellationToken) =>
+        ReviewAsync(versionId, DesignDocumentStatus.Approved, reviewComment: null, cancellationToken);
+
+    /// <summary>
+    /// Asks for changes on a design document version, with a comment on what
+    /// needs to change. Allowed roles: Client.
+    /// </summary>
+    /// <remarks>
+    /// No event is raised for this outcome — US-11 names <c>DesignApproved</c>
+    /// only. Notifying the Architect is a separate step from recording the
+    /// decision here.
+    /// </remarks>
+    /// <response code="200">Recorded — the decision, who made it, when, and the comment.</response>
+    /// <response code="400">The comment was missing or too long.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is not a Client, or is not party to this project.</response>
+    /// <response code="404">No version has that id.</response>
+    /// <response code="409">The version was already decided, or the document already has an approved version.</response>
+    /// <response code="502">The Project Service could not be reached to check access.</response>
+    [HttpPost("versions/{versionId:guid}/request-revision")]
+    [Authorize(Roles = PlatformRoles.Client)]
+    [ProducesResponseType(typeof(ReviewDecisionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public Task<IActionResult> RequestRevision(
+        Guid versionId,
+        [FromBody] RequestRevisionRequest request,
+        CancellationToken cancellationToken) =>
+        ReviewAsync(versionId, DesignDocumentStatus.RevisionRequested, request.Comment.Trim(), cancellationToken);
+
+    /// <summary>
+    /// The common path behind <see cref="Approve"/> and
+    /// <see cref="RequestRevision"/>: read the version, check access, record
+    /// the decision, and translate the outcome into a response.
+    /// </summary>
+    private async Task<IActionResult> ReviewAsync(
+        Guid versionId,
+        DesignDocumentStatus status,
+        string? reviewComment,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetCallerId(out var clientId) || CallerBearerToken() is not { } token)
+        {
+            return Unauthorized();
+        }
+
+        var version = await _repository.GetVersionForReviewAsync(versionId);
+
+        if (version is null)
+        {
+            return VersionNotFoundProblem(versionId);
+        }
+
+        // The access check is on the project the version belongs to, read from
+        // storage — not on anything the caller supplied.
+        if (await CheckProjectAccessAsync(version.ProjectId, token, cancellationToken) is { } denied)
+        {
+            return denied;
+        }
+
+        var reviewedAt = DateTime.UtcNow;
+
+        var decision = new ReviewDecision
+        {
+            VersionId = versionId,
+            DocumentId = version.DocumentId,
+            Status = status,
+            ReviewedBy = clientId,
+            ReviewedAtUtc = reviewedAt,
+            ReviewComment = reviewComment
+        };
+
+        // Only an approval raises an event — US-11 names DesignApproved alone.
+        IReadOnlyList<OutboxEvent> outboxEvents = status == DesignDocumentStatus.Approved
+            ? [DesignEvents.Approved(version, clientId, reviewedAt)]
+            : [];
+
+        var outcome = await _repository.RecordReviewDecisionAsync(decision, outboxEvents);
+
+        var displayName = $"{version.DocumentName}_v{version.VersionNumber}";
+
+        switch (outcome)
+        {
+            case ReviewDecisionOutcome.Recorded:
+                _logger.LogInformation(
+                    "Client {ClientId} set {DisplayName} to {Status}.", clientId, displayName, status);
+
+                if (status == DesignDocumentStatus.RevisionRequested)
+                {
+                    await NotifyArchitectAsync(version, displayName, reviewComment!, cancellationToken);
+                }
+
+                return Ok(new ReviewDecisionResponse
+                {
+                    VersionId = versionId,
+                    DocumentId = version.DocumentId,
+                    DisplayName = displayName,
+                    Status = status.ToString(),
+                    ReviewedBy = clientId,
+                    ReviewedAt = reviewedAt,
+                    ReviewComment = reviewComment
+                });
+
+            case ReviewDecisionOutcome.VersionNotFound:
+                // The version existed a moment ago, above, and was removed
+                // between then and the write — not something a caller can
+                // usefully retry differently, but a 404 is still the honest
+                // answer.
+                return VersionNotFoundProblem(versionId);
+
+            case ReviewDecisionOutcome.AlreadyDecided:
+                return Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Already reviewed",
+                    detail: $"{displayName} has already had a decision recorded on it.");
+
+            case ReviewDecisionOutcome.DocumentAlreadyApproved:
+                return Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Design already approved",
+                    detail: "Another version of this document has already been approved. Every version of "
+                            + "an approved document is read-only.");
+
+            default:
+                throw new InvalidOperationException($"Unhandled {nameof(ReviewDecisionOutcome)}: {outcome}.");
+        }
+    }
+
+    /// <summary>
+    /// Tells the Architect who uploaded the version that a revision was
+    /// requested, and what for.
+    /// </summary>
+    /// <remarks>
+    /// The review decision is already recorded by the time this runs — a
+    /// notification that could not be sent (the User Service unreachable, the
+    /// mail server down) is logged and swallowed here rather than turned into a
+    /// failed request, the same reasoning <c>AuthController</c>'s password-reset
+    /// email follows.
+    /// </remarks>
+    private async Task NotifyArchitectAsync(
+        DesignVersionForReview version, string displayName, string comment, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _revisionRequestNotifier.NotifyAsync(version.UploadedBy, displayName, comment, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Could not notify Architect {ArchitectId} about the revision requested on {DisplayName}.",
+                version.UploadedBy,
+                displayName);
+        }
     }
 
     /// <summary>
@@ -241,6 +428,12 @@ public class DesignsController : ControllerBase
                         + "Try again in a moment."),
         };
     }
+
+    private IActionResult VersionNotFoundProblem(Guid versionId) =>
+        Problem(
+            statusCode: StatusCodes.Status404NotFound,
+            title: "Version not found",
+            detail: $"No design document version with id '{versionId}' exists.");
 
     private IActionResult FileProblem(string detail) =>
         Problem(statusCode: StatusCodes.Status400BadRequest, title: "The file was not accepted", detail: detail);

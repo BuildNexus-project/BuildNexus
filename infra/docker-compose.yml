@@ -130,6 +130,9 @@ services:
       # exp claim when the User Service issues it, and every other service simply
       # checks whether exp has passed. User Service only.
       Jwt__AccessTokenLifetimeMinutes: "20"
+      # US-11. Checked here, and sent by whichever service calls /api/internal —
+      # today that is the Design Service, below.
+      InternalService__ApiKey: ${InternalService__ApiKey:?set InternalService__ApiKey in infra/.env (min 32 bytes)}
       # US-04. The emailed reset link points at the React app, not at this
       # service, so it is built from the same frontend origin the gateway
       # allows through CORS.
@@ -265,6 +268,26 @@ services:
       # Service, forwarding the caller's own token. The internal listener, since
       # this runs on the compose network.
       Services__ProjectService__BaseUrl: http://project-service:8080/
+      # US-11. The broker, under the shared name every publishing service uses.
+      # The internal listener, since this runs on the compose network.
+      Kafka__BootstrapServers: kafka:9092
+      # US-11 names the Architect to notify by asking the User Service's
+      # internal lookup, presenting the shared key below. The internal
+      # listener, since this runs on the compose network.
+      Services__UserService__BaseUrl: http://user-service:8080/
+      InternalService__ApiKey: ${InternalService__ApiKey:?set InternalService__ApiKey in infra/.env (min 32 bytes)}
+      Email__FromAddress: no-reply@buildnexus.local
+      # Revision-request emails are really sent, over SMTP, to the Mailpit
+      # container above — the same arrangement user-service's password-reset
+      # email uses, and for the same reason: this exercises the same
+      # SmtpEmailSender a deployment uses, read at http://localhost:8025
+      # rather than out of a log line.
+      Email__SmtpHost: mailpit
+      Email__SmtpPort: "1025"
+      # Mailpit's SMTP listener speaks plain SMTP unless it is given
+      # certificates. Off here because nothing leaves the machine; on in
+      # anything real.
+      Email__UseStartTls: "false"
     ports:
       - "5003:8080"
     depends_on:
@@ -273,6 +296,21 @@ services:
       # Start order only. The Project Service being down means an upload cannot
       # be authorised and answers 502, not that this service fails to boot.
       project-service:
+        condition: service_started
+      # Start order only. A version is approved before its event is published,
+      # and a publish that cannot reach the broker is logged rather than
+      # failing the request — Kafka being down must not stop the service
+      # coming up.
+      kafka:
+        condition: service_started
+      # Start order only. The User Service being down means an Architect
+      # cannot be notified of a revision request — logged, not a failed
+      # request — not that this service fails to boot.
+      user-service:
+        condition: service_started
+      # Start order only, same reasoning. A notification that cannot be sent
+      # is logged, not a reason to fail the request that triggered it.
+      mailpit:
         condition: service_started
 
   # The single entry point. The frontend talks only to this; the five services

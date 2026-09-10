@@ -40,4 +40,20 @@ public class DesignDocumentVersion
     public Guid UploadedBy { get; set; }
 
     public DateTime UploadedAt { get; set; }
+
+    /// <summary>
+    /// The Client who approved or requested a revision on this version (US-11),
+    /// or <c>null</c> before either has happened.
+    /// </summary>
+    public Guid? ReviewedBy { get; set; }
+
+    /// <summary><c>null</c> until <see cref="ReviewedBy"/> is set — the two always arrive together.</summary>
+    public DateTime? ReviewedAt { get; set; }
+
+    /// <summary>
+    /// The Client's note on what needs to change, set only when the decision was
+    /// a request for revision. Kept separate from <see cref="RevisionComment"/>,
+    /// which is the Architect's own note on this upload.
+    /// </summary>
+    public string? ReviewComment { get; set; }
 }
