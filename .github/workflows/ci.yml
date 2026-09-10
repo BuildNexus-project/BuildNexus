@@ -156,6 +156,15 @@ jobs:
       DESIGN_DB_USER: buildnexus
       DESIGN_DB_PASSWORD: buildnexus-dev
 
+      # --- Why the Construction Service database credentials are here ------
+      # Same trap again (US-23): the construction-db and construction-service
+      # blocks carry `${CONSTRUCTION_DB_*:?...}`, and compose parses the whole
+      # file before starting any container, so these must be set even though
+      # this job starts neither. Same published development values.
+      CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-dev
+      CONSTRUCTION_DB_USER: buildnexus
+      CONSTRUCTION_DB_PASSWORD: buildnexus-dev
+
       # --- Why the JWT values are here at all -------------------------------
       # Compose interpolates the WHOLE file before it starts anything, so the
       # required `${Jwt__*:?...}` variables declared on the user-service and
