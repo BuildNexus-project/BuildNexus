@@ -18,6 +18,23 @@ namespace BuildNexus.DesignService.Messaging;
 /// </remarks>
 public static class DesignEvents
 {
+    /// <summary>An Architect has uploaded a design document version.</summary>
+    public static OutboxEvent Submitted(DesignDocument document, DesignDocumentVersion version) =>
+        Raise(
+            DesignEventTypes.DesignSubmitted,
+            document.Id,
+            DesignSubmittedPayload.From(document, version),
+            version.UploadedAt);
+
+    /// <summary>A Client has asked for changes on a design document version.</summary>
+    public static OutboxEvent RevisionRequested(
+        DesignVersionForReview version, Guid requestedBy, string comment, DateTime requestedAtUtc) =>
+        Raise(
+            DesignEventTypes.DesignRevisionRequested,
+            version.DocumentId,
+            DesignRevisionRequestedPayload.From(version, requestedBy, comment, requestedAtUtc),
+            requestedAtUtc);
+
     /// <summary>A Client has approved a design document version.</summary>
     public static OutboxEvent Approved(DesignVersionForReview version, Guid approvedBy, DateTime approvedAtUtc) =>
         Raise(

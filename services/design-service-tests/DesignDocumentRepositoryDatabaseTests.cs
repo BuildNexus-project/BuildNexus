@@ -39,7 +39,7 @@ public class DesignDocumentRepositoryDatabaseTests
     [Fact]
     public async Task First_upload_creates_the_document_at_version_one()
     {
-        var result = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var result = await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
 
         Assert.Equal(1, result.Version.VersionNumber);
         Assert.True(result.DocumentWasCreated);
@@ -52,8 +52,8 @@ public class DesignDocumentRepositoryDatabaseTests
     {
         var name = DocName("plan");
 
-        var first = await _fixture.Repository.AddVersionAsync(Upload(name, "%PDF-one"u8.ToArray()));
-        var second = await _fixture.Repository.AddVersionAsync(
+        var first = await AddVersion(Upload(name, "%PDF-one"u8.ToArray()));
+        var second = await AddVersion(
             Upload(name, "%PDF-two"u8.ToArray(), revisionComment: "Moved the stairs"));
 
         Assert.Equal(first.Document.Id, second.Document.Id);
@@ -65,8 +65,8 @@ public class DesignDocumentRepositoryDatabaseTests
     [Fact]
     public async Task A_different_name_in_the_same_project_starts_a_new_document_at_version_one()
     {
-        await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
-        var elevations = await _fixture.Repository.AddVersionAsync(Upload(DocName("elevations"), "%PDF-"u8.ToArray()));
+        await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var elevations = await AddVersion(Upload(DocName("elevations"), "%PDF-"u8.ToArray()));
 
         Assert.Equal(1, elevations.Version.VersionNumber);
         Assert.True(elevations.DocumentWasCreated);
@@ -76,9 +76,9 @@ public class DesignDocumentRepositoryDatabaseTests
     public async Task Lists_a_projects_documents_each_with_its_versions_oldest_first()
     {
         var plan = DocName("plan");
-        await _fixture.Repository.AddVersionAsync(Upload(plan, "%PDF-v1"u8.ToArray()));
-        await _fixture.Repository.AddVersionAsync(Upload(plan, "%PDF-v2"u8.ToArray()));
-        await _fixture.Repository.AddVersionAsync(Upload(DocName("elevations"), "%PDF-"u8.ToArray()));
+        await AddVersion(Upload(plan, "%PDF-v1"u8.ToArray()));
+        await AddVersion(Upload(plan, "%PDF-v2"u8.ToArray()));
+        await AddVersion(Upload(DocName("elevations"), "%PDF-"u8.ToArray()));
 
         var documents = await _fixture.Repository.ListForProjectAsync(ProjectId);
 
@@ -96,7 +96,7 @@ public class DesignDocumentRepositoryDatabaseTests
     {
         var bytes = "%PDF-1.7 a few bytes of body \x00\x01\x02"u8.ToArray();
 
-        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), bytes, fileName: "ground.pdf"));
+        var stored = await AddVersion(Upload(DocName("plan"), bytes, fileName: "ground.pdf"));
 
         var file = await _fixture.Repository.GetVersionFileAsync(stored.Version.Id);
 
@@ -116,7 +116,7 @@ public class DesignDocumentRepositoryDatabaseTests
     [Fact]
     public async Task GetVersionForReviewAsync_returns_the_version_with_its_document_and_project_context()
     {
-        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var stored = await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
 
         var forReview = await _fixture.Repository.GetVersionForReviewAsync(stored.Version.Id);
 
@@ -139,7 +139,7 @@ public class DesignDocumentRepositoryDatabaseTests
     [Fact]
     public async Task RecordReviewDecisionAsync_approves_a_submitted_version_and_writes_its_outbox_event()
     {
-        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var stored = await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
         var reviewerId = Guid.Parse($"{_run}-3333-4333-8333-333333333333");
         var reviewedAt = UploadedAt.AddHours(1);
 
@@ -172,7 +172,7 @@ public class DesignDocumentRepositoryDatabaseTests
     [Fact]
     public async Task RecordReviewDecisionAsync_records_a_revision_request_with_its_comment_and_raises_no_event()
     {
-        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var stored = await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
         var reviewerId = Guid.Parse($"{_run}-4444-4444-8444-444444444444");
         var reviewedAt = UploadedAt.AddHours(1);
 
@@ -200,7 +200,7 @@ public class DesignDocumentRepositoryDatabaseTests
     [Fact]
     public async Task RecordReviewDecisionAsync_refuses_a_version_that_is_already_decided()
     {
-        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var stored = await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
         var reviewerId = Guid.Parse($"{_run}-5555-4555-8555-555555555555");
 
         var decision = new ReviewDecision
@@ -225,8 +225,8 @@ public class DesignDocumentRepositoryDatabaseTests
     public async Task RecordReviewDecisionAsync_refuses_when_another_version_of_the_document_is_already_approved()
     {
         var name = DocName("plan");
-        var first = await _fixture.Repository.AddVersionAsync(Upload(name, "%PDF-one"u8.ToArray()));
-        var second = await _fixture.Repository.AddVersionAsync(Upload(name, "%PDF-two"u8.ToArray()));
+        var first = await AddVersion(Upload(name, "%PDF-one"u8.ToArray()));
+        var second = await AddVersion(Upload(name, "%PDF-two"u8.ToArray()));
         var reviewerId = Guid.Parse($"{_run}-6666-4666-8666-666666666666");
 
         Assert.Equal(
@@ -266,7 +266,7 @@ public class DesignDocumentRepositoryDatabaseTests
         // returning null for all three even after a decision was recorded —
         // a fake repository over the same in-memory object never catches
         // this, since it never runs the SQL.
-        var stored = await _fixture.Repository.AddVersionAsync(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
+        var stored = await AddVersion(Upload(DocName("plan"), "%PDF-"u8.ToArray()));
         var reviewerId = Guid.Parse($"{_run}-7777-4777-8777-777777777777");
         var reviewedAt = UploadedAt.AddHours(1);
 
@@ -310,6 +310,10 @@ public class DesignDocumentRepositoryDatabaseTests
 
         Assert.Equal(ReviewDecisionOutcome.VersionNotFound, outcome);
     }
+
+    /// <summary>AddVersionAsync with a no-op outbox callback — see DesignSubmitted coverage in the dedicated event tests.</summary>
+    private Task<DesignUploadResult> AddVersion(DesignUpload upload) =>
+        _fixture.Repository.AddVersionAsync(upload, static (_, _) => []);
 
     private DesignUpload Upload(
         string documentName,

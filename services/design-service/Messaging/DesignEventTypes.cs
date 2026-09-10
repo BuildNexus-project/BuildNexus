@@ -10,6 +10,12 @@ namespace BuildNexus.DesignService.Messaging;
 /// </remarks>
 public static class DesignEventTypes
 {
+    /// <summary>An Architect has uploaded a design document version (US-23).</summary>
+    public const string DesignSubmitted = nameof(DesignSubmitted);
+
+    /// <summary>A Client has asked for changes on a design document version (US-23).</summary>
+    public const string DesignRevisionRequested = nameof(DesignRevisionRequested);
+
     /// <summary>A Client has approved a design document version (US-11).</summary>
     public const string DesignApproved = nameof(DesignApproved);
 
@@ -17,5 +23,5 @@ public static class DesignEventTypes
     /// Every type this service publishes, for code that has to enumerate them —
     /// and for the test that holds the database's own list to the same set.
     /// </summary>
-    public static readonly IReadOnlyList<string> All = [DesignApproved];
+    public static readonly IReadOnlyList<string> All = [DesignSubmitted, DesignRevisionRequested, DesignApproved];
 }

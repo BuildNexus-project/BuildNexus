@@ -149,6 +149,36 @@ public class MigrationScriptTests
         Assert.Matches(@"(?is)ADD COLUMN review_comment\b", sql);
     }
 
+    [Fact]
+    public void Every_event_type_the_service_can_produce_is_allowed_by_the_schema()
+    {
+        // Same guard as the statuses above, for the outbox event types: an
+        // eventType added to DesignEventTypes without a matching migration
+        // would only surface as a ck_design_outbox_events_type violation the
+        // first time it was raised. 004 allowed DesignApproved; 005 added
+        // DesignSubmitted and DesignRevisionRequested.
+        var sql = string.Concat(ScriptNames().Select(ReadScript));
+
+        var missing = Messaging.DesignEventTypes.All
+            .Where(eventType => !sql.Contains($"'{eventType}'", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "These event types exist in DesignEventTypes but no migration allows them in the database: "
+            + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_extra_event_types_arrive_in_005()
+    {
+        // US-23: the two events design-service now raises alongside DesignApproved.
+        var sql = StripComments(ReadScript(Script("005_add_design_outbox_event_types.sql")));
+
+        Assert.Contains("'DesignSubmitted'", sql, StringComparison.Ordinal);
+        Assert.Contains("'DesignRevisionRequested'", sql, StringComparison.Ordinal);
+    }
+
     private static string Script(string fileName) =>
         ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 

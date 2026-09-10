@@ -20,8 +20,18 @@ public interface IDesignDocumentRepository
     /// Two uploads racing for the same next number is caught by
     /// <c>uq_design_document_versions_number</c> and retried, so a version
     /// number is never skipped or reused.
+    /// <para>
+    /// <paramref name="buildOutboxEvents"/> is called inside that transaction,
+    /// once the document and version exist, and whatever it returns is written
+    /// before the commit — so the <c>DesignSubmitted</c> event commits with the
+    /// upload it describes or not at all. It is a callback, not a list, because
+    /// the document id and version number are only known here, not at the call
+    /// site; and it can be re-invoked if the insert races another and retries.
+    /// </para>
     /// </remarks>
-    Task<DesignUploadResult> AddVersionAsync(DesignUpload upload);
+    Task<DesignUploadResult> AddVersionAsync(
+        DesignUpload upload,
+        Func<DesignDocument, DesignDocumentVersion, IReadOnlyList<OutboxEvent>> buildOutboxEvents);
 
     /// <summary>
     /// Every design document for a project, each with its versions — oldest
@@ -57,10 +67,9 @@ public interface IDesignDocumentRepository
     /// never both.
     /// <para>
     /// <paramref name="outboxEvents"/> is written in that same transaction, the
-    /// same way <see cref="AddVersionAsync"/> would if a story ever asked it to:
-    /// an approval and its <c>DesignApproved</c> event commit together or not at
-    /// all. Empty for a revision request — US-11 raises no event for that
-    /// outcome.
+    /// same way <see cref="AddVersionAsync"/> writes its own: the decision and
+    /// its event — <c>DesignApproved</c> or <c>DesignRevisionRequested</c>
+    /// (US-23) — commit together or not at all.
     /// </para>
     /// </remarks>
     Task<ReviewDecisionOutcome> RecordReviewDecisionAsync(ReviewDecision decision, IReadOnlyList<OutboxEvent> outboxEvents);

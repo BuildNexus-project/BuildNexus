@@ -37,13 +37,15 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         _connectionFactory = connectionFactory;
     }
 
-    public async Task<DesignUploadResult> AddVersionAsync(DesignUpload upload)
+    public async Task<DesignUploadResult> AddVersionAsync(
+        DesignUpload upload,
+        Func<DesignDocument, DesignDocumentVersion, IReadOnlyList<OutboxEvent>> buildOutboxEvents)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return await TryAddVersionAsync(upload);
+                return await TryAddVersionAsync(upload, buildOutboxEvents);
             }
             catch (MySqlException ex)
                 when (ex.ErrorCode == MySqlErrorCode.DuplicateKeyEntry && attempt < MaxVersionInsertAttempts)
@@ -55,7 +57,9 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         }
     }
 
-    private async Task<DesignUploadResult> TryAddVersionAsync(DesignUpload upload)
+    private async Task<DesignUploadResult> TryAddVersionAsync(
+        DesignUpload upload,
+        Func<DesignDocument, DesignDocumentVersion, IReadOnlyList<OutboxEvent>> buildOutboxEvents)
     {
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         // The document lookup-or-create and the version insert are one unit: a
@@ -86,6 +90,14 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         };
 
         await InsertVersionAsync(connection, transaction, version, upload.Content);
+
+        // Built here, not at the call site: the document id and version number
+        // are only decided in this transaction. Written before the commit so
+        // the DesignSubmitted event and the upload it describes are one unit.
+        foreach (var outboxEvent in buildOutboxEvents(document, version))
+        {
+            await OutboxRepository.InsertAsync(connection, transaction, outboxEvent);
+        }
 
         await transaction.CommitAsync();
 

@@ -53,6 +53,22 @@ public class DesignsControllerTests
     }
 
     [Fact]
+    public async Task Upload_raises_a_single_DesignSubmitted_event_in_the_same_transaction()
+    {
+        var (controller, repository, _) = ControllerFor();
+
+        await controller.Upload(ProjectId, Request(name: "GroundFloorPlan"), default);
+
+        // US-23: every upload enqueues one DesignSubmitted on the outbox, built
+        // from the document and version the repository's transaction just made.
+        var enqueued = Assert.Single(repository.LastUploadOutboxEvents);
+        Assert.Equal("DesignSubmitted", enqueued.EventType);
+        Assert.NotEqual(Guid.Empty, enqueued.DocumentId);
+        // The row and its envelope share an id (traceability).
+        Assert.NotEqual(Guid.Empty, enqueued.Id);
+    }
+
+    [Fact]
     public async Task Upload_takes_the_content_type_from_the_bytes_not_the_form()
     {
         var (controller, repository, _) = ControllerFor();
@@ -364,7 +380,7 @@ public class DesignsControllerTests
     }
 
     [Fact]
-    public async Task RequestRevision_records_the_comment_notifies_the_architect_and_raises_no_event()
+    public async Task RequestRevision_records_the_comment_notifies_the_architect_and_raises_a_DesignRevisionRequested_event()
     {
         var (controller, repository, notifier) = ControllerForReview();
         var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.Submitted);
@@ -379,7 +395,10 @@ public class DesignsControllerTests
         Assert.Equal("RevisionRequested", body.Status);
         Assert.Equal("Move the stairs to the east wall.", body.ReviewComment);
 
-        Assert.Empty(repository.LastOutboxEvents);
+        // US-23: a revision request now raises its own event, in the same
+        // transaction as the decision.
+        var enqueued = Assert.Single(repository.LastOutboxEvents);
+        Assert.Equal("DesignRevisionRequested", enqueued.EventType);
 
         Assert.NotNull(notifier.LastNotification);
         Assert.Equal(ArchitectId, notifier.LastNotification!.Value.ArchitectId);

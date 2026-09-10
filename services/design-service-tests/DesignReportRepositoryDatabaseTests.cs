@@ -34,9 +34,9 @@ public class DesignReportRepositoryDatabaseTests
     {
         // Project A: one document, three uploads, approved on v3 five hours
         // after the first upload.
-        var docA = await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "plan", FirstUpload));
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "plan", FirstUpload.AddHours(1)));
-        var v3 = await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "plan", FirstUpload.AddHours(2)));
+        var docA = await AddVersion(Upload(ProjectA, "plan", FirstUpload));
+        await AddVersion(Upload(ProjectA, "plan", FirstUpload.AddHours(1)));
+        var v3 = await AddVersion(Upload(ProjectA, "plan", FirstUpload.AddHours(2)));
 
         await _fixture.Repository.RecordReviewDecisionAsync(
             new ReviewDecision
@@ -50,8 +50,8 @@ public class DesignReportRepositoryDatabaseTests
             []);
 
         // Project B: one document, two uploads, nothing approved.
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectB, "plan", FirstUpload));
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectB, "plan", FirstUpload.AddHours(1)));
+        await AddVersion(Upload(ProjectB, "plan", FirstUpload));
+        await AddVersion(Upload(ProjectB, "plan", FirstUpload.AddHours(1)));
 
         var report = await _fixture.Reports.GetApprovalReportAsync();
 
@@ -77,15 +77,15 @@ public class DesignReportRepositoryDatabaseTests
         // One project, two documents: "plan" approved on v2, "elevations"
         // approved on v4 — average versions-to-approval is (2 + 4) / 2 = 3,
         // and total versions is every row, 2 + 4 = 6.
-        var plan = await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "plan", FirstUpload));
-        var planV2 = await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "plan", FirstUpload.AddHours(1)));
+        var plan = await AddVersion(Upload(ProjectA, "plan", FirstUpload));
+        var planV2 = await AddVersion(Upload(ProjectA, "plan", FirstUpload.AddHours(1)));
         await _fixture.Repository.RecordReviewDecisionAsync(
             Approve(planV2.Version.Id, plan.Document.Id, FirstUpload.AddHours(2)), []);
 
-        var elevations = await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "elevations", FirstUpload));
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "elevations", FirstUpload.AddHours(1)));
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "elevations", FirstUpload.AddHours(2)));
-        var elevV4 = await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "elevations", FirstUpload.AddHours(3)));
+        var elevations = await AddVersion(Upload(ProjectA, "elevations", FirstUpload));
+        await AddVersion(Upload(ProjectA, "elevations", FirstUpload.AddHours(1)));
+        await AddVersion(Upload(ProjectA, "elevations", FirstUpload.AddHours(2)));
+        var elevV4 = await AddVersion(Upload(ProjectA, "elevations", FirstUpload.AddHours(3)));
         await _fixture.Repository.RecordReviewDecisionAsync(
             Approve(elevV4.Version.Id, elevations.Document.Id, FirstUpload.AddHours(10)), []);
 
@@ -103,8 +103,8 @@ public class DesignReportRepositoryDatabaseTests
     public async Task Orders_rows_by_project_id_not_by_when_the_work_happened()
     {
         // B's design is uploaded first, but A sorts before B.
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectB, "plan", FirstUpload));
-        await _fixture.Repository.AddVersionAsync(Upload(ProjectA, "plan", FirstUpload.AddHours(1)));
+        await AddVersion(Upload(ProjectB, "plan", FirstUpload));
+        await AddVersion(Upload(ProjectA, "plan", FirstUpload.AddHours(1)));
 
         var mine = (await _fixture.Reports.GetApprovalReportAsync())
             .Where(r => r.ProjectId == ProjectA || r.ProjectId == ProjectB)
@@ -113,6 +113,10 @@ public class DesignReportRepositoryDatabaseTests
 
         Assert.Equal([ProjectA, ProjectB], mine);
     }
+
+    /// <summary>AddVersionAsync with a no-op outbox callback — these tests don't assert on the DesignSubmitted event.</summary>
+    private Task<DesignUploadResult> AddVersion(DesignUpload upload) =>
+        _fixture.Repository.AddVersionAsync(upload, static (_, _) => []);
 
     private ReviewDecision Approve(Guid versionId, Guid documentId, DateTime reviewedAtUtc) => new()
     {
