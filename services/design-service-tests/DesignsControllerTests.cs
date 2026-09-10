@@ -364,7 +364,7 @@ public class DesignsControllerTests
     }
 
     [Fact]
-    public async Task RequestRevision_records_the_comment_notifies_the_architect_and_raises_no_event()
+    public async Task RequestRevision_records_the_comment_notifies_the_architect_and_raises_a_DesignRevisionRequested_event()
     {
         var (controller, repository, notifier) = ControllerForReview();
         var document = DocumentWithVersions("GroundFloorPlan", DesignDocumentStatus.Submitted);
@@ -379,7 +379,10 @@ public class DesignsControllerTests
         Assert.Equal("RevisionRequested", body.Status);
         Assert.Equal("Move the stairs to the east wall.", body.ReviewComment);
 
-        Assert.Empty(repository.LastOutboxEvents);
+        // US-23: a revision request now raises its own event, in the same
+        // transaction as the decision.
+        var enqueued = Assert.Single(repository.LastOutboxEvents);
+        Assert.Equal("DesignRevisionRequested", enqueued.EventType);
 
         Assert.NotNull(notifier.LastNotification);
         Assert.Equal(ArchitectId, notifier.LastNotification!.Value.ArchitectId);

@@ -315,10 +315,11 @@ public class DesignsController : ControllerBase
             ReviewComment = reviewComment
         };
 
-        // Only an approval raises an event — US-11 names DesignApproved alone.
+        // US-23: each review outcome raises its own event. The comment is only
+        // present for a revision request, hence the non-null assert there.
         IReadOnlyList<OutboxEvent> outboxEvents = status == DesignDocumentStatus.Approved
             ? [DesignEvents.Approved(version, clientId, reviewedAt)]
-            : [];
+            : [DesignEvents.RevisionRequested(version, clientId, reviewComment!, reviewedAt)];
 
         var outcome = await _repository.RecordReviewDecisionAsync(decision, outboxEvents);
 
