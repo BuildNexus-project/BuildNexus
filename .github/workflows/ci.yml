@@ -71,6 +71,7 @@ jobs:
           dotnet restore services/user-service-tests/UserService.Tests.csproj
           dotnet restore services/project-service-tests/ProjectService.Tests.csproj
           dotnet restore services/design-service-tests/DesignService.Tests.csproj
+          dotnet restore services/construction-service-tests/ConstructionService.Tests.csproj
           dotnet restore api-gateway-tests/ApiGateway.Tests.csproj
 
       # Release, matching the configuration the Docker build stage will publish.
@@ -84,6 +85,7 @@ jobs:
           dotnet build services/user-service-tests/UserService.Tests.csproj -c Release --no-restore
           dotnet build services/project-service-tests/ProjectService.Tests.csproj -c Release --no-restore
           dotnet build services/design-service-tests/DesignService.Tests.csproj -c Release --no-restore
+          dotnet build services/construction-service-tests/ConstructionService.Tests.csproj -c Release --no-restore
           dotnet build api-gateway-tests/ApiGateway.Tests.csproj -c Release --no-restore
 
   frontend-build:
@@ -157,10 +159,14 @@ jobs:
       DESIGN_DB_PASSWORD: buildnexus-dev
 
       # --- Why the Construction Service database credentials are here ------
-      # Same trap again (US-23): the construction-db and construction-service
-      # blocks carry `${CONSTRUCTION_DB_*:?...}`, and compose parses the whole
-      # file before starting any container, so these must be set even though
-      # this job starts neither. Same published development values.
+      # This job now starts construction-db (US-23):
+      # MilestoneSetupRepositoryDatabaseTests runs the real migrations and the
+      # real INSERT IGNORE against it on localhost:3310. Compose also needs
+      # these to parse the `${CONSTRUCTION_DB_*:?...}` on the construction-db
+      # and construction-service blocks before it starts anything at all. Same
+      # published development values as the blocks above, and the same reason
+      # they are literals: a fixed connection string is compiled into the test
+      # assembly and these must match it exactly.
       CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-dev
       CONSTRUCTION_DB_USER: buildnexus
       CONSTRUCTION_DB_PASSWORD: buildnexus-dev
@@ -228,12 +234,18 @@ jobs:
       # in that project (validator, contract, role-declaration, migration-script,
       # and the controller suite over fakes) needs nothing running.
       #
+      # services/construction-service-tests: MilestoneSetupRepositoryDatabaseTests
+      # runs the real migrations and the real INSERT IGNORE against
+      # construction-db on localhost:3310 — its own container, its own port. The
+      # consumer suite drives HandleAsync over a fake repository and the
+      # controller and role-declaration suites need nothing running.
+      #
       # --wait holds until every container reports healthy, not merely started,
       # which the healthchecks defined on them make meaningful: MySQL accepts
       # connections some seconds after the process starts, and without this the
       # first test would race it.
       - name: Start the service databases
-        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db
+        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db construction-db
 
       # No Kafka container for any of these, still. OutboxDispatcherTests does
       # cover the dispatcher that publishes to the broker, but over a fake
@@ -246,6 +258,7 @@ jobs:
           dotnet test services/user-service-tests/UserService.Tests.csproj -c Release
           dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release
           dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release
           dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release
 
       # A failed run is usually a database, and the container's log says why in
@@ -253,7 +266,7 @@ jobs:
       # which of the two took the run down.
       - name: Database logs (on failure)
         if: failure()
-        run: docker compose -f infra/docker-compose.yml logs user-db project-db design-db
+        run: docker compose -f infra/docker-compose.yml logs user-db project-db design-db construction-db
 
       - name: Stop the service databases
         if: always()

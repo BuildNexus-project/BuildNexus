@@ -143,7 +143,18 @@ public sealed class DesignEventsConsumer : BackgroundService
         }
     }
 
-    private async Task HandleAsync(string? value, CancellationToken cancellationToken)
+    /// <summary>
+    /// Processes one message body: a <c>DesignApproved</c> becomes a
+    /// milestone-setup placeholder, any other event type on the topic is a no-op.
+    /// </summary>
+    /// <remarks>
+    /// The unit the tests drive directly. Its exception contract is what
+    /// <see cref="ProcessAsync"/> maps to a commit decision:
+    /// a <see cref="JsonException"/> is a message that will never parse, so the
+    /// caller commits past it; anything else is treated as transient, so the
+    /// caller leaves the offset uncommitted and the message is retried.
+    /// </remarks>
+    public async Task HandleAsync(string? value, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
