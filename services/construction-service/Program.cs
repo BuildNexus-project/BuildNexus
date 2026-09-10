@@ -2,6 +2,7 @@ using System.Text;
 using BuildNexus.ConstructionService.Authorization;
 using BuildNexus.ConstructionService.Configuration;
 using BuildNexus.ConstructionService.Data;
+using BuildNexus.ConstructionService.Messaging;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,18 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IMilestoneSetupRepository, MilestoneSetupRepository>();
+
+// Broker address, validated at startup: a consumer that cannot say where Kafka
+// is will read nothing, and DesignApproved events would pile up unnoticed.
+builder.Services.AddOptions<KafkaOptions>()
+    .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
+    .ValidateOnStart();
+
+// Reads design-events and creates a milestone-setup placeholder for each
+// approved design. Nothing on any request path waits on it.
+builder.Services.AddHostedService<DesignEventsConsumer>();
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
