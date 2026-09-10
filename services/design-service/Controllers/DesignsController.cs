@@ -57,7 +57,9 @@ public class DesignsController : ControllerBase
     /// their work. The file must be a PDF, JPG or PNG — decided by its own
     /// bytes, not the multipart content type — and within 10 MB; anything else
     /// is refused with a message. Every version is stored with status
-    /// <c>Submitted</c>, which the caller cannot set.
+    /// <c>Submitted</c>, which the caller cannot set, and enqueues a
+    /// <c>DesignSubmitted</c> event in the same transaction as the version
+    /// (US-23).
     /// </remarks>
     /// <response code="201">The version was stored, and is returned with its metadata.</response>
     /// <response code="400">The form failed validation, or the file was empty, too large, or not a PDF/JPG/PNG.</response>
@@ -247,9 +249,12 @@ public class DesignsController : ControllerBase
     /// needs to change. Allowed roles: Client.
     /// </summary>
     /// <remarks>
-    /// No event is raised for this outcome — US-11 names <c>DesignApproved</c>
-    /// only. Notifying the Architect is a separate step from recording the
-    /// decision here.
+    /// Records the requesting user, timestamp and comment, and enqueues a
+    /// <c>DesignRevisionRequested</c> event in the same transaction as the
+    /// decision (US-23) — see
+    /// <see cref="IDesignDocumentRepository.RecordReviewDecisionAsync"/>.
+    /// Notifying the Architect is a separate step from recording the decision
+    /// here, and a failure to notify does not fail the request.
     /// </remarks>
     /// <response code="200">Recorded — the decision, who made it, when, and the comment.</response>
     /// <response code="400">The comment was missing or too long.</response>
