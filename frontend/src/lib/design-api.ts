@@ -203,3 +203,32 @@ export async function downloadDesignVersionFile(
 
   return response.blob()
 }
+
+/**
+ * One project's row in the design approval report (US-20): how much revision
+ * its design documents went through, and how long they took to approve —
+ * aggregated across the project's documents.
+ *
+ * `averageVersionsToApproval` and `averageHoursToApproval` are `null` until the
+ * project has at least one approved document; a project can be a row with a
+ * high `totalVersionCount` and no approval time, which is the bottleneck the
+ * report exists to surface.
+ */
+export type DesignApprovalReportRow = {
+  projectId: string
+  documentCount: number
+  approvedDocumentCount: number
+  totalVersionCount: number
+  averageVersionsToApproval: number | null
+  averageHoursToApproval: number | null
+}
+
+/**
+ * The design approval report — one row per project that has any design
+ * document, ordered by project id.
+ *
+ * Admin only; any other role gets {@link ApiError} with status 403.
+ */
+export function fetchDesignApprovalReport(authFetch: AuthFetch) {
+  return authFetch<DesignApprovalReportRow[]>('/api/designs/reports/approval')
+}

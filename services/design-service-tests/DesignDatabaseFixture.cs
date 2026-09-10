@@ -45,6 +45,9 @@ public class DesignDatabaseFixture : IAsyncLifetime
     /// <summary>For reading back what <see cref="Repository"/> wrote to the outbox alongside a decision.</summary>
     public OutboxRepository Outbox { get; private set; } = null!;
 
+    /// <summary>The aggregate report queries (US-20), over the same live database.</summary>
+    public DesignReportRepository Reports { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         // The production migration path, not a hand-written schema: DbUp records
@@ -62,6 +65,7 @@ public class DesignDatabaseFixture : IAsyncLifetime
         var connectionFactory = new MySqlConnectionFactory(configuration);
         Repository = new DesignDocumentRepository(connectionFactory);
         Outbox = new OutboxRepository(connectionFactory);
+        Reports = new DesignReportRepository(connectionFactory);
 
         return Task.CompletedTask;
     }

@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
+import { DesignApprovalReportPage } from '@/pages/DesignApprovalReportPage'
 import { DesignDocumentsPage } from '@/pages/DesignDocumentsPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
@@ -92,6 +93,14 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={ADMIN_ROLES}>
               <AdminUsersPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/admin/reports/design-approval"
+          element={
+            <RoleRoute allowedRoles={ADMIN_ROLES}>
+              <DesignApprovalReportPage />
             </RoleRoute>
           }
         />
