@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars — `cp terraform.tfvars.example terraform.tfvars` —
+# and fill in the values below.
+#
+# UNLIKE infra/.env.example, the values here are placeholders, not working
+# development values. This file configures real, publicly reachable Azure
+# resources: the signing key below is the one every BuildNexus token in the
+# deployed environment is signed with, and anyone holding it can mint a token
+# for any user and any role. Generate fresh values, and never commit them —
+# terraform.tfvars is git-ignored, this .example file is not.
+#
+# Anything set here can equally be passed as a TF_VAR_<name> environment
+# variable, which is the better option on a shared machine since it leaves
+# nothing on disk.
+
+# --- Shared MySQL Flexible Server -------------------------------------------
+
+# Only needed if the default "buildnexus-mysql-2026" is already taken by another
+# Azure subscription — the name is global, not per-subscription.
+# mysql_server_name = "buildnexus-mysql-2026"
+
+# 8-128 characters, and Azure additionally wants three of: lowercase, uppercase,
+# digit, symbol. Cannot be changed after the server is created without a reset.
+mysql_administrator_password = "REPLACE-ME"
+
+# --- Azure subscription ------------------------------------------------------
+
+# Normally left unset: the provider falls back to ARM_SUBSCRIPTION_ID and then
+# to whatever `az account show` reports. Set it only when the signed-in account
+# can see more than one subscription and the wrong one would be picked.
+# subscription_id = "00000000-0000-0000-0000-000000000000"
