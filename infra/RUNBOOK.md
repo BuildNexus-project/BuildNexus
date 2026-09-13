@@ -184,6 +184,98 @@ and no smaller size will help. Either way, bring the exact error to the team
 rather than guessing — and do not move the MySQL server alone, because that
 splits the stack across two regions.
 
+### When apply fails partway
+
+Azure's management API is eventually consistent. Southeastasia has been slow
+enough about it to break a single first apply in four different ways — every one
+of them a read-after-write 404, where the resource was created correctly and only
+Terraform's record of it came back wrong.
+
+That distinction is the whole point of this section: **none of these are
+configuration errors, and none of them are fixed by recreating anything.** Read
+what actually exists before acting.
+
+```
+az resource list --resource-group buildnexus-rg -o table
+terraform state list
+```
+
+Compare the two. The mismatch tells you which case you have.
+
+**1. It exists in Azure but is missing from state.** Apply fails with:
+
+```
+Error: a resource with the ID "..." already exists - to be managed via
+Terraform this resource needs to be imported into the State
+```
+
+Re-running apply just repeats it — Terraform keeps trying to create what is
+already there. Import it:
+
+```
+terraform import azurerm_service_plan.main \
+  /subscriptions/<sub>/resourceGroups/buildnexus-rg/providers/Microsoft.Web/serverFarms/buildnexus-asp
+```
+
+The resource ID is **case-sensitive** in the segments the provider parses:
+`serverFarms`, not `serverfarms`, or it fails with *"the parsed Resource ID was
+missing a value for the segment at position 6"*, which does not sound like a
+casing problem at all.
+
+**2. It is in state but its attributes are null.** A create that failed during
+the read-back writes a partial entry. The symptom is not obvious — every
+subsequent command, `import` included, dies while evaluating outputs:
+
+```
+Error: Invalid template interpolation value
+  azurerm_linux_web_app.user_service.default_hostname is null
+```
+
+Repopulate from Azure. This reads only; it changes nothing remote:
+
+```
+terraform apply -refresh-only -auto-approve
+```
+
+Do this **first** when several things are wrong at once, because the broken
+output blocks the commands that would fix the rest.
+
+**3. A healthy resource is marked tainted.** Terraform taints a resource whose
+create partially failed, and a tainted resource is always replaced — so plan
+proposes destroying something that is running perfectly well:
+
+```
+# azurerm_linux_web_app.user_service is tainted, so must be replaced
+Plan: 1 to add, 0 to change, 1 to destroy.
+```
+
+`-refresh-only` does not clear this. Confirm the resource really is healthy, then
+clear the flag rather than letting it be rebuilt — recreating an App Service also
+regenerates its publish profile, which invalidates the GitHub Secret:
+
+```
+terraform untaint azurerm_linux_web_app.user_service
+```
+
+**4. The state is locked with no owner.** An interrupted command can leave the
+blob lease held but the lock metadata empty:
+
+```
+Error: Error acquiring the state lock
+Error message: state blob is already locked
+blob metadata "terraformlockid" was empty
+```
+
+`terraform force-unlock` wants a lock ID, and there is not one to give it. Break
+the lease in the Portal instead: storage account `buildnexustfstate2026` →
+Containers → `tfstate` → `user-service/terraform.tfstate` → **Break lease**.
+Check first that nobody else is actually running Terraform; the lock exists to
+stop two people writing state at once, and this is only safe because it is stale.
+
+Afterwards, `terraform plan` should report *No changes. Your infrastructure
+matches the configuration.* Anything else means the reconciliation is not
+finished — keep going rather than applying over it.
+
 ### Destroy
 
 The stack is destroyed between demos to control Azure credit usage, and brought
