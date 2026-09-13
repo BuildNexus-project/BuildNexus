@@ -22,6 +22,36 @@
 # digit, symbol. Cannot be changed after the server is created without a reset.
 mysql_administrator_password = "REPLACE-ME"
 
+# --- Shared auth convention --------------------------------------------------
+
+# The key every BuildNexus token in the deployed environment is signed with, and
+# the key every other service validates against. At least 32 bytes, or the User
+# Service refuses to start. Generate a fresh one — do NOT reuse the value in
+# infra/.env.example, which is published in the repository for local use only:
+#
+#   openssl rand -base64 48
+#
+jwt_signing_key = "REPLACE-ME-at-least-32-bytes"
+
+# Presented in the X-Internal-Api-Key header between services. Also at least 32
+# bytes, also generated fresh, also not the value in infra/.env.example.
+internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
+
+# Issuer and audience are the same in every service and rarely change. Uncomment
+# only to override the defaults, and then override them everywhere at once.
+# jwt_issuer   = "BuildNexusAuth"
+# jwt_audience = "BuildNexusServices"
+
+# --- User Service ------------------------------------------------------------
+
+# Only needed if the default "buildnexus-user-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# user_service_app_name = "buildnexus-user-service-2026"
+
+# Where the emailed password reset link points. Still the local dev server,
+# because the frontend has no deployed home yet.
+# frontend_origin = "http://localhost:5173"
+
 # --- Azure subscription ------------------------------------------------------
 
 # Normally left unset: the provider falls back to ARM_SUBSCRIPTION_ID and then
