@@ -24,12 +24,42 @@ Terraform's own state lives somewhere else entirely — resource group
 managed by Terraform and must never be destroyed by it: a module cannot hold the
 storage its own state lives in.
 
-Everything is in **centralindia**. This is not a preference. `eastus` was tried
-first and Azure refused it outright with `RequestDisallowedByAzure` — this
-subscription is region-restricted, and centralindia is the confirmed-working
-region. The location is written out as a literal on every resource in
-`terraform/main.tf` and `terraform/user-service.tf` so it cannot be overridden
-back to a region that fails.
+Everything is in **southeastasia**. This is not a preference, and two separate
+restrictions produced it — they fail differently, so both are worth knowing
+before anyone tries to move the stack.
+
+**1. An Azure Policy limits the subscription to five regions.** The assignment
+is called *Allowed resource deployment regions* and permits exactly:
+
+```
+southeastasia, eastasia, centralindia, uaenorth, austriaeast
+```
+
+Anything else is refused at deployment time with `RequestDisallowedByAzure`,
+which is how `eastus` was ruled out. Read the current list with:
+
+```
+az policy assignment list --query "[].{name:displayName, params:parameters}" -o json
+```
+
+**2. Of those five, centralindia cannot host MySQL on this subscription.**
+Creating a Flexible Server there fails with `ProvisionNotSupportedForRegion`,
+and the region's MySQL capability endpoint returns HTTP 500 for every API
+version rather than an empty SKU list — so there is no smaller Burstable size to
+fall back to, because the whole capability set is unavailable. The other four
+regions each return the full set of nine Burstable SKUs including
+`Standard_B1ms`. The resource group and App Service plan create in centralindia
+without complaint; it is only MySQL that fails there, which is what makes this
+worth writing down rather than rediscovering.
+
+southeastasia is allowed by the policy, has working MySQL, and is the closest of
+the four to the team. The stack stays in **one** region deliberately: putting
+MySQL elsewhere while the App Service stayed in centralindia would cross a region
+boundary on every query.
+
+The location is written out as a literal on every resource in `terraform/main.tf`
+and `terraform/user-service.tf` so it cannot be overridden back to a region that
+fails.
 
 ## Why there is no Service Principal, and no infra.yml
 
@@ -134,12 +164,25 @@ resource group and the MySQL FQDN. No secret is an output.
 
 A first apply takes several minutes, nearly all of it the MySQL Flexible Server.
 
-**If apply fails specifically on `azurerm_mysql_flexible_server` with a region
-availability or disallowed-region error** — even though the resource group and
-App Service plan succeeded — stop. MySQL Flexible Server reaches new regions
-later than other Azure services do, and this needs a decision rather than a
-guess. Bring the exact error to the team; do not quietly try a different region,
-because moving the server alone would split the stack across two of them.
+**If apply fails specifically on `azurerm_mysql_flexible_server` with
+`ProvisionNotSupportedForRegion`** — even though the resource group and App
+Service plan succeeded — that is the failure described under "What is deployed"
+above. It has happened once already, in centralindia, and the fix was to move the
+whole stack to southeastasia.
+
+Before assuming the region is at fault again, check whether it is the region or
+the SKU, because they need different fixes and the error message conflates them.
+The capability endpoint distinguishes them cleanly:
+
+```
+az mysql flexible-server list-skus --location <region> -o table
+```
+
+A region that returns the Burstable SKU list is fine and the problem is the
+specific size; a region that errors or returns nothing cannot host MySQL at all
+and no smaller size will help. Either way, bring the exact error to the team
+rather than guessing — and do not move the MySQL server alone, because that
+splits the stack across two regions.
 
 ### Destroy
 

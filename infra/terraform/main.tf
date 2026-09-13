@@ -13,17 +13,36 @@
 # as the five separate MySQL containers in infra/docker-compose.yml, minus four
 # servers' worth of Azure credit.
 #
-# --- Why every location below is the literal string "centralindia" ------------
+# --- Why every location below is the literal string "southeastasia" -----------
 #
-# This subscription has a region restriction. `eastus` was tried first and Azure
-# refused the deployment outright with RequestDisallowedByAzure; centralindia is
-# the confirmed-working region. It is written out on each resource rather than
-# hidden behind a variable precisely so nobody can override it to a region that
-# fails, and so the reason is visible at the point of use.
+# Two separate restrictions narrow this to one workable region, and they fail in
+# different ways, so both are worth knowing before anyone tries to change it.
+#
+# 1. An Azure Policy on the subscription, "Allowed resource deployment regions",
+#    permits exactly five: southeastasia, eastasia, centralindia, uaenorth and
+#    austriaeast. Anything else is refused at deployment time with
+#    RequestDisallowedByAzure, which is how `eastus` was ruled out.
+#
+# 2. Of those five, centralindia cannot host a MySQL Flexible Server on this
+#    subscription. Creating one there fails with ProvisionNotSupportedForRegion,
+#    and the region's MySQL capability endpoint returns HTTP 500 for every API
+#    version rather than an empty SKU list — there is no smaller Burstable size
+#    to fall back to, because the whole capability set is unavailable. The other
+#    four regions each return the full set of nine Burstable SKUs.
+#
+# So southeastasia: allowed by the policy, MySQL works there, and it is the
+# closest of the four to the team. Note that centralindia is fine for the
+# resource group and App Service plan — it was only MySQL that failed — but the
+# stack stays in one region deliberately, rather than leaving the App Service in
+# centralindia and reaching across a region boundary for every query.
+#
+# The region is written out on each resource rather than hidden behind a
+# variable precisely so nobody can override it to one that fails, and so the
+# reason is visible at the point of use.
 
 resource "azurerm_resource_group" "main" {
   name     = "buildnexus-rg"
-  location = "centralindia"
+  location = "southeastasia"
 
   # NOT the state backend's resource group. buildnexus-tfstate-rg holds the
   # storage account this module's own state lives in and is deliberately not
@@ -33,7 +52,7 @@ resource "azurerm_resource_group" "main" {
 resource "azurerm_service_plan" "main" {
   name                = "buildnexus-asp"
   resource_group_name = azurerm_resource_group.main.name
-  location            = "centralindia"
+  location            = "southeastasia"
   os_type             = "Linux"
 
   # B1 (Basic). The smallest tier that still supports Always On, which the
@@ -50,7 +69,7 @@ resource "azurerm_mysql_flexible_server" "main" {
   # this file; the default follows the same naming as the state storage account.
   name                = var.mysql_server_name
   resource_group_name = azurerm_resource_group.main.name
-  location            = "centralindia"
+  location            = "southeastasia"
 
   # Neither value is written down here. Both come in through TF_VAR_* or a
   # git-ignored terraform.tfvars — see terraform.tfvars.example.

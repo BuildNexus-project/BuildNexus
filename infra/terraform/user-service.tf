@@ -25,7 +25,7 @@ resource "azurerm_linux_web_app" "user_service" {
   # Globally unique across Azure — this becomes <name>.azurewebsites.net.
   name                = var.user_service_app_name
   resource_group_name = azurerm_resource_group.main.name
-  location            = "centralindia"
+  location            = "southeastasia"
   service_plan_id     = azurerm_service_plan.main.id
 
   # The service issues and accepts bearer tokens. Plain HTTP would put them on
