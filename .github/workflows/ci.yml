@@ -345,7 +345,38 @@ jobs:
       - name: Install
         run: npm ci
 
-      # `vitest run` — the one-shot runner. Plain `vitest` would watch and the
-      # job would never finish.
+      # `vitest run --coverage` (US-33) — the one-shot runner, instrumented.
+      # Plain `vitest` would watch and the job would never finish; V8 does the
+      # instrumentation itself, so this measures exactly what ran rather than a
+      # separate pass over transformed source.
       - name: Test
-        run: npm test
+        run: npm run test:coverage
+
+      # The json-summary reporter writes one small file with the four overall
+      # percentages — turned into a short table in the job's own summary page,
+      # the same place the backend's coverage lands, rather than making someone
+      # open the HTML report to see a number.
+      - name: Publish frontend coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "
+              const s = require('./coverage/coverage-summary.json').total;
+              const pct = (m) => s[m].pct + '% (' + s[m].covered + '/' + s[m].total + ')';
+              console.log('# Frontend coverage');
+              console.log('| Metric | Coverage |');
+              console.log('|---|---|');
+              console.log('| Lines | ' + pct('lines') + ' |');
+              console.log('| Statements | ' + pct('statements') + ' |');
+              console.log('| Functions | ' + pct('functions') + ' |');
+              console.log('| Branches | ' + pct('branches') + ' |');
+            " >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload frontend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          if-no-files-found: ignore
