@@ -15,6 +15,17 @@ Conventions used across both:
 - **Two reflection-based guards, present in every backend service that has controllers:** `EndpointRoleDeclarationTests` (every endpoint either names its allowed roles or is explicitly anonymous — US-03) and `MigrationScriptTests` (every event type a service can publish is allowed by its own outbox schema).
 - **Frontend validation is unit-tested at the schema, not just through a page.** The Zod schemas in `frontend/src/lib/*-schemas.ts` mirror a backend service's own validation rules, and are tested directly for the boundary cases — empty, over-length, malformed — that a page-level render test would not exercise one by one.
 
+### Coverage
+
+Every test run also measures coverage (US-33):
+
+- **Backend — Coverlet**, via `coverlet.collector` (already referenced by every `*-tests.csproj`, now actually invoked). CI runs each service's tests with `--collect:"XPlat Code Coverage"`, then merges the five Cobertura files with [reportgenerator](https://reportgenerator.io/) into one HTML report and a summary on the job's own GitHub Actions page. Run it yourself: `dotnet test <project> --collect:"XPlat Code Coverage" --results-directory ./coverage/<name>`.
+- **Frontend — `@vitest/coverage-v8`**, V8's own instrumentation of the real test run. `npm run test:coverage` from `frontend/`; CI runs the same and writes the four overall percentages into its job summary too.
+
+Both publish their full report as a CI build artifact (`backend-coverage-report`, `frontend-coverage-report`) on every run, pass or fail — not only living in the job log.
+
+**Team target: a rough 70%**, agreed as a goal rather than a gate — CI reports the number on every run but does not fail the build on it. Backend suites are already fairly thorough after US-29; the frontend currently measures at roughly 90% lines. Revisit turning this into an enforced minimum once a few sprints of real numbers exist to set one sensibly, rather than picking a gate before anyone has seen the data.
+
 ### Known gap
 
-`payment-service` has no code yet — it is a placeholder for a future story. There is nothing there to unit test, so "payment calculations" has no tests under this story: they will be added alongside whichever story first builds that service's logic.
+`payment-service` has no code yet — it is a placeholder for a future story. There is nothing there to unit test, so "payment calculations" has no tests under this story, and no coverage number either: both will exist once a future story builds that service's logic.
