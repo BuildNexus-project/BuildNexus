@@ -1,5 +1,6 @@
-# Project Service: its own database on the shared MySQL server, and its own MySQL
-# user that can reach that database and nothing else.
+# Project Service: its own database on the shared MySQL server, its own MySQL user
+# that can reach that database and nothing else, and its own Event Hub on the
+# shared Event Hubs namespace.
 #
 # Independently redeployable is the point. Nothing here is shared with another
 # service except the plan, the server and the Event Hubs namespace themselves,
@@ -78,4 +79,34 @@ resource "mysql_grant" "project_service" {
   # Same reason as on mysql_user above — the grant is issued over the same
   # connection.
   depends_on = [azurerm_mysql_flexible_server_firewall_rule.terraform_operator]
+}
+
+# --- Event Hub ---------------------------------------------------------------
+#
+# project-events: the one topic this service publishes to. On Event Hubs the
+# Event Hub IS the Kafka topic, so the name must match
+# KafkaProjectEventPublisher.Topic exactly — a publish to any other name has
+# nowhere to land. Nothing consumes it yet; a service that later subscribes does
+# so through its own consumer group, and changes nothing here.
+#
+# Declared here rather than left to appear on first publish, the way
+# KAFKA_AUTO_CREATE_TOPICS_ENABLE lets it locally, so it exists with the
+# partitions and retention chosen below before the service ever starts.
+
+resource "azurerm_eventhub" "project_events" {
+  name         = "project-events"
+  namespace_id = azurerm_eventhub_namespace.main.id
+
+  # One partition, the same as the local stack: the apache/kafka broker creates
+  # topics with its num.partitions default of 1, so a consumer there sees every
+  # project's events in a single order, and it will see the same here. Standard
+  # cannot change the count after creation — but the stack is destroyed and
+  # rebuilt between demos anyway, so raising it later costs one rebuild, not a
+  # migration.
+  partition_count = 1
+
+  # Seven days, the most Standard allows and included in its price — and the
+  # same as the 168-hour log.retention.hours default the local broker runs with,
+  # so a consumer that was down can catch up over the same window in both.
+  message_retention = 7
 }

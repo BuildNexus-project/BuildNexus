@@ -31,6 +31,12 @@ mysql_administrator_password = "REPLACE-ME"
 #
 terraform_operator_ip = "REPLACE-ME"
 
+# --- Shared Event Hubs namespace ---------------------------------------------
+
+# Only needed if the default "buildnexus-events-2026" is already taken — the name
+# is global, and it becomes <name>.servicebus.windows.net.
+# eventhub_namespace_name = "buildnexus-events-2026"
+
 # --- Shared auth convention --------------------------------------------------
 
 # The key every BuildNexus token in the deployed environment is signed with, and

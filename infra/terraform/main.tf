@@ -1,10 +1,11 @@
 # The shared Azure resources every BuildNexus service deployment sits on.
 #
-# Three things, created once and reused by all five services:
+# Four things, created once and reused by every service that needs them:
 #
 #   - one resource group, so the whole stack is a single unit to destroy
 #   - one Linux App Service plan, which the five App Services share
 #   - one MySQL Flexible Server, which holds one DATABASE per service
+#   - one Event Hubs namespace, which holds one EVENT HUB per Kafka topic
 #
 # The one-database-per-service rule is about not sharing schemas or tables
 # between services, never about needing five paid server instances. Each service
@@ -141,4 +142,41 @@ resource "azurerm_mysql_flexible_server_firewall_rule" "terraform_operator" {
   server_name         = azurerm_mysql_flexible_server.main.name
   start_ip_address    = var.terraform_operator_ip
   end_ip_address      = var.terraform_operator_ip
+}
+
+# The Kafka broker, in Azure.
+#
+# Event Hubs speaks the Kafka protocol on <namespace>.servicebus.windows.net:9093,
+# so the four services that publish events — Project, Design, Construction and
+# Payment; the User Service does not use Kafka — keep producing through
+# Confluent.Kafka, and a Kafka topic is simply an Event Hub inside this
+# namespace. One namespace for the whole stack, for the same reason there is one
+# MySQL server: one topic per publishing service is about not mixing their
+# events, never about needing four paid namespaces. Each service declares its
+# own Event Hub in its own file.
+resource "azurerm_eventhub_namespace" "main" {
+  # Globally unique across Azure — this becomes <name>.servicebus.windows.net.
+  name                = var.eventhub_namespace_name
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "southeastasia"
+
+  # Standard, not Basic: Basic has no Kafka endpoint at all. Premium and
+  # Dedicated add isolation this stack has no use for, at many times the price.
+  sku = "Standard"
+
+  # One throughput unit — 1 MB/s or 1,000 events/s in — is far beyond what a
+  # demo produces, and units are billed by the hour. auto_inflate stays off so
+  # the namespace never adds a unit, and a charge, that nobody chose.
+  capacity             = 1
+  auto_inflate_enabled = false
+
+  # The services authenticate to the Kafka endpoint with this namespace's SAS
+  # connection string, as username $ConnectionString. Local authentication is
+  # what SAS is; with it off, every publish fails authentication with an error
+  # that does not mention this setting. Set explicitly rather than left to the
+  # provider default for that reason.
+  local_authentication_enabled = true
+
+  # Kafka clients connect over TLS on 9093. Nothing older than 1.2 is accepted.
+  minimum_tls_version = "1.2"
 }

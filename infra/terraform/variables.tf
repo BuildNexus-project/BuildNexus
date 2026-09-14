@@ -59,6 +59,14 @@ variable "terraform_operator_ip" {
   }
 }
 
+# --- Shared Event Hubs namespace ---------------------------------------------
+
+variable "eventhub_namespace_name" {
+  description = "Name of the shared Event Hubs namespace that stands in for the Kafka broker. Must be globally unique across Azure, since it is addressed as <name>.servicebus.windows.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-events-2026"
+}
+
 # --- Shared auth convention --------------------------------------------------
 #
 # Issuer, audience and signing key must be IDENTICAL in every service that
