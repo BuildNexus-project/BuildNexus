@@ -8,10 +8,14 @@
 #   unit tests       Sprint 1  (below)
 #   integration      Sprint 3  — attaches with `needs: [backend-unit-tests, ...]`
 #   docker build     Sprint 4
-#   deploy           Sprint 4
+#   deploy           Sprint 4  (below, User Service only so far — SCRUM-52)
 #
-# The later three are deliberately not stubbed here: an empty job that always
+# The remaining two are deliberately not stubbed here: an empty job that always
 # passes reads as a green stage that proves nothing.
+#
+# The deploy stage is per service, not one job for all five. Each service gets
+# its own job, gated on its own paths, so a change to one service redeploys that
+# service and leaves the other four running untouched.
 #
 # There is no .sln in this repository, so every project is named by its explicit
 # path. A project added later must be added to the lists below or it is never
@@ -380,3 +384,111 @@ jobs:
           name: frontend-coverage-report
           path: frontend/coverage/
           if-no-files-found: ignore
+
+  # --------------------------------------------------------------- deploy ----
+  # Which services actually changed.
+  #
+  # GitHub has no per-job `paths:` filter — `on.push.paths` would gate the WHOLE
+  # workflow, and build and unit tests must keep running for every change. So the
+  # filtering happens here instead, and each deploy job reads its own output.
+  #
+  # Skipped entirely off main, which skips every deploy job that needs it: a job
+  # whose dependency was skipped does not run.
+  changed-services:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      user-service: ${{ steps.filter.outputs.user-service }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # paths-filter compares this push against the commit before it, which
+          # the default shallow checkout does not contain.
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # One entry per deployable service. A later deployment story adds its
+          # own filter here and its own deploy job below; it does not touch this
+          # one's.
+          filters: |
+            user-service:
+              - 'services/user-service/**'
+
+  deploy-user-service:
+    name: Deploy User Service
+    runs-on: ubuntu-latest
+    # Tests first. Deploying code that the unit test stage rejected would make
+    # the pipeline's ordering decorative.
+    needs: [changed-services, backend-unit-tests]
+    if: needs.changed-services.outputs.user-service == 'true'
+
+    # Two pushes in quick succession must not deploy over each other: App Service
+    # is mid-swap for the length of a deploy and the second would race the first.
+    # Queue rather than cancel — a cancelled deploy leaves the app half-updated.
+    concurrency:
+      group: deploy-user-service
+      cancel-in-progress: false
+
+    env:
+      # Must match var.user_service_app_name in infra/terraform/variables.tf.
+      # It cannot be read from `terraform output` here: Terraform runs locally
+      # against an `az login` session, and this runner has no Azure credentials
+      # beyond the publish profile below.
+      AZURE_WEBAPP_NAME: buildnexus-user-service-2026
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Release, and only this service's project — the other four are not
+      # rebuilt, restarted, or redeployed by this job.
+      - name: Publish
+        run: >-
+          dotnet publish services/user-service/UserService.csproj
+          -c Release
+          -o ${{ runner.temp }}/user-service-publish
+
+      # Authenticates with a publish profile, NOT a Service Principal. The
+      # university's Azure AD tenant blocks Service Principal creation for
+      # student accounts, so there is no azure/login step and no ARM_CLIENT_*
+      # secrets anywhere in this repository.
+      #
+      # The profile is a repository secret. It is regenerated whenever the App
+      # Service is destroyed and recreated by Terraform, so it has to be
+      # refreshed after a teardown — see infra/RUNBOOK.md.
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_USER_SERVICE }}
+          package: ${{ runner.temp }}/user-service-publish
+
+      # "The deploy succeeded" only means the package was accepted. This is what
+      # says the service actually came up: /health is anonymous, so no token is
+      # needed, and the app cannot answer it at all unless it reached MySQL and
+      # ran its migrations at startup.
+      #
+      # Retried, because App Service restarts the worker after a deploy and the
+      # first requests arrive while it is still starting.
+      - name: Verify the deployed service answers
+        run: |
+          url="https://${AZURE_WEBAPP_NAME}.azurewebsites.net/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 20); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 30 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "HTTP 200 on attempt $attempt:"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$url never returned 200. Check the App Service log stream — the usual cause is a startup failure against MySQL or a missing application setting."
+          exit 1
