@@ -278,6 +278,43 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
 
+      # One Cobertura file per service is not, on its own, "visible and
+      # trackable" (US-33) — nobody opens five XML files. reportgenerator merges
+      # them into one HTML report and a GitHub-flavoured summary. Runs even
+      # after a failed Test step: whichever services did run still measured
+      # real coverage, and skips cleanly if none did.
+      - name: Merge backend coverage report
+        if: always()
+        run: |
+          if ! find coverage -name 'coverage.cobertura.xml' -print -quit 2>/dev/null | grep -q .; then
+            echo "No backend coverage files found — nothing to merge."
+            exit 0
+          fi
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.11
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:"coverage/**/coverage.cobertura.xml" \
+            -targetdir:"coverage/report" \
+            -reporttypes:"Html;MarkdownSummaryGithub"
+
+      # The line/branch percentage lands in the job's own summary page, so
+      # "what is our coverage" is answered by opening the run — not by
+      # downloading and unzipping an artifact.
+      - name: Publish backend coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/report/SummaryGithub.md ]; then
+            cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload backend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-report
+          path: coverage/report/
+          if-no-files-found: ignore
+
       # A failed run is usually a database, and the container's log says why in
       # a way the test output does not. Both are printed rather than guessing
       # which of the two took the run down.
