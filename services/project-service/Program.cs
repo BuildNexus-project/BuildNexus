@@ -73,6 +73,17 @@ builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    // The broker security settings are optional — none of them is set locally —
+    // but half of them is a mistake that would otherwise only show up as every
+    // publish failing to connect. See KafkaOptions.HasConsistentSaslSettings.
+    .Validate(
+        o => o.HasConsistentSaslSettings(),
+        "Kafka:SecurityProtocol SaslSsl or SaslPlaintext needs Kafka:SaslMechanism, Kafka:SaslUsername and Kafka:SaslPassword all set, and those three must not be set without it.")
+    // Optional Event Hubs connection tuning, unset locally. Only a value that
+    // cannot work is refused here; left to librdkafka, it would throw when the
+    // producer is built instead, further from the setting that caused it.
+    .Validate(o => o.RequestTimeoutMs is null or > 0, "Kafka:RequestTimeoutMs must be greater than zero when set.")
+    .Validate(o => o.MetadataMaxAgeMs is null or > 0, "Kafka:MetadataMaxAgeMs must be greater than zero when set.")
     .ValidateOnStart();
 
 // Dispatcher tuning. Both settings have working defaults, unlike the broker
