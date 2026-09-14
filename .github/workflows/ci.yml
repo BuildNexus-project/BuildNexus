@@ -253,13 +253,30 @@ jobs:
       # success and with a failure, and a real broker would only make the run
       # depend on how long it took to answer.
       # services/project-service-tests reaches MySQL and never the broker.
+      #
+      # --collect:"XPlat Code Coverage" activates coverlet.collector, which every
+      # *-tests project already references (US-33) — it was sitting unused until
+      # now. Each run writes a Cobertura XML under its own results directory, one
+      # per service, so a project's own file cannot be confused with another's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release
-          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
+          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
+
+      # Kept as a build artifact rather than only living on the runner: the raw
+      # Cobertura files are what a merged, human-readable report is built from
+      # next. Uploaded even on a failed run — whichever service's tests ran
+      # before the failure still measured real coverage, and it is worth seeing.
+      - name: Upload raw backend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-raw
+          path: coverage/
+          if-no-files-found: ignore
 
       # A failed run is usually a database, and the container's log says why in
       # a way the test output does not. Both are printed rather than guessing
