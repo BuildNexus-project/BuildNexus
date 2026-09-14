@@ -1,6 +1,6 @@
 # Project Service: its own database on the shared MySQL server, its own MySQL user
-# that can reach that database and nothing else, and its own Event Hub on the
-# shared Event Hubs namespace.
+# that can reach that database and nothing else, its own Event Hub on the shared
+# Event Hubs namespace, and its own App Service on the shared plan.
 #
 # Independently redeployable is the point. Nothing here is shared with another
 # service except the plan, the server and the Event Hubs namespace themselves,
@@ -109,4 +109,118 @@ resource "azurerm_eventhub" "project_events" {
   # same as the 168-hour log.retention.hours default the local broker runs with,
   # so a consumer that was down can catch up over the same window in both.
   message_retention = 7
+}
+
+# --- App Service -------------------------------------------------------------
+
+resource "azurerm_linux_web_app" "project_service" {
+  # Globally unique across Azure — this becomes <name>.azurewebsites.net.
+  name                = var.project_service_app_name
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "southeastasia"
+  service_plan_id     = azurerm_service_plan.main.id
+
+  # Every endpoint but /health takes a bearer token, so plain HTTP is redirected
+  # away before the app sees the request — same as the User Service.
+  https_only = true
+
+  site_config {
+    # Same reason as the User Service, and one more here: the outbox dispatcher
+    # is a background service inside this process. An App Service idled out for
+    # want of HTTP traffic stops draining events onto project-events until the
+    # next request wakes it.
+    always_on = true
+
+    # Already in Program.cs and [AllowAnonymous]. The app answers it only after
+    # DbUp has migrated buildnexus_project_db at startup, as the scoped
+    # project_service user — so a 200 here also proves that user's grants were
+    # enough.
+    health_check_path                 = "/health"
+    health_check_eviction_time_in_min = 5
+
+    application_stack {
+      # Matches <TargetFramework>net10.0</TargetFramework> in ProjectService.csproj.
+      dotnet_version = "10.0"
+    }
+  }
+
+  # The publish-profile deploy in .github/workflows/ci.yml needs this on; see
+  # the User Service's App Service for the 401 it causes when off.
+  webdeploy_publish_basic_authentication_enabled = true
+  ftp_publish_basic_authentication_enabled       = false
+
+  # --- Application Settings ---------------------------------------------------
+  #
+  # Environment variables, double-underscored onto configuration keys exactly as
+  # infra/docker-compose.yml does locally. Nothing is hardcoded: secrets come from
+  # variables with no default or from resource attributes, and addresses are
+  # built from the resources they point at.
+  app_settings = {
+    # Not Development: turns Swagger off on a publicly reachable host.
+    ASPNETCORE_ENVIRONMENT = "Production"
+
+    # The scoped project_service user — NOT the server administrator the User
+    # Service still connects as. This service cannot reach any other service's
+    # database. SslMode=Required for the same reason as the User Service's.
+    ConnectionStrings__ProjectDb = join("", [
+      "Server=${azurerm_mysql_flexible_server.main.fqdn};",
+      "Port=3306;",
+      "Database=${azurerm_mysql_flexible_database.project_service.name};",
+      "User Id=${mysql_user.project_service.user};",
+      "Password=${var.project_service_db_password};",
+      "SslMode=Required;",
+    ])
+
+    # The shared convention, from the same three variables as every other
+    # service. No lifetime setting: that is baked into exp by the User Service.
+    Jwt__Issuer     = var.jwt_issuer
+    Jwt__Audience   = var.jwt_audience
+    Jwt__SigningKey = var.jwt_signing_key
+
+    # Azure Event Hubs' Kafka endpoint instead of the local broker, under the
+    # same Kafka__BootstrapServers name every publishing service uses.
+    Kafka__BootstrapServers = local.eventhub_kafka_bootstrap_servers
+
+    # SASL over TLS with the namespace's connection string, the only way Event
+    # Hubs accepts a SAS-authenticated Kafka client. The username is the literal
+    # text $ConnectionString, not a reference — HCL only interpolates "${", so
+    # the "$" here reaches the app unchanged. The password is the namespace's
+    # default RootManageSharedAccessKey connection string, straight from the
+    # resource, so it is never typed anywhere.
+    Kafka__SecurityProtocol = "SaslSsl"
+    Kafka__SaslMechanism    = "Plain"
+    Kafka__SaslUsername     = "$ConnectionString"
+    Kafka__SaslPassword     = azurerm_eventhub_namespace.main.default_primary_connection_string
+
+    # The values Event Hubs documents for librdkafka clients: a request timeout
+    # above its 20-second internal minimum, keepalives against Azure closing a
+    # connection idle for 240 seconds, and a metadata refresh below that limit.
+    Kafka__RequestTimeoutMs      = "60000"
+    Kafka__SocketKeepaliveEnable = "true"
+    Kafka__MetadataMaxAgeMs      = "180000"
+
+    # How long one publish may take before it counts as failed — 60 seconds here
+    # rather than the service's 5-second default, so an acknowledgement Event
+    # Hubs takes its time over (it allows itself 20 seconds) is not recorded as a
+    # failure. The cost is only while Event Hubs is unreachable: the dispatcher
+    # publishes one event at a time, so each pending event holds it up to a
+    # minute before the failure is recorded. Nothing is lost either way — a
+    # failed event stays in the outbox and the next pass retries it.
+    Kafka__MessageTimeoutMs = "60000"
+
+    # Not named in the story's acceptance criteria, but assigning an Architect or
+    # Project Manager asks the User Service what role the account holds. Left to
+    # appsettings.json it would point at localhost and every assignment would
+    # answer 502. The deployed User Service, over HTTPS; trailing slash required.
+    Services__UserService__BaseUrl = "https://${azurerm_linux_web_app.user_service.default_hostname}/"
+  }
+
+  # The app runs its migrations as project_service the moment it starts, so the
+  # grant must exist first — the connection string only references the user, and
+  # a user without its grant fails DbUp's first CREATE TABLE. The Event Hub must
+  # exist before the dispatcher's first publish to it.
+  depends_on = [
+    mysql_grant.project_service,
+    azurerm_eventhub.project_events,
+  ]
 }

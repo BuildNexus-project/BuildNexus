@@ -69,6 +69,10 @@ internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
 
 # --- Project Service ---------------------------------------------------------
 
+# Only needed if the default "buildnexus-project-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# project_service_app_name = "buildnexus-project-service-2026"
+
 # Password for the Project Service's own MySQL user, which can reach
 # buildnexus_project_db and nothing else. Generate a fresh one. It must differ
 # from mysql_administrator_password — Terraform refuses the two being equal —

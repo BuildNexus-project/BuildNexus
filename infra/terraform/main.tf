@@ -180,3 +180,11 @@ resource "azurerm_eventhub_namespace" "main" {
   # Kafka clients connect over TLS on 9093. Nothing older than 1.2 is accepted.
   minimum_tls_version = "1.2"
 }
+
+locals {
+  # Where a Kafka client reaches the namespace: Event Hubs' Kafka endpoint is
+  # always the namespace host on 9093, TLS only. Not a secret — the connection
+  # string that authenticates against it is, and lives only in App Service
+  # settings.
+  eventhub_kafka_bootstrap_servers = "${azurerm_eventhub_namespace.main.name}.servicebus.windows.net:9093"
+}

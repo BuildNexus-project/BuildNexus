@@ -129,6 +129,12 @@ variable "frontend_origin" {
 
 # --- Project Service ---------------------------------------------------------
 
+variable "project_service_app_name" {
+  description = "Name of the Project Service App Service. Must be globally unique across Azure, since it becomes <name>.azurewebsites.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-project-service-2026"
+}
+
 variable "project_service_db_password" {
   description = "Password for the Project Service's own MySQL user, which is granted privileges on buildnexus_project_db and nothing else on the server. No default on purpose — supply it through TF_VAR_project_service_db_password or a git-ignored terraform.tfvars so it never reaches the repository."
   type        = string
