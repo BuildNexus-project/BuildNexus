@@ -257,13 +257,67 @@ jobs:
       # success and with a failure, and a real broker would only make the run
       # depend on how long it took to answer.
       # services/project-service-tests reaches MySQL and never the broker.
+      #
+      # --collect:"XPlat Code Coverage" activates coverlet.collector, which every
+      # *-tests project already references (US-33) — it was sitting unused until
+      # now. Each run writes a Cobertura XML under its own results directory, one
+      # per service, so a project's own file cannot be confused with another's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release
-          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
+          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
+
+      # Kept as a build artifact rather than only living on the runner: the raw
+      # Cobertura files are what a merged, human-readable report is built from
+      # next. Uploaded even on a failed run — whichever service's tests ran
+      # before the failure still measured real coverage, and it is worth seeing.
+      - name: Upload raw backend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-raw
+          path: coverage/
+          if-no-files-found: ignore
+
+      # One Cobertura file per service is not, on its own, "visible and
+      # trackable" (US-33) — nobody opens five XML files. reportgenerator merges
+      # them into one HTML report and a GitHub-flavoured summary. Runs even
+      # after a failed Test step: whichever services did run still measured
+      # real coverage, and skips cleanly if none did.
+      - name: Merge backend coverage report
+        if: always()
+        run: |
+          if ! find coverage -name 'coverage.cobertura.xml' -print -quit 2>/dev/null | grep -q .; then
+            echo "No backend coverage files found — nothing to merge."
+            exit 0
+          fi
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.11
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:"coverage/**/coverage.cobertura.xml" \
+            -targetdir:"coverage/report" \
+            -reporttypes:"Html;MarkdownSummaryGithub"
+
+      # The line/branch percentage lands in the job's own summary page, so
+      # "what is our coverage" is answered by opening the run — not by
+      # downloading and unzipping an artifact.
+      - name: Publish backend coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/report/SummaryGithub.md ]; then
+            cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload backend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-report
+          path: coverage/report/
+          if-no-files-found: ignore
 
       # A failed run is usually a database, and the container's log says why in
       # a way the test output does not. Both are printed rather than guessing
@@ -295,10 +349,41 @@ jobs:
       - name: Install
         run: npm ci
 
-      # `vitest run` — the one-shot runner. Plain `vitest` would watch and the
-      # job would never finish.
+      # `vitest run --coverage` (US-33) — the one-shot runner, instrumented.
+      # Plain `vitest` would watch and the job would never finish; V8 does the
+      # instrumentation itself, so this measures exactly what ran rather than a
+      # separate pass over transformed source.
       - name: Test
-        run: npm test
+        run: npm run test:coverage
+
+      # The json-summary reporter writes one small file with the four overall
+      # percentages — turned into a short table in the job's own summary page,
+      # the same place the backend's coverage lands, rather than making someone
+      # open the HTML report to see a number.
+      - name: Publish frontend coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "
+              const s = require('./coverage/coverage-summary.json').total;
+              const pct = (m) => s[m].pct + '% (' + s[m].covered + '/' + s[m].total + ')';
+              console.log('# Frontend coverage');
+              console.log('| Metric | Coverage |');
+              console.log('|---|---|');
+              console.log('| Lines | ' + pct('lines') + ' |');
+              console.log('| Statements | ' + pct('statements') + ' |');
+              console.log('| Functions | ' + pct('functions') + ' |');
+              console.log('| Branches | ' + pct('branches') + ' |');
+            " >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload frontend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          if-no-files-found: ignore
 
   # --------------------------------------------------------------- deploy ----
   # Which services actually changed.

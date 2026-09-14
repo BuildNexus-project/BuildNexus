@@ -5,6 +5,7 @@ obj/
 *.suo
 appsettings.Development.json
 appsettings.*.local.json
+coverage/
 
 # ---------- Node / React (frontend) ----------
 node_modules/
