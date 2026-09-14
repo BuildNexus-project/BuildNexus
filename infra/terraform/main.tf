@@ -119,3 +119,26 @@ resource "azurerm_mysql_flexible_server_firewall_rule" "allow_azure_services" {
   start_ip_address    = "0.0.0.0"
   end_ip_address      = "0.0.0.0"
 }
+
+# Lets the machine running Terraform reach the server.
+#
+# Not for the App Services — the rule above covers those. Terraform runs locally
+# (see infra/RUNBOOK.md), and the mysql provider opens a real MySQL connection
+# from that machine: during apply to create each service's scoped user, and
+# during destroy to drop it. Without this rule both stop at a connection
+# timeout.
+#
+# Managed here rather than added by hand like the runbook's bootstrap-admin
+# rule, because on a rebuild the server does not exist until this same apply
+# creates it — there is no earlier moment at which a manual rule could be added.
+#
+# The address is a variable with no default, not a literal, so no one machine's
+# IP is written into the repository. It lives in each operator's git-ignored
+# terraform.tfvars and goes stale there instead.
+resource "azurerm_mysql_flexible_server_firewall_rule" "terraform_operator" {
+  name                = "terraform-operator"
+  resource_group_name = azurerm_resource_group.main.name
+  server_name         = azurerm_mysql_flexible_server.main.name
+  start_ip_address    = var.terraform_operator_ip
+  end_ip_address      = var.terraform_operator_ip
+}

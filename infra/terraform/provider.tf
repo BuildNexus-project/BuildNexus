@@ -16,6 +16,16 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
+
+    # Creates each service's scoped MySQL user, which azurerm cannot: azurerm
+    # manages the server and its databases through Azure's management API, but
+    # a MySQL user exists only inside the server and has to be created over a
+    # MySQL connection. petoju/mysql is the maintained fork of the archived
+    # hashicorp/mysql provider.
+    mysql = {
+      source  = "petoju/mysql"
+      version = "~> 3.0"
+    }
   }
 
   # State lives in Azure Storage, never on a laptop. The stack is destroyed and
@@ -52,4 +62,28 @@ provider "azurerm" {
   # the repository all the same. Left null, the provider falls back to
   # ARM_SUBSCRIPTION_ID and then to the subscription the CLI has selected.
   subscription_id = var.subscription_id
+}
+
+# Signs in to the shared MySQL Flexible Server as its administrator — the only
+# account that can create users and grant privileges — to create each service's
+# own scoped user. The connection is opened from the machine running Terraform,
+# not from Azure, which is what the terraform-operator firewall rule in main.tf
+# is for.
+provider "mysql" {
+  # Built from the server NAME rather than read off
+  # azurerm_mysql_flexible_server.main.fqdn. The stack is destroyed and rebuilt
+  # between demos, and on a rebuild that attribute is unknown until the server
+  # exists — Terraform cannot reliably configure a provider from a value it does
+  # not know at plan time. Flexible Server always addresses a server as
+  # <name>.mysql.database.azure.com, so the name alone is enough. The price is
+  # that Terraform no longer infers the ordering, which is why the mysql
+  # resources in project-service.tf declare depends_on.
+  endpoint = "${var.mysql_server_name}.mysql.database.azure.com:3306"
+
+  username = var.mysql_administrator_login
+  password = var.mysql_administrator_password
+
+  # require_secure_transport is ON on Flexible Server and refuses an unencrypted
+  # connection. "true" encrypts and verifies the server's certificate.
+  tls = "true"
 }
