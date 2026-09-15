@@ -47,7 +47,12 @@ resource "mysql_user" "project_service" {
   # Said explicitly: a rebuild would otherwise try to create the user before
   # there is a server to create it on, and a destroy would remove the firewall
   # rule before dropping the user.
-  depends_on = [azurerm_mysql_flexible_server_firewall_rule.terraform_operator]
+  #
+  # On the propagation wait in main.tf rather than on the firewall rule itself:
+  # Azure reports the rule created before it takes effect, and connecting in
+  # that window times out. The wait comes after the rule, so the ordering above
+  # still holds.
+  depends_on = [time_sleep.mysql_firewall_propagation]
 }
 
 resource "mysql_grant" "project_service" {
@@ -77,8 +82,8 @@ resource "mysql_grant" "project_service" {
   ]
 
   # Same reason as on mysql_user above — the grant is issued over the same
-  # connection.
-  depends_on = [azurerm_mysql_flexible_server_firewall_rule.terraform_operator]
+  # connection, so it waits for the same firewall propagation.
+  depends_on = [time_sleep.mysql_firewall_propagation]
 }
 
 # --- Event Hub ---------------------------------------------------------------

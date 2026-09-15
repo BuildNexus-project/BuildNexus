@@ -26,6 +26,14 @@ terraform {
       source  = "petoju/mysql"
       version = "~> 3.0"
     }
+
+    # One resource only: time_sleep.mysql_firewall_propagation in main.tf, a
+    # fixed wait between the operator's firewall rule being created and the
+    # first MySQL connection through it. No provider block is needed.
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.14"
+    }
   }
 
   # State lives in Azure Storage, never on a laptop. The stack is destroyed and

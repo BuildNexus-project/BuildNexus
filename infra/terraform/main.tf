@@ -144,6 +144,39 @@ resource "azurerm_mysql_flexible_server_firewall_rule" "terraform_operator" {
   end_ip_address      = var.terraform_operator_ip
 }
 
+# Precautionary pause before trusting the terraform-operator rule to be live.
+#
+# Azure's own documentation and community reports describe a lag between a
+# firewall rule reading back as created from the management API and the MySQL
+# server actually enforcing it on the network — there is nothing to poll for in
+# that window, since the rule already reads back as created, so a fixed pause is
+# the only available guard. This is precautionary, not a confirmed fix for one
+# incident: a mysql_user timeout was seen once, and the actual cause that time
+# was a stale terraform_operator_ip left over from a changed network — see
+# infra/RUNBOOK.md — not propagation. The pause stays because the propagation
+# lag is real and undetectable in advance, even though it was not what caused
+# that particular failure.
+#
+# Shared, like the rule it waits for. Every service's mysql_user and mysql_grant
+# depend on THIS rather than on the rule directly, so the Design, Construction
+# and Payment Services get the same guard instead of each adding their own.
+#
+# The pause runs when this resource is created — on a first apply or a rebuild —
+# and again whenever the operator IP changes: the trigger replaces the sleep
+# along with the rule's new address, where a plain depends_on would have let an
+# in-place update of the rule go through with no wait at all. An apply that
+# leaves the rule alone does not wait. On destroy it releases immediately, after
+# the users are dropped and before the rule is removed.
+resource "time_sleep" "mysql_firewall_propagation" {
+  create_duration = "60s"
+
+  triggers = {
+    operator_ip = azurerm_mysql_flexible_server_firewall_rule.terraform_operator.start_ip_address
+  }
+
+  depends_on = [azurerm_mysql_flexible_server_firewall_rule.terraform_operator]
+}
+
 # The Kafka broker, in Azure.
 #
 # Event Hubs speaks the Kafka protocol on <namespace>.servicebus.windows.net:9093,
