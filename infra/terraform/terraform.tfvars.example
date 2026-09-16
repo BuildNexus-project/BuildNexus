@@ -22,6 +22,21 @@
 # digit, symbol. Cannot be changed after the server is created without a reset.
 mysql_administrator_password = "REPLACE-ME"
 
+# Public IPv4 address of the machine you run Terraform from. The mysql provider
+# connects to the server from here to create each service's database user, so
+# the server's firewall has to let this address through. It changes with the
+# network you are on — check it again before an apply from somewhere new:
+#
+#   curl -s https://api.ipify.org
+#
+terraform_operator_ip = "REPLACE-ME"
+
+# --- Shared Event Hubs namespace ---------------------------------------------
+
+# Only needed if the default "buildnexus-events-2026" is already taken — the name
+# is global, and it becomes <name>.servicebus.windows.net.
+# eventhub_namespace_name = "buildnexus-events-2026"
+
 # --- Shared auth convention --------------------------------------------------
 
 # The key every BuildNexus token in the deployed environment is signed with, and
@@ -51,6 +66,21 @@ internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
 # Where the emailed password reset link points. Still the local dev server,
 # because the frontend has no deployed home yet.
 # frontend_origin = "http://localhost:5173"
+
+# --- Project Service ---------------------------------------------------------
+
+# Only needed if the default "buildnexus-project-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# project_service_app_name = "buildnexus-project-service-2026"
+
+# Password for the Project Service's own MySQL user, which can reach
+# buildnexus_project_db and nothing else. Generate a fresh one. It must differ
+# from mysql_administrator_password — Terraform refuses the two being equal —
+# and must not contain a semicolon, since it goes into a connection string:
+#
+#   openssl rand -base64 32
+#
+project_service_db_password = "REPLACE-ME"
 
 # --- Azure subscription ------------------------------------------------------
 

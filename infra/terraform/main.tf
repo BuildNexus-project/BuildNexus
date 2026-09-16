@@ -1,10 +1,11 @@
 # The shared Azure resources every BuildNexus service deployment sits on.
 #
-# Three things, created once and reused by all five services:
+# Four things, created once and reused by every service that needs them:
 #
 #   - one resource group, so the whole stack is a single unit to destroy
 #   - one Linux App Service plan, which the five App Services share
 #   - one MySQL Flexible Server, which holds one DATABASE per service
+#   - one Event Hubs namespace, which holds one EVENT HUB per Kafka topic
 #
 # The one-database-per-service rule is about not sharing schemas or tables
 # between services, never about needing five paid server instances. Each service
@@ -118,4 +119,105 @@ resource "azurerm_mysql_flexible_server_firewall_rule" "allow_azure_services" {
   server_name         = azurerm_mysql_flexible_server.main.name
   start_ip_address    = "0.0.0.0"
   end_ip_address      = "0.0.0.0"
+}
+
+# Lets the machine running Terraform reach the server.
+#
+# Not for the App Services — the rule above covers those. Terraform runs locally
+# (see infra/RUNBOOK.md), and the mysql provider opens a real MySQL connection
+# from that machine: during apply to create each service's scoped user, and
+# during destroy to drop it. Without this rule both stop at a connection
+# timeout.
+#
+# Managed here rather than added by hand like the runbook's bootstrap-admin
+# rule, because on a rebuild the server does not exist until this same apply
+# creates it — there is no earlier moment at which a manual rule could be added.
+#
+# The address is a variable with no default, not a literal, so no one machine's
+# IP is written into the repository. It lives in each operator's git-ignored
+# terraform.tfvars and goes stale there instead.
+resource "azurerm_mysql_flexible_server_firewall_rule" "terraform_operator" {
+  name                = "terraform-operator"
+  resource_group_name = azurerm_resource_group.main.name
+  server_name         = azurerm_mysql_flexible_server.main.name
+  start_ip_address    = var.terraform_operator_ip
+  end_ip_address      = var.terraform_operator_ip
+}
+
+# Precautionary pause before trusting the terraform-operator rule to be live.
+#
+# Azure's own documentation and community reports describe a lag between a
+# firewall rule reading back as created from the management API and the MySQL
+# server actually enforcing it on the network — there is nothing to poll for in
+# that window, since the rule already reads back as created, so a fixed pause is
+# the only available guard. This is precautionary, not a confirmed fix for one
+# incident: a mysql_user timeout was seen once, and the actual cause that time
+# was a stale terraform_operator_ip left over from a changed network — see
+# infra/RUNBOOK.md — not propagation. The pause stays because the propagation
+# lag is real and undetectable in advance, even though it was not what caused
+# that particular failure.
+#
+# Shared, like the rule it waits for. Every service's mysql_user and mysql_grant
+# depend on THIS rather than on the rule directly, so the Design, Construction
+# and Payment Services get the same guard instead of each adding their own.
+#
+# The pause runs when this resource is created — on a first apply or a rebuild —
+# and again whenever the operator IP changes: the trigger replaces the sleep
+# along with the rule's new address, where a plain depends_on would have let an
+# in-place update of the rule go through with no wait at all. An apply that
+# leaves the rule alone does not wait. On destroy it releases immediately, after
+# the users are dropped and before the rule is removed.
+resource "time_sleep" "mysql_firewall_propagation" {
+  create_duration = "60s"
+
+  triggers = {
+    operator_ip = azurerm_mysql_flexible_server_firewall_rule.terraform_operator.start_ip_address
+  }
+
+  depends_on = [azurerm_mysql_flexible_server_firewall_rule.terraform_operator]
+}
+
+# The Kafka broker, in Azure.
+#
+# Event Hubs speaks the Kafka protocol on <namespace>.servicebus.windows.net:9093,
+# so the four services that publish events — Project, Design, Construction and
+# Payment; the User Service does not use Kafka — keep producing through
+# Confluent.Kafka, and a Kafka topic is simply an Event Hub inside this
+# namespace. One namespace for the whole stack, for the same reason there is one
+# MySQL server: one topic per publishing service is about not mixing their
+# events, never about needing four paid namespaces. Each service declares its
+# own Event Hub in its own file.
+resource "azurerm_eventhub_namespace" "main" {
+  # Globally unique across Azure — this becomes <name>.servicebus.windows.net.
+  name                = var.eventhub_namespace_name
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "southeastasia"
+
+  # Standard, not Basic: Basic has no Kafka endpoint at all. Premium and
+  # Dedicated add isolation this stack has no use for, at many times the price.
+  sku = "Standard"
+
+  # One throughput unit — 1 MB/s or 1,000 events/s in — is far beyond what a
+  # demo produces, and units are billed by the hour. auto_inflate stays off so
+  # the namespace never adds a unit, and a charge, that nobody chose.
+  capacity             = 1
+  auto_inflate_enabled = false
+
+  # The services authenticate to the Kafka endpoint with this namespace's SAS
+  # connection string, as username $ConnectionString. Local authentication is
+  # what SAS is; with it off, every publish fails authentication with an error
+  # that does not mention this setting. Set explicitly rather than left to the
+  # provider default for that reason.
+  local_authentication_enabled = true
+
+  # Kafka clients connect over TLS on 9093. Nothing older than 1.2 is accepted.
+  minimum_tls_version = "1.2"
+}
+
+locals {
+  # Where a Kafka client reaches the namespace: Event Hubs' Kafka endpoint is
+  # always the namespace host on 9093, TLS only. Not a secret — the connection
+  # string that authenticates against it is, and lives only in App Service
+  # settings.
+  eventhub_kafka_bootstrap_servers = "${azurerm_eventhub_namespace.main.name}.servicebus.windows.net:9093"
 }

@@ -8,7 +8,7 @@
 #   unit tests       Sprint 1  (below)
 #   integration      Sprint 3  — attaches with `needs: [backend-unit-tests, ...]`
 #   docker build     Sprint 4
-#   deploy           Sprint 4  (below, User Service only so far — SCRUM-52)
+#   deploy           Sprint 4  (below — User Service SCRUM-52, Project Service SCRUM-53)
 #
 # The remaining two are deliberately not stubbed here: an empty job that always
 # passes reads as a green stage that proves nothing.
@@ -400,6 +400,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     outputs:
       user-service: ${{ steps.filter.outputs.user-service }}
+      project-service: ${{ steps.filter.outputs.project-service }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -416,6 +417,8 @@ jobs:
           filters: |
             user-service:
               - 'services/user-service/**'
+            project-service:
+              - 'services/project-service/**'
 
   deploy-user-service:
     name: Deploy User Service
@@ -491,4 +494,78 @@ jobs:
             sleep 15
           done
           echo "::error::$url never returned 200. Check the App Service log stream — the usual cause is a startup failure against MySQL or a missing application setting."
+          exit 1
+
+  deploy-project-service:
+    name: Deploy Project Service
+    runs-on: ubuntu-latest
+    # Tests first, for the same reason as the User Service. Deliberately not
+    # dependent on deploy-user-service, nor it on this: each deploy is gated on
+    # its own path filter above, so a change under services/project-service/**
+    # redeploys this one App Service, and a User Service change never rebuilds
+    # or restarts it.
+    needs: [changed-services, backend-unit-tests]
+    if: needs.changed-services.outputs.project-service == 'true'
+
+    # Its own group rather than deploy-user-service's: two Project Service
+    # pushes queue behind each other, but never behind a User Service deploy.
+    concurrency:
+      group: deploy-project-service
+      cancel-in-progress: false
+
+    env:
+      # Must match var.project_service_app_name in infra/terraform/variables.tf,
+      # for the same reason the User Service's job hardcodes its own name.
+      AZURE_WEBAPP_NAME: buildnexus-project-service-2026
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Release, and only this service's project. Its migrations are embedded
+      # resources, so the published package carries the schema the code expects.
+      - name: Publish
+        run: >-
+          dotnet publish services/project-service/ProjectService.csproj
+          -c Release
+          -o ${{ runner.temp }}/project-service-publish
+
+      # A publish profile for THIS App Service, in its own repository secret —
+      # not the User Service's. A profile's credentials belong to one app, so
+      # neither deploy job can push over the other's App Service. Like the User
+      # Service's, it is regenerated whenever Terraform recreates the App Service
+      # and has to be refreshed after a teardown — see infra/RUNBOOK.md.
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROJECT_SERVICE }}
+          package: ${{ runner.temp }}/project-service-publish
+
+      # /health answers only once the app has migrated its database on Azure
+      # MySQL as the scoped project_service user and passed its startup
+      # validation, the Kafka__* checks included. It does not prove a publish
+      # to Event Hubs succeeds: the broker is only contacted when there is an
+      # event to send.
+      #
+      # Retried, because App Service restarts the worker after a deploy and the
+      # first requests arrive while it is still starting.
+      - name: Verify the deployed service answers
+        run: |
+          url="https://${AZURE_WEBAPP_NAME}.azurewebsites.net/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 20); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 30 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "HTTP 200 on attempt $attempt:"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$url never returned 200. Check the App Service log stream — the usual causes are a startup failure against MySQL (the project_service user or its grant) or a missing or half-set Kafka__* or Jwt__* application setting."
           exit 1

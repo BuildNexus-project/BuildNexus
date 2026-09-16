@@ -244,6 +244,28 @@ hold no foreign key into another service's schema.
   was submitted is too late.
 - `Kafka:MessageTimeoutMs` — how long a publish may spend reaching the broker.
   Defaults to 5000; see [When the broker is down](#when-the-broker-is-down).
+- `Kafka:SecurityProtocol`, `Kafka:SaslMechanism`, `Kafka:SaslUsername`,
+  `Kafka:SaslPassword` — how the producer authenticates to the broker. **All
+  four are unset locally**, and then the producer speaks plaintext, which is what
+  the compose broker's `kafka:9092` listener expects — exactly as before these
+  settings existed. Azure Event Hubs accepts only SASL over TLS, so the deployed
+  service is given all four: `SaslSsl`, `Plain`, the literal username
+  `$ConnectionString`, and the Event Hubs namespace's connection string as the
+  password, with `Kafka:BootstrapServers` set to
+  `<namespace>.servicebus.windows.net:9093`. The password is a secret and is
+  only ever supplied as `Kafka__SaslPassword`. They are all-or-nothing: the
+  service refuses to start with a SASL protocol missing any of the other three,
+  or with any of those three and no SASL protocol, because either half would
+  otherwise show up only as every publish failing to connect.
+- `Kafka:RequestTimeoutMs`, `Kafka:SocketKeepaliveEnable`,
+  `Kafka:MetadataMaxAgeMs` — connection tuning for Azure Event Hubs. **All three
+  are unset locally**, and librdkafka keeps its own defaults, exactly as before
+  these settings existed. The deployed service is given the values Event Hubs
+  documents for librdkafka clients: `60000` (librdkafka's five-second default is
+  too low — Event Hubs enforces a twenty-second minimum), `true` (Azure closes a
+  connection left idle for 240 seconds), and `180000` (below that same limit;
+  librdkafka's default is fifteen minutes). Each is independent of the others,
+  and the service refuses to start only on a timeout or age of zero or less.
 - `Jwt:Issuer`, `Jwt:Audience`
 - `Jwt:SigningKey` — **deliberately empty in `appsettings.json`.** It is supplied
   per environment: `Jwt__SigningKey` from `infra/.env` in Docker, or User Secrets
