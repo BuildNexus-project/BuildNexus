@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using BuildNexus.UserService.Authorization;
 using BuildNexus.UserService.Configuration;
 using BuildNexus.UserService.Data;
@@ -11,6 +12,19 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// SCRUM-47: request, dependency, exception and log telemetry, centralized in
+// the Application Insights resource in infra/terraform/main.tf. Guarded on the
+// connection string being present because UseAzureMonitor() throws at startup
+// with none to send to, and only the deployed App Service has one — see
+// APPLICATIONINSIGHTS_CONNECTION_STRING in infra/terraform/user-service.tf.
+// Local dotnet run, docker compose, and the WebApplicationFactory-based test
+// host all leave it unset, so none of them register this, and none of them
+// need to.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
+{
+    builder.Services.AddOpenTelemetry().UseAzureMonitor();
+}
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

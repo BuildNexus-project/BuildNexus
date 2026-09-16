@@ -221,3 +221,59 @@ locals {
   # settings.
   eventhub_kafka_bootstrap_servers = "${azurerm_eventhub_namespace.main.name}.servicebus.windows.net:9093"
 }
+
+# --- Monitoring: Application Insights (SCRUM-47) -------------------------------
+#
+# One Log Analytics workspace and one workspace-based Application Insights
+# resource on top of it, shared the same way the MySQL server and Event Hubs
+# namespace above are: created once here, wired into whichever service's
+# app_settings opts in by referencing azurerm_application_insights.main.
+# connection_string. Only the User Service does today, as SCRUM-47's proof of
+# concept — see user-service.tf — but nothing below is User-Service-specific,
+# so a later story can wire the same connection string into any other service
+# without touching this file.
+#
+# Two resources rather than one: Microsoft has retired the older "classic"
+# Application Insights mode that stored its own data and needed no workspace,
+# so workspace_id is required on every new resource now.
+#
+# Unlike Event Hubs above, neither resource here has a fixed hourly cost — both
+# are billed purely on data ingested, with 5 GB/month free before anything is
+# charged. A resource that receives zero telemetry costs zero, so sitting idle
+# between demo sessions is not by itself a reason to tear these two down with
+# the rest of the stack, though `terraform destroy` still takes them with it
+# like everything else in this resource group.
+
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "buildnexus-logs"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "southeastasia"
+
+  # PerGB2018 is the only SKU new workspaces can still be created with; the
+  # others are legacy tiers closed to new resources.
+  sku = "PerGB2018"
+
+  # The minimum Azure allows. Nothing in a demo stack that gets destroyed
+  # between sessions is worth paying to retain for longer — the same reasoning
+  # as the MySQL server's backup_retention_days above.
+  retention_in_days = 30
+
+  # A hard ceiling on daily ingestion. 1 GB/day is far beyond what a student
+  # demo produces — the free monthly allowance alone is 5 GB — but Event Hubs
+  # above already taught this stack what an uncapped Azure resource can cost
+  # while nobody is watching. This one can actually be capped, so it is: past
+  # the cap, Azure drops further data for the rest of the day instead of
+  # billing for it.
+  daily_quota_gb = 1
+}
+
+resource "azurerm_application_insights" "main" {
+  name                = "buildnexus-appinsights"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "southeastasia"
+  workspace_id        = azurerm_log_analytics_workspace.main.id
+
+  # Not "other" or "java" — the request/dependency telemetry shapes the
+  # ASP.NET Core SDK sends assume this.
+  application_type = "web"
+}
