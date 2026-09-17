@@ -21,11 +21,20 @@ local run.
 | Project Service database | `buildnexus_project_db` | On the shared server above. Connects as its own `project_service` MySQL user, scoped to this one database. |
 | Event Hubs namespace | `buildnexus-events-2026` | Standard tier. The Kafka-compatible endpoint on `9093`, shared by every publishing service. |
 | Event Hub `project-events` | `project-events` | Inside the namespace above — the Kafka topic Project Service publishes to. |
+| Log Analytics workspace | `buildnexus-logs` | Backs the Application Insights resource below. Capped at `daily_quota_gb = 1`. |
+| Application Insights | `buildnexus-appinsights` | Workspace-based. Wired into the User Service only, as SCRUM-47's proof of concept — see "Application settings" below. |
 
 Event Hubs Standard bills per throughput unit per hour whether or not anything is
 published to it. It is the first resource in this stack that charges while
 completely idle, which is one more reason to actually run `terraform destroy`
 between sessions rather than leaving the stack up "just in case".
+
+The Log Analytics workspace and Application Insights are the opposite: both are
+pure consumption resources, billed only on data ingested, with 5 GB free every
+month. A resource that receives zero telemetry costs zero — there is no hourly
+charge to avoid by destroying these two between sessions, though `terraform
+destroy` still takes them with it along with everything else in the resource
+group.
 
 Terraform's own state lives somewhere else entirely — resource group
 `buildnexus-tfstate-rg`, storage account `buildnexustfstate2026`, container
@@ -581,6 +590,85 @@ startup. Confirm the whole path by creating or approving a project and tailing
 the log for either a `Published <EventType> <eventId> ... to project-events`
 line or a logged Kafka exception in its place.
 
+## Health checks across services (SCRUM-47)
+
+SCRUM-47's first acceptance criterion is that each service exposes a
+health-check endpoint. "Each service" here means every service that currently
+exists as running code — Azure for the two already deployed there, local
+`docker compose` for the two that exist only there. Verified directly rather
+than read off the source:
+
+| Service | `/health` | Verified |
+|---|---|---|
+| User Service | Yes | Azure — already required by its own App Service health check (`terraform/user-service.tf`), and polled by `deploy-user-service` in CI on every deploy. Currently answers `403` because the App Service itself is stopped, not because the endpoint is missing — see "Verifying the Application Insights proof of concept" below. |
+| Project Service | Yes | Azure — same arrangement, `terraform/project-service.tf` and `deploy-project-service`. Same currently-stopped caveat. |
+| Design Service | Yes | Local `docker compose` — run natively against `design-db` for this story's verification: `curl http://localhost:5103/health` → `200 {"service":"design-service","status":"healthy"}`. Not deployed to Azure yet. |
+| Construction Service | Yes | Local `docker compose` — same approach, against `construction-db`: `curl http://localhost:5104/health` → `200 {"service":"construction-service","status":"healthy"}`. Not deployed to Azure yet. |
+| Payment Service | Out of scope | `services/payment-service/` has no ASP.NET Core project — no `.csproj`, no `Program.cs`, not even an entry in `docker-compose.yml` — only a placeholder `README.md`. There is no host to add an endpoint to yet; the API Gateway's `payment` cluster route answers `502` until the story that builds this service lands. Revisit this row then. |
+
+## Verifying the Application Insights proof of concept (SCRUM-47)
+
+Application Insights only shows data once three separate things are all true:
+the resource exists (`terraform apply` has run since `main.tf` added it), the
+User Service is actually running, and it has been redeployed with the code
+that reads `APPLICATIONINSIGHTS_CONNECTION_STRING`. None of the three implies
+the others.
+
+**Both App Services are stopped as of this story.**
+`curl https://buildnexus-user-service-2026.azurewebsites.net/health` currently
+returns `403 - This web app is stopped`, not a connection failure or a missing
+endpoint — the app exists and is configured correctly, it simply is not
+running. Start it before anything below will produce data:
+
+```
+az webapp start --resource-group buildnexus-rg --name buildnexus-user-service-2026
+```
+
+**1. Apply.** From a machine with `az login` and `ARM_ACCESS_KEY` set (see
+"One-time setup per machine" above):
+
+```
+cd infra/terraform
+terraform apply
+```
+
+This creates `buildnexus-logs` and `buildnexus-appinsights` and adds
+`APPLICATIONINSIGHTS_CONNECTION_STRING` to the User Service's app settings. On
+its own it does not put the SDK on the running app — that is the code this
+story added, and the app is still running whatever it was last deployed with
+until the next step.
+
+**2. Redeploy the User Service** with this branch's code, so the running
+process actually contains `UseAzureMonitor()` — see "Forcing a redeploy
+without a code change" above for the `dotnet publish` / `zip` /
+`az webapp deploy` sequence.
+
+**3. Generate real traffic.** A handful of logins, some successful and some
+not, is enough for a proof of concept — request telemetry either way,
+exception/dependency telemetry on the database call underneath it, and a clean
+401-vs-200 story to point at:
+
+```
+curl -X POST https://buildnexus-user-service-2026.azurewebsites.net/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@buildnexus.example","password":"wrong-password"}'
+```
+
+— repeated with the correct password for a 200 alongside the 401s.
+
+**4. Read it back.** In the Portal: the Application Insights resource →
+Investigate → Failures / Performance, or Transaction search for individual
+requests. From the CLI:
+
+```
+az monitor app-insights query \
+  --app buildnexus-appinsights --resource-group buildnexus-rg \
+  --analytics-query "requests | order by timestamp desc | take 20"
+```
+
+Telemetry usually takes one to two minutes to appear after the request that
+generated it — an empty result immediately after step 3 is not yet a failure.
+
 ## Creating the first Admin
 
 Not automated, and deliberately a manual step. Required after every
@@ -674,6 +762,7 @@ next `terraform apply`, silently, which is a bad afternoon.
 | `InternalService__ApiKey` | `var.internal_service_api_key`. Sensitive, no default. |
 | `PasswordReset__ResetUrlTemplate` | Built from `var.frontend_origin`. |
 | `ASPNETCORE_ENVIRONMENT` | `Production`. Turns off Swagger and `AdminSeeder`. |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | `azurerm_application_insights.main.connection_string` (SCRUM-47). Read automatically by `UseAzureMonitor()` in `Program.cs` under this exact name — no custom configuration key. Every other environment leaves it unset, which is what tells `Program.cs` to skip registering Azure Monitor there instead of throwing at startup with nothing to send telemetry to. |
 
 `Email__SmtpHost` is deliberately unset. Blank, the service resolves
 `IEmailSender` to `LoggingEmailSender` and password reset emails go to the log
