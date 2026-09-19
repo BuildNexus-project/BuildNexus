@@ -305,7 +305,10 @@ terraform untaint azurerm_linux_web_app.user_service
 ```
 
 **4. The state is locked with no owner.** An interrupted command can leave the
-blob lease held but the lock metadata empty:
+blob lease held but the lock metadata empty. During SCRUM-47 the first
+`terraform plan` failed with `HTTP response was nil; connection may have been
+reset` while acquiring the lock, and every attempt after it hit this error
+until the lease was broken — a retry a few minutes later did not clear it:
 
 ```
 Error: Error acquiring the state lock
@@ -600,8 +603,8 @@ than read off the source:
 
 | Service | `/health` | Verified |
 |---|---|---|
-| User Service | Yes | Azure — already required by its own App Service health check (`terraform/user-service.tf`), and polled by `deploy-user-service` in CI on every deploy. Currently answers `403` because the App Service itself is stopped, not because the endpoint is missing — see "Verifying the Application Insights proof of concept" below. |
-| Project Service | Yes | Azure — same arrangement, `terraform/project-service.tf` and `deploy-project-service`. Same currently-stopped caveat. |
+| User Service | Yes | Azure — already required by its own App Service health check (`terraform/user-service.tf`), and polled by `deploy-user-service` in CI on every deploy. Also confirmed live during this story, after the App Service was started and redeployed: `GET /health` → `200`, and 17 such requests are recorded in Application Insights (9 sent by hand; the other 8 are attributed to App Service's own health check). |
+| Project Service | Yes | Azure — same arrangement, `terraform/project-service.tf` and `deploy-project-service`. **Not probed live:** the App Service was found stopped (`403 - This web app is stopped`) and was left that way, so this row rests on the source, the Terraform health check and the CI verify step, not on a fresh request. |
 | Design Service | Yes | Local `docker compose` — run natively against `design-db` for this story's verification: `curl http://localhost:5103/health` → `200 {"service":"design-service","status":"healthy"}`. Not deployed to Azure yet. |
 | Construction Service | Yes | Local `docker compose` — same approach, against `construction-db`: `curl http://localhost:5104/health` → `200 {"service":"construction-service","status":"healthy"}`. Not deployed to Azure yet. |
 | Payment Service | Out of scope | `services/payment-service/` has no ASP.NET Core project — no `.csproj`, no `Program.cs`, not even an entry in `docker-compose.yml` — only a placeholder `README.md`. There is no host to add an endpoint to yet; the API Gateway's `payment` cluster route answers `502` until the story that builds this service lands. Revisit this row then. |
@@ -614,11 +617,11 @@ User Service is actually running, and it has been redeployed with the code
 that reads `APPLICATIONINSIGHTS_CONNECTION_STRING`. None of the three implies
 the others.
 
-**Both App Services are stopped as of this story.**
-`curl https://buildnexus-user-service-2026.azurewebsites.net/health` currently
-returns `403 - This web app is stopped`, not a connection failure or a missing
-endpoint — the app exists and is configured correctly, it simply is not
-running. Start it before anything below will produce data:
+**Check the App Service is actually running first.** Both App Services were
+found stopped when SCRUM-47 started: `curl` on `/health` answered `403 - This
+web app is stopped`, which is the platform's own page for a stopped app, not a
+connection failure or a missing endpoint. A stopped app serves nothing, so it
+produces no telemetry. Start it:
 
 ```
 az webapp start --resource-group buildnexus-rg --name buildnexus-user-service-2026
@@ -638,36 +641,110 @@ its own it does not put the SDK on the running app — that is the code this
 story added, and the app is still running whatever it was last deployed with
 until the next step.
 
+During SCRUM-47 a plain `terraform plan` did not complete, for a reason
+unrelated to this change. It printed the full plan and then failed refreshing
+the existing `mysql_user.project_service`:
+
+```
+Error: failed to connect to MySQL: could not create new connection: could not
+connect to server: dial tcp [64:ff9b::14c3:25ec]:3306: connectex: A connection
+attempt failed because the connected party did not properly respond...
+```
+
+That is an IPv6 address in the `64:ff9b::/96` NAT64 range, which suggests the
+machine's resolver synthesized it from the server's IPv4 address, and the
+connection then timed out. It failed identically on two consecutive attempts, so
+it was not a one-off. The cause was not investigated further. Because the new monitoring
+resources do not use the `mysql` provider, the apply was scoped to them:
+
+```
+terraform plan -target=azurerm_log_analytics_workspace.main \
+               -target=azurerm_application_insights.main \
+               -target=azurerm_linux_web_app.user_service \
+               -out=tfplan
+terraform apply tfplan
+rm tfplan          # the plan file holds sensitive values
+```
+
+That is a workaround, not the intended procedure. It deliberately left
+unapplied the pending `terraform_operator_ip` change (the firewall rule and
+`time_sleep.mysql_firewall_propagation`), so the next full apply still has that
+drift to reconcile — and will need MySQL to be reachable when it runs.
+
 **2. Redeploy the User Service** with this branch's code, so the running
 process actually contains `UseAzureMonitor()` — see "Forcing a redeploy
 without a code change" above for the `dotnet publish` / `zip` /
 `az webapp deploy` sequence.
 
-**3. Generate real traffic.** A handful of logins, some successful and some
-not, is enough for a proof of concept — request telemetry either way,
-exception/dependency telemetry on the database call underneath it, and a clean
-401-vs-200 story to point at:
+**3. Generate real traffic.** A mix of successful and failing requests is
+enough for a proof of concept. Requests that need no account avoid writing test
+data into the shared database:
 
 ```
+curl https://buildnexus-user-service-2026.azurewebsites.net/health
 curl -X POST https://buildnexus-user-service-2026.azurewebsites.net/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@buildnexus.example","password":"wrong-password"}'
+  -d '{"email":"someone@example.invalid","password":"wrong-password"}'
 ```
 
-— repeated with the correct password for a 200 alongside the 401s.
+The first gives `200`, the second `401`, and posting `{}` to the login route
+gives `400`. Logging in with a real account's password should add a `200` to
+that route; that was not tried here.
 
 **4. Read it back.** In the Portal: the Application Insights resource →
 Investigate → Failures / Performance, or Transaction search for individual
-requests. From the CLI:
+requests.
+
+From the CLI, `az rest` needs no extension. `az monitor log-analytics query`
+does: in a non-interactive shell it stops at an install prompt and fails with
+`EOFError`, which reads as "no data" if a script swallows the error.
+(`az monitor app-insights query` was not tried; it is likely to behave the same
+way, since that command group is also an extension.) Workspace-based
+Application Insights stores requests in the workspace's `AppRequests` table:
 
 ```
-az monitor app-insights query \
-  --app buildnexus-appinsights --resource-group buildnexus-rg \
-  --analytics-query "requests | order by timestamp desc | take 20"
+WS=$(az monitor log-analytics workspace show --resource-group buildnexus-rg \
+       --workspace-name buildnexus-logs --query customerId -o tsv)
+
+printf '{"query":"%s"}' 'AppRequests | where TimeGenerated > ago(1h) | summarize Requests=count() by Name, ResultCode, Success | order by Requests desc' > q.json
+
+az rest --method post --url "https://api.loganalytics.io/v1/workspaces/$WS/query" \
+  --resource "https://api.loganalytics.io" --body @q.json --query "tables[0].rows" -o json
 ```
 
-Telemetry usually takes one to two minutes to appear after the request that
-generated it — an empty result immediately after step 3 is not yet a failure.
+(`workspace show` itself does not need the extension.) Telemetry usually takes
+one to two minutes to appear after the request that generated it — an empty
+result immediately after step 3 is not yet a failure.
+
+### What the proof of concept showed
+
+Recorded from the workspace after the steps above, for the User Service.
+`AppRequests` for the period, by route and status:
+
+| Route | Status | Requests | Source |
+|---|---|---|---|
+| `GET /health` | `200` | 17 | 9 sent by hand; the other 8 were not, and are attributed to App Service's health check (`health_check_path`) by subtraction |
+| `POST api/auth/login` | `401` | 6 | wrong credentials, sent by hand |
+| `POST api/auth/login` | `400` | 3 | malformed body, sent by hand |
+| `GET /api/does-not-exist` | `401` | 3 | sent by hand — see below |
+| `GET /` | `401` | 2 | not sent by hand; presumably the platform's warm-up probe |
+| `GET /robots933456.txt` | `401` | 1 | not sent by hand; presumably the platform's warm-up probe |
+
+Things worth knowing when reading it:
+
+- **The `401` and `400` responses were recorded with `Success = false`**, so
+  they appear as failed requests, not only 5xx would. Only these two codes were
+  observed; nothing was sent that would return a 404 or a 5xx.
+- **An unknown route answered `401`, not `404`.** That is consistent with the
+  service's deny-by-default `FallbackPolicy` in `Program.cs`; the mechanism was
+  not investigated further.
+- **No `AppDependencies` or `AppExceptions` rows were produced.** The SDK
+  auto-instruments ASP.NET Core and outbound `HttpClient`, but not
+  `MySqlConnector`, so the database calls under a request are not traced.
+  Getting them would need explicit instrumentation — a further application
+  change that SCRUM-47's acceptance criteria do not ask for, and not made here.
+- `AppTraces` (existing `ILogger` output), `AppMetrics` and
+  `AppPerformanceCounters` also received rows, so logs are centralized too.
 
 ## Creating the first Admin
 
