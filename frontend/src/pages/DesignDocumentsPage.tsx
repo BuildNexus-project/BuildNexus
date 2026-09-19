@@ -1,0 +1,566 @@
+import { useEffect, useRef, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { Link, useParams } from 'react-router-dom'
+
+import { useAuth } from '@/auth/auth-context'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
+import { apiErrorMessage } from '@/lib/api'
+import {
+  approveDesignVersion,
+  downloadDesignVersionFile,
+  fetchProjectDesignDocuments,
+  requestDesignRevision,
+  uploadDesignDocument,
+  type DesignDocument,
+  type DesignVersion,
+} from '@/lib/design-api'
+import {
+  DESIGN_FILE_ACCEPT,
+  requestRevisionSchema,
+  uploadDesignSchema,
+  type RequestRevisionValues,
+  type UploadDesignValues,
+} from '@/lib/design-schemas'
+import { applyApiErrorToForm } from '@/lib/form-errors'
+
+const LOAD_FAILED = 'Could not load this project’s design documents.'
+
+/** A date and time the service sent, as a reader would write it. */
+function formatMoment(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/**
+ * Saves a downloaded file to disk through a throwaway link — the same trick
+ * every plain web app uses, since there is no other way to hand the browser
+ * bytes it already fetched.
+ */
+function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * One version's row: its metadata, a button to fetch its file, and — for a
+ * Client reviewing a version nobody has decided on yet — the actions to
+ * approve it or ask for a revision (US-11).
+ */
+function VersionRow({
+  version,
+  onDownload,
+  isDownloading,
+  canReview,
+  onApprove,
+  onRequestRevision,
+  isReviewing,
+}: {
+  version: DesignVersion
+  onDownload: (version: DesignVersion) => void
+  isDownloading: boolean
+  /** True for a Client, on a version nobody has decided on, in a document with no Approved version yet. */
+  canReview: boolean
+  onApprove: (version: DesignVersion) => void
+  onRequestRevision: (version: DesignVersion) => void
+  isReviewing: boolean
+}) {
+  return (
+    // Current is highlighted on the row itself, not only in the Status
+    // column, so it reads at a glance in a document with many versions.
+    <TableRow className={version.isCurrent ? 'bg-primary/5' : undefined}>
+      <TableCell className="font-medium">
+        <div className="flex items-center gap-2">
+          {version.displayName}
+          {version.isCurrent && <Badge variant="default">Current</Badge>}
+        </div>
+      </TableCell>
+      <TableCell>{formatMoment(version.uploadedAt)}</TableCell>
+      <TableCell className="text-muted-foreground text-xs">{version.uploadedBy}</TableCell>
+      <TableCell>
+        <Badge variant="secondary">{version.status}</Badge>
+      </TableCell>
+      <TableCell className="text-muted-foreground max-w-56 text-sm text-wrap">
+        {version.revisionComment ?? '—'}
+        {version.reviewComment && (
+          <p className="text-foreground mt-1 border-t pt-1">
+            <span className="font-medium">Revision requested:</span> {version.reviewComment}
+          </p>
+        )}
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onDownload(version)}
+            disabled={isDownloading}
+          >
+            {isDownloading ? 'Downloading…' : 'Download'}
+          </Button>
+
+          {canReview && (
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onApprove(version)}
+                disabled={isReviewing}
+              >
+                {isReviewing ? 'Approving…' : 'Approve'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onRequestRevision(version)}
+                disabled={isReviewing}
+              >
+                Request revision
+              </Button>
+            </div>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+/**
+ * The comment form behind a revision request. Mounted only while a version is
+ * selected, so the form starts fresh rather than needing to be reset when the
+ * selection changes.
+ */
+function RequestRevisionDialog({
+  version,
+  onClose,
+  onSubmitted,
+}: {
+  version: DesignVersion
+  onClose: () => void
+  onSubmitted: () => void
+}) {
+  const { authFetch } = useAuth()
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<RequestRevisionValues>({
+    resolver: zodResolver(requestRevisionSchema),
+    defaultValues: { comment: '' },
+  })
+
+  async function onSubmit(values: RequestRevisionValues) {
+    setFormError(null)
+
+    try {
+      await requestDesignRevision(authFetch, version.id, values.comment)
+      onSubmitted()
+    } catch (error) {
+      setFormError(
+        applyApiErrorToForm(error, setError, 'Could not request this revision. Please try again.'),
+      )
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose()
+        }
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Request a revision on {version.displayName}</DialogTitle>
+          <DialogDescription>
+            Tell the Architect what needs to change. They’ll be notified by email.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
+          <Field>
+            <FieldLabel htmlFor="comment">Comment</FieldLabel>
+            <Textarea id="comment" rows={4} aria-invalid={Boolean(errors.comment)} {...register('comment')} />
+            <FieldError errors={[errors.comment]} />
+          </Field>
+
+          {formError && (
+            <p role="alert" className="text-destructive text-sm">
+              {formError}
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? 'Requesting…' : 'Request revision'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * A project's design documents: every version an Architect has uploaded, and —
+ * for an Architect — the form to add the next one (US-09).
+ *
+ * Open to every role that may see the project: which project a caller may
+ * actually open is a per-project question the Design Service answers by asking
+ * the Project Service, the same way {@link ProjectDetailPage} works. Somebody
+ * who is not on the project gets a 403 with a reason, shown here the same way.
+ */
+export function DesignDocumentsPage() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const { authFetch, user, token } = useAuth()
+
+  const [documents, setDocuments] = useState<DesignDocument[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [reviewingVersionId, setReviewingVersionId] = useState<string | null>(null)
+  const [requestingRevisionFor, setRequestingRevisionFor] = useState<DesignVersion | null>(null)
+
+  const isArchitect = user?.role === 'Architect'
+  const isClient = user?.role === 'Client'
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<UploadDesignValues>({
+    resolver: zodResolver(uploadDesignSchema),
+    defaultValues: { name: '', revisionComment: '' },
+  })
+
+  useEffect(() => {
+    if (!projectId) {
+      return
+    }
+
+    let cancelled = false
+
+    fetchProjectDesignDocuments(authFetch, projectId)
+      .then((loaded) => {
+        if (!cancelled) {
+          setDocuments(loaded)
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setLoadError(apiErrorMessage(error, LOAD_FAILED))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authFetch, projectId])
+
+  /** Re-reads the list after an upload — not cancellation-guarded, since it only runs from a button on a page that is still mounted. */
+  async function reload(id: string) {
+    try {
+      setDocuments(await fetchProjectDesignDocuments(authFetch, id))
+      setLoadError(null)
+    } catch (error) {
+      setLoadError(apiErrorMessage(error, LOAD_FAILED))
+    }
+  }
+
+  async function onUpload(values: UploadDesignValues) {
+    if (!projectId) {
+      return
+    }
+
+    setUploadError(null)
+
+    try {
+      await uploadDesignDocument(authFetch, projectId, values)
+
+      reset({ name: '', revisionComment: '' })
+      // React cannot set a file input's value, so it is cleared by hand.
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+
+      await reload(projectId)
+    } catch (error) {
+      setUploadError(
+        applyApiErrorToForm(error, setError, 'Could not upload this file. Please try again.'),
+      )
+    }
+  }
+
+  async function handleDownload(version: DesignVersion) {
+    setDownloadError(null)
+    setDownloadingId(version.id)
+
+    try {
+      saveBlob(await downloadDesignVersionFile(token, version.id), version.fileName)
+    } catch (error) {
+      setDownloadError(apiErrorMessage(error, 'Could not download this file. Please try again.'))
+    } finally {
+      setDownloadingId(null)
+    }
+  }
+
+  async function handleApprove(version: DesignVersion) {
+    if (!projectId) {
+      return
+    }
+
+    setReviewError(null)
+    setReviewingVersionId(version.id)
+
+    try {
+      await approveDesignVersion(authFetch, version.id)
+      await reload(projectId)
+    } catch (error) {
+      setReviewError(apiErrorMessage(error, 'Could not approve this version. Please try again.'))
+    } finally {
+      setReviewingVersionId(null)
+    }
+  }
+
+  if (loadError) {
+    return (
+      <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>These design documents are not available to you</CardTitle>
+            <CardDescription role="alert">{loadError}</CardDescription>
+          </CardHeader>
+
+          <CardContent>
+            <Button render={<Link to={`/projects/${projectId ?? ''}`} />} variant="outline" className="w-full">
+              Back to the project
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    )
+  }
+
+  return (
+    <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col justify-center gap-4 p-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Design documents</CardTitle>
+          <CardDescription>
+            Every revision an Architect has uploaded, oldest to newest. The version marked
+            “Current” is the latest one under review or approved — a document with none yet has
+            no version marked.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent className="flex flex-col gap-6">
+          {documents === null ? (
+            <p className="text-muted-foreground text-sm">Loading design documents…</p>
+          ) : documents.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No design documents have been uploaded for this project yet.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-6">
+              {documents.map((document) => {
+                // Proactive, not just cosmetic: once any version is Approved,
+                // the service refuses a decision on every other version of
+                // this document (409) — matching that here means a Client
+                // never sees review buttons for an action that would fail.
+                const documentApproved = document.versions.some((v) => v.status === 'Approved')
+
+                return (
+                  <section key={document.id} className="flex flex-col gap-2">
+                    <h2 className="text-sm font-medium">{document.name}</h2>
+
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Version</TableHead>
+                          <TableHead>Uploaded</TableHead>
+                          <TableHead>Uploaded by</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Comment</TableHead>
+                          <TableHead />
+                        </TableRow>
+                      </TableHeader>
+
+                      <TableBody>
+                        {/* Oldest first, exactly as the service sent it — the
+                            latest revision is the last row. */}
+                        {document.versions.map((version) => (
+                          <VersionRow
+                            key={version.id}
+                            version={version}
+                            onDownload={handleDownload}
+                            isDownloading={downloadingId === version.id}
+                            canReview={isClient && !documentApproved && version.status === 'Submitted'}
+                            onApprove={handleApprove}
+                            onRequestRevision={setRequestingRevisionFor}
+                            isReviewing={reviewingVersionId === version.id}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </section>
+                )
+              })}
+            </div>
+          )}
+
+          {downloadError && (
+            <p role="alert" className="text-destructive text-sm">
+              {downloadError}
+            </p>
+          )}
+
+          {reviewError && (
+            <p role="alert" className="text-destructive text-sm">
+              {reviewError}
+            </p>
+          )}
+
+          {isArchitect && (
+            <>
+              <Separator />
+
+              <section className="flex flex-col gap-3">
+                <h2 className="text-sm font-medium">Upload a document</h2>
+
+                <form
+                  onSubmit={handleSubmit(onUpload)}
+                  noValidate
+                  className="flex flex-col gap-4"
+                >
+                  <Field>
+                    <FieldLabel htmlFor="name">Document name</FieldLabel>
+                    <Input id="name" aria-invalid={Boolean(errors.name)} {...register('name')} />
+                    <FieldDescription>
+                      Reuse an existing name (e.g. GroundFloorPlan) to add the next version to it.
+                    </FieldDescription>
+                    <FieldError errors={[errors.name]} />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="revisionComment">Revision comment</FieldLabel>
+                    <Textarea
+                      id="revisionComment"
+                      rows={3}
+                      aria-invalid={Boolean(errors.revisionComment)}
+                      {...register('revisionComment')}
+                    />
+                    <FieldDescription>Optional. What changed in this upload.</FieldDescription>
+                    <FieldError errors={[errors.revisionComment]} />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="file">File</FieldLabel>
+                    <Input
+                      id="file"
+                      type="file"
+                      accept={DESIGN_FILE_ACCEPT}
+                      ref={fileInputRef}
+                      aria-invalid={Boolean(errors.file)}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        // Cast: RHF's generated type says File, but nothing was
+                        // picked is a real possibility — zod's own check catches
+                        // that and reports it as "choose a file".
+                        setValue('file', file as File, { shouldValidate: true })
+                      }}
+                    />
+                    <FieldDescription>PDF, JPG or PNG, up to 10 MB.</FieldDescription>
+                    <FieldError errors={[errors.file]} />
+                  </Field>
+
+                  {uploadError && (
+                    <p role="alert" className="text-destructive text-sm">
+                      {uploadError}
+                    </p>
+                  )}
+
+                  <Button type="submit" disabled={isSubmitting}>
+                    {isSubmitting ? 'Uploading…' : 'Upload'}
+                  </Button>
+                </form>
+              </section>
+            </>
+          )}
+
+          <p className="text-muted-foreground text-center text-sm">
+            <Link
+              to={`/projects/${projectId ?? ''}`}
+              className="text-foreground underline underline-offset-4"
+            >
+              Back to the project
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+
+      {requestingRevisionFor && (
+        <RequestRevisionDialog
+          version={requestingRevisionFor}
+          onClose={() => setRequestingRevisionFor(null)}
+          onSubmitted={() => {
+            setRequestingRevisionFor(null)
+
+            if (projectId) {
+              void reload(projectId)
+            }
+          }}
+        />
+      )}
+    </main>
+  )
+}

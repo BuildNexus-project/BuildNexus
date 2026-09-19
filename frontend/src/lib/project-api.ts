@@ -78,6 +78,11 @@ export type ProjectStatusChange = {
   changedByUserId: string
   /** The role they held at the time, not the role they hold now. */
   changedByRole: Role
+  /**
+   * Why the change was made, when there is a reason on record. `null` for a
+   * move that speaks for itself; a cancellation records its reason here.
+   */
+  note: string | null
   changedAt: string
 }
 
@@ -159,9 +164,15 @@ export function createProject(authFetch: AuthFetch, payload: CreateProjectPayloa
  * projects they submitted, an Architect or Project Manager the ones they are
  * assigned to, and an Admin all of them. Somebody with none gets an empty list
  * rather than a refusal.
+ *
+ * Cancelled projects are left out unless `includeCancelled` is set — a
+ * closed-out project is not being worked on, but stays reachable through
+ * {@link fetchProject}.
  */
-export function fetchProjects(authFetch: AuthFetch) {
-  return authFetch<ProjectSummary[]>('/api/projects')
+export function fetchProjects(authFetch: AuthFetch, { includeCancelled = false } = {}) {
+  return authFetch<ProjectSummary[]>(
+    includeCancelled ? '/api/projects?includeCancelled=true' : '/api/projects',
+  )
 }
 
 /**
@@ -207,5 +218,62 @@ export function updateProjectStatus(
   return authFetch<ProjectDetail>(`/api/projects/${projectId}/status`, {
     method: 'PATCH',
     json: { status },
+  })
+}
+
+/**
+ * Puts an Architect on a project and returns it as it now stands.
+ *
+ * Admin only. Assigning an Architect to a project that is still `Pending` also
+ * moves it to `Designing` — the returned {@link ProjectDetail} carries the new
+ * status and history entry. A project already past `Pending` just has the slot
+ * set or replaced.
+ *
+ * The account must hold the Architect role: an unknown id or the wrong role
+ * comes back as {@link ApiError} with status 400 and an `ArchitectId` field
+ * error, an id that is not a project as a 404, a 409 means somebody moved the
+ * project off `Pending` first, and a 502 means the User Service could not be
+ * reached to check the role.
+ */
+export function assignArchitect(authFetch: AuthFetch, projectId: string, architectId: string) {
+  return authFetch<ProjectDetail>(`/api/projects/${projectId}/architect`, {
+    method: 'PUT',
+    json: { architectId },
+  })
+}
+
+/**
+ * Puts a Project Manager on a project and returns it as it now stands.
+ *
+ * Admin only, and the mirror of {@link assignArchitect} for the PM slot —
+ * except there is no status change: a PM is put on a project without moving it.
+ * A `ProjectManagerId` field error means an unknown id or an account that is
+ * not a Project Manager.
+ */
+export function assignProjectManager(
+  authFetch: AuthFetch,
+  projectId: string,
+  projectManagerId: string,
+) {
+  return authFetch<ProjectDetail>(`/api/projects/${projectId}/project-manager`, {
+    method: 'PUT',
+    json: { projectManagerId },
+  })
+}
+
+/**
+ * Cancels a project before construction starts and returns it as it now
+ * stands — Cancelled, with the reason in its history.
+ *
+ * The owning Client or an Admin only (US-08). A project in Construction,
+ * Completed, or already Cancelled comes back as {@link ApiError} with status
+ * 400 whose `detail` says why; anyone else gets a 403; a 409 means somebody
+ * moved the project on first. The reason is required — a blank one is a 400
+ * with a `Reason` field error.
+ */
+export function cancelProject(authFetch: AuthFetch, projectId: string, reason: string) {
+  return authFetch<ProjectDetail>(`/api/projects/${projectId}/cancellation`, {
+    method: 'POST',
+    json: { reason },
   })
 }

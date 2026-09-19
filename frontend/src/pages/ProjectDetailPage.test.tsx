@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -106,12 +107,70 @@ function signInAs(role: Role, userId: string) {
   localStorage.setItem(TOKEN_STORAGE_KEY, `header.${payload}.signature`)
 }
 
+/** A page of assignable staff, the shape {@link fetchAllUsers} returns. */
+function staffPage(members: Array<Record<string, unknown>>) {
+  return apiResponse(200, {
+    items: members,
+    page: 1,
+    pageSize: 100,
+    totalCount: members.length,
+    totalPages: 1,
+  })
+}
+
+function emptyStaffPage() {
+  return staffPage([])
+}
+
+/** One assignable account, as the directory returns it. */
+function staffMember(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '5aff0000-0000-4000-8000-000000000001',
+    fullName: 'Priya Silva',
+    email: 'priya@example.com',
+    role: 'Architect',
+    isActive: true,
+    createdAt: '2026-07-01T09:00:00',
+    ...overrides,
+  }
+}
+
+/**
+ * Set by {@link renderPageWithStaff}, for the pointer sequence a Base UI select
+ * needs — a bare click on an option is ignored. Everything else stays on
+ * `fireEvent`, as the rest of this file does.
+ */
+let user: UserEvent
+
 function renderPage(
   who: { role: Role; userId: string },
   ...responses: Array<Response | Error>
 ): RecordedRequest[] {
+  return renderPageWithStaff(who, [emptyStaffPage(), emptyStaffPage()], ...responses)
+}
+
+/**
+ * Like {@link renderPage}, but with the Team section's Architect and Project
+ * Manager lists spelled out.
+ *
+ * An Admin render loads them from two GET /api/users calls that land after the
+ * project and its events, so they are slotted in there — a test that does not
+ * care passes empty pages through {@link renderPage} instead.
+ */
+function renderPageWithStaff(
+  who: { role: Role; userId: string },
+  staff: [Response, Response],
+  ...responses: Array<Response | Error>
+): RecordedRequest[] {
   signInAs(who.role, who.userId)
-  const requests = stubFetch(...responses)
+  user = userEvent.setup()
+
+  const withStaff =
+    who.role === 'Admin'
+      ? [...responses.slice(0, 2), ...staff, ...responses.slice(2)]
+      : responses
+
+  const requests = stubFetch(...withStaff)
 
   render(
     <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}`]}>
@@ -124,6 +183,15 @@ function renderPage(
   )
 
   return requests
+}
+
+/**
+ * Picks an option from a Base UI select — the popup is portalled and only
+ * mounted while the select is open, so the trigger is clicked first.
+ */
+async function choose(triggerName: string, optionName: string) {
+  await user.click(screen.getByRole('combobox', { name: triggerName }))
+  await user.click(await screen.findByRole('option', { name: optionName }))
 }
 
 const asOwningClient = { role: 'Client' as Role, userId: CLIENT_ID }
@@ -413,7 +481,9 @@ describe('ProjectDetailPage integration events', () => {
     )
 
     await screen.findByText('Integration events')
-    expect(requests.map((request) => request.path)).toEqual([
+    // The events call targets the project in the route — the first two calls
+    // the page makes, before the Team section's staff lists.
+    expect(requests.slice(0, 2).map((request) => request.path)).toEqual([
       `/api/projects/${PROJECT_ID}`,
       `/api/projects/${PROJECT_ID}/events`,
     ])
@@ -524,7 +594,11 @@ describe('ProjectDetailPage integration events', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move to Design Approved' }))
 
     await waitFor(() => expect(eventRows()).toHaveLength(2))
-    expect(requests.map((request) => request.path)).toEqual([
+    // The project/events sequence around the change — the Team section's staff
+    // lists are not what this test is about.
+    expect(
+      requests.map((request) => request.path).filter((path) => !path.startsWith('/api/users')),
+    ).toEqual([
       `/api/projects/${PROJECT_ID}`,
       `/api/projects/${PROJECT_ID}/events`,
       `/api/projects/${PROJECT_ID}/status`,
@@ -552,5 +626,312 @@ describe('ProjectDetailPage integration events', () => {
 
     expect(screen.queryByText('Integration events')).not.toBeInTheDocument()
     expect(requests).toHaveLength(1)
+  })
+})
+
+describe('ProjectDetailPage staff assignment', () => {
+  const ARCHITECT = staffMember({
+    id: 'a11c0000-0000-4000-8000-000000000001',
+    fullName: 'Priya Silva',
+    role: 'Architect',
+  })
+  const RETIRED_ARCHITECT = staffMember({
+    id: 'a11c0000-0000-4000-8000-000000000002',
+    fullName: 'Retired Architect',
+    role: 'Architect',
+    isActive: false,
+  })
+  const PROJECT_MANAGER = staffMember({
+    id: '9c710000-0000-4000-8000-000000000001',
+    fullName: 'Ravi Kumar',
+    role: 'ProjectManager',
+  })
+
+  function pendingProject(overrides: Record<string, unknown> = {}) {
+    return projectDetail({
+      status: 'Pending',
+      assignedArchitectId: null,
+      assignedProjectManagerId: null,
+      allowedNextStatuses: ['Designing'],
+      ...overrides,
+    })
+  }
+
+  it('offers an admin the active architects and project managers to assign', async () => {
+    renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT, RETIRED_ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, pendingProject()),
+      apiResponse(200, []),
+    )
+
+    await screen.findByText('Integration events')
+
+    await user.click(screen.getByRole('combobox', { name: 'Assign architect' }))
+    expect(await screen.findByRole('option', { name: 'Priya Silva' })).toBeInTheDocument()
+    // Deactivated accounts cannot be given work, so the dropdown leaves them out.
+    expect(screen.queryByRole('option', { name: 'Retired Architect' })).not.toBeInTheDocument()
+  })
+
+  it('assigns the chosen architect and shows the project as it comes back', async () => {
+    const requests = renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, pendingProject()),
+      apiResponse(200, []),
+      // The reply: assigning on a Pending project moved it to Designing.
+      apiResponse(200, projectDetail({ assignedArchitectId: ARCHITECT.id })),
+      apiResponse(200, []),
+    )
+
+    await screen.findByText('Integration events')
+    // The project loaded Pending.
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+
+    await choose('Assign architect', 'Priya Silva')
+    fireEvent.click(screen.getByRole('button', { name: 'Assign architect' }))
+
+    // The page updates from the reply, so the status it shows changes.
+    await waitFor(() => expect(screen.getByText('Designing')).toBeInTheDocument())
+
+    const put = requests.find((request) => request.path === `/api/projects/${PROJECT_ID}/architect`)
+    expect(put?.method).toBe('PUT')
+    expect(put?.body).toEqual({ architectId: ARCHITECT.id })
+  })
+
+  it('shows the service’s refusal when the account is not the right role', async () => {
+    renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, pendingProject()),
+      apiResponse(200, []),
+      apiResponse(400, {
+        title: 'One or more validation errors occurred.',
+        errors: { ArchitectId: ['That account is not an Architect.'] },
+      }),
+    )
+
+    await screen.findByText('Integration events')
+
+    await choose('Assign architect', 'Priya Silva')
+    fireEvent.click(screen.getByRole('button', { name: 'Assign architect' }))
+
+    expect(await screen.findByText('That account is not an Architect.')).toBeInTheDocument()
+  })
+
+  it('assigns a project manager without expecting a status change', async () => {
+    const requests = renderPageWithStaff(
+      asAdmin,
+      [staffPage([ARCHITECT]), staffPage([PROJECT_MANAGER])],
+      apiResponse(200, projectDetail({ status: 'DesignApproved', assignedProjectManagerId: null })),
+      apiResponse(200, []),
+      apiResponse(200, projectDetail({ status: 'DesignApproved', assignedProjectManagerId: PROJECT_MANAGER.id })),
+    )
+
+    await screen.findByText('Integration events')
+
+    await choose('Assign project manager', 'Ravi Kumar')
+    fireEvent.click(screen.getByRole('button', { name: 'Assign project manager' }))
+
+    await waitFor(() => {
+      const put = requests.find(
+        (request) => request.path === `/api/projects/${PROJECT_ID}/project-manager`,
+      )
+      expect(put?.method).toBe('PUT')
+      expect(put?.body).toEqual({ projectManagerId: PROJECT_MANAGER.id })
+    })
+    expect(screen.getByText('Design Approved')).toBeInTheDocument()
+  })
+
+  it('shows a non-admin no assignment controls', async () => {
+    renderPage(asOwningClient, apiResponse(200, projectDetail()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByRole('combobox', { name: 'Assign architect' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Assign project manager' })).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * US-08 from the browser's side: closing a project out before construction
+ * starts.
+ *
+ * Who may do it — the owning Client or an Admin, never the staff delivering the
+ * project — and when — only before Construction — are both the service's to
+ * enforce, and it does. These cover the half this page owns: whether the
+ * control is offered, that a submission sends the trimmed reason, that the page
+ * re-renders from the reply, and that a refusal is shown with the reason the
+ * service gave.
+ */
+describe('ProjectDetailPage cancellation', () => {
+  const CANCEL_PATH = `/api/projects/${PROJECT_ID}/cancellation`
+
+  /** The project once it has been cancelled, as the POST reply carries it. */
+  function cancelledReply(reason = 'Client is relocating overseas') {
+    const project = projectDetail()
+
+    return {
+      ...project,
+      status: 'Cancelled',
+      statusHistory: [
+        ...project.statusHistory,
+        {
+          id: 'aaaaaaaa-0000-4000-8000-000000000009',
+          fromStatus: 'Designing',
+          toStatus: 'Cancelled',
+          changedByUserId: CLIENT_ID,
+          changedByRole: 'Client',
+          note: reason,
+          changedAt: '2026-08-12T09:00:00',
+        },
+      ],
+      allowedNextStatuses: [],
+    }
+  }
+
+  const cancelButton = () => screen.getByRole('button', { name: 'Cancel project' })
+
+  it('offers the owning client the control while the project is pre-construction', async () => {
+    renderPage(asOwningClient, apiResponse(200, projectDetail({ status: 'Designing' })))
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.getByRole('heading', { name: 'Cancel this project' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Reason')).toBeInTheDocument()
+    expect(cancelButton()).toBeInTheDocument()
+  })
+
+  it('offers an admin the control too', async () => {
+    renderPage(
+      asAdmin,
+      apiResponse(200, projectDetail({ status: 'Pending', allowedNextStatuses: ['Designing'] })),
+      apiResponse(200, []),
+    )
+
+    await screen.findByText('Integration events')
+    expect(cancelButton()).toBeInTheDocument()
+  })
+
+  it('withholds the control once construction has started', async () => {
+    // The one AC line this page can act on before the service ever hears about
+    // it: past Construction there is nothing to close out.
+    renderPage(asOwningClient, apiResponse(200, projectDetail({ status: 'Construction' })))
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('withholds the control from the staff assigned to the project', async () => {
+    // They deliver the project; whether it goes ahead is the customer's call or
+    // the company's, not theirs.
+    renderPage(asAssignedArchitect, apiResponse(200, projectDetail({ status: 'Designing' })))
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('withholds the control from a client who is not the one who submitted it', async () => {
+    renderPage(
+      { role: 'Client', userId: '33333333-3333-4333-8333-333333333333' },
+      apiResponse(200, projectDetail({ status: 'Designing' })),
+    )
+
+    await screen.findByText('Beachfront villa')
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the button disabled until a reason is entered', async () => {
+    renderPage(asOwningClient, apiResponse(200, projectDetail()))
+
+    const button = await screen.findByRole('button', { name: 'Cancel project' })
+    expect(button).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'No longer going ahead' } })
+    expect(button).toBeEnabled()
+
+    // Whitespace is not a reason.
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: '   ' } })
+    expect(button).toBeDisabled()
+  })
+
+  it('sends the trimmed reason and re-renders the project from the reply', async () => {
+    // The last AC line from this side: the reply carries the project as it now
+    // stands — Cancelled, history included — so nothing is refetched or guessed.
+    const requests = renderPage(
+      asOwningClient,
+      apiResponse(200, projectDetail()),
+      apiResponse(200, cancelledReply()),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Reason'), {
+      target: { value: '  Client is relocating overseas  ' },
+    })
+    fireEvent.click(cancelButton())
+
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1].path).toBe(CANCEL_PATH)
+    expect(requests[1].method).toBe('POST')
+    expect(requests[1].body).toEqual({ reason: 'Client is relocating overseas' })
+
+    // The badge follows the reply, and the control drops away with the project
+    // now terminal.
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel project' })).not.toBeInTheDocument()
+  })
+
+  it('shows the reason the service gave when it refuses the cancellation', async () => {
+    renderPage(
+      asOwningClient,
+      apiResponse(200, projectDetail({ status: 'DesignApproved' })),
+      apiResponse(400, {
+        title: 'This project cannot be cancelled',
+        detail:
+          'A Construction project cannot be cancelled — cancellation is only possible before construction starts.',
+      }),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Reason'), {
+      target: { value: 'Changed our minds' },
+    })
+    fireEvent.click(cancelButton())
+
+    expect(
+      await screen.findByText(/cancellation is only possible before construction starts/),
+    ).toBeInTheDocument()
+    // The project is still shown at the status it was actually left at.
+    expect(screen.getByText('Design Approved')).toBeInTheDocument()
+  })
+
+  it('surfaces a field error the service raised against the reason', async () => {
+    // Nothing here caps the length — the service does — so its per-field message
+    // is what the client needs to see, not "one or more validation errors".
+    renderPage(
+      asOwningClient,
+      apiResponse(200, projectDetail()),
+      apiResponse(400, {
+        title: 'One or more validation errors occurred.',
+        errors: { Reason: ['The reason must be between 1 and 500 characters.'] },
+      }),
+    )
+
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'x'.repeat(600) } })
+    fireEvent.click(cancelButton())
+
+    expect(
+      await screen.findByText('The reason must be between 1 and 500 characters.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows a cancellation’s reason in the status history', async () => {
+    // The third AC line: a cancelled project stays viewable, and the record
+    // says why it was closed out.
+    renderPage(asOwningClient, apiResponse(200, cancelledReply('Client withdrew funding')))
+
+    await screen.findByText('Beachfront villa')
+
+    const rows = historyRows()
+    expect(rows).toHaveLength(3)
+    expect(within(rows[2]).getByText('Designing → Cancelled')).toBeInTheDocument()
+    expect(within(rows[2]).getByText('Client withdrew funding')).toBeInTheDocument()
   })
 })

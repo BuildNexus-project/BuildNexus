@@ -1,0 +1,97 @@
+# Copy to terraform.tfvars — `cp terraform.tfvars.example terraform.tfvars` —
+# and fill in the values below.
+#
+# UNLIKE infra/.env.example, the values here are placeholders, not working
+# development values. This file configures real, publicly reachable Azure
+# resources: the signing key below is the one every BuildNexus token in the
+# deployed environment is signed with, and anyone holding it can mint a token
+# for any user and any role. Generate fresh values, and never commit them —
+# terraform.tfvars is git-ignored, this .example file is not.
+#
+# Anything set here can equally be passed as a TF_VAR_<name> environment
+# variable, which is the better option on a shared machine since it leaves
+# nothing on disk.
+
+# --- Shared MySQL Flexible Server -------------------------------------------
+
+# Only needed if the default "buildnexus-mysql-2026" is already taken by another
+# Azure subscription — the name is global, not per-subscription.
+# mysql_server_name = "buildnexus-mysql-2026"
+
+# 8-128 characters, and Azure additionally wants three of: lowercase, uppercase,
+# digit, symbol. Cannot be changed after the server is created without a reset.
+mysql_administrator_password = "REPLACE-ME"
+
+# Public IPv4 address of the machine you run Terraform from. The mysql provider
+# connects to the server from here to create each service's database user, so
+# the server's firewall has to let this address through. It changes with the
+# network you are on — and on a phone hotspot, between sessions — so check it
+# again before every apply:
+#
+#   curl -4 -s https://api.ipify.org
+#
+# Keep the -4. On a network with DNS64/NAT64, plain `curl -s` can take an IPv6
+# path and report the NAT64 gateway's address rather than the machine's own IPv4
+# address. If the firewall rule is already out of date, a plain terraform plan
+# cannot fix it — see "Known issue: mysql_user or mysql_grant times out
+# connecting" in infra/RUNBOOK.md.
+#
+terraform_operator_ip = "REPLACE-ME"
+
+# --- Shared Event Hubs namespace ---------------------------------------------
+
+# Only needed if the default "buildnexus-events-2026" is already taken — the name
+# is global, and it becomes <name>.servicebus.windows.net.
+# eventhub_namespace_name = "buildnexus-events-2026"
+
+# --- Shared auth convention --------------------------------------------------
+
+# The key every BuildNexus token in the deployed environment is signed with, and
+# the key every other service validates against. At least 32 bytes, or the User
+# Service refuses to start. Generate a fresh one — do NOT reuse the value in
+# infra/.env.example, which is published in the repository for local use only:
+#
+#   openssl rand -base64 48
+#
+jwt_signing_key = "REPLACE-ME-at-least-32-bytes"
+
+# Presented in the X-Internal-Api-Key header between services. Also at least 32
+# bytes, also generated fresh, also not the value in infra/.env.example.
+internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
+
+# Issuer and audience are the same in every service and rarely change. Uncomment
+# only to override the defaults, and then override them everywhere at once.
+# jwt_issuer   = "BuildNexusAuth"
+# jwt_audience = "BuildNexusServices"
+
+# --- User Service ------------------------------------------------------------
+
+# Only needed if the default "buildnexus-user-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# user_service_app_name = "buildnexus-user-service-2026"
+
+# Where the emailed password reset link points. Still the local dev server,
+# because the frontend has no deployed home yet.
+# frontend_origin = "http://localhost:5173"
+
+# --- Project Service ---------------------------------------------------------
+
+# Only needed if the default "buildnexus-project-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# project_service_app_name = "buildnexus-project-service-2026"
+
+# Password for the Project Service's own MySQL user, which can reach
+# buildnexus_project_db and nothing else. Generate a fresh one. It must differ
+# from mysql_administrator_password — Terraform refuses the two being equal —
+# and must not contain a semicolon, since it goes into a connection string:
+#
+#   openssl rand -base64 32
+#
+project_service_db_password = "REPLACE-ME"
+
+# --- Azure subscription ------------------------------------------------------
+
+# Normally left unset: the provider falls back to ARM_SUBSCRIPTION_ID and then
+# to whatever `az account show` reports. Set it only when the signed-in account
+# can see more than one subscription and the wrong one would be picked.
+# subscription_id = "00000000-0000-0000-0000-000000000000"

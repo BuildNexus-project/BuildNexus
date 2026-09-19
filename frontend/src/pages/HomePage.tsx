@@ -64,6 +64,16 @@ export function HomePage() {
             </Button>
           )}
 
+          {ADMIN_ROLES.includes(user.role) && (
+            <Button
+              render={<Link to="/admin/reports/design-approval" />}
+              variant="outline"
+              className="w-full"
+            >
+              Design approval report
+            </Button>
+          )}
+
           <Button variant="outline" onClick={signOut} className="w-full">
             Sign out
           </Button>

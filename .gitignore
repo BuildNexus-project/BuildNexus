@@ -5,6 +5,7 @@ obj/
 *.suo
 appsettings.Development.json
 appsettings.*.local.json
+coverage/
 
 # ---------- Node / React (frontend) ----------
 node_modules/
@@ -19,6 +20,23 @@ yarn-error.log*
 .env.local
 *.pem
 *.key
+
+# ---------- Terraform (infra/terraform) ----------
+# Provider plugins and other init output - re-downloaded by `terraform init`.
+.terraform/
+.terraform.tfstate.lock.info
+# State never belongs in git: it lives in the Azure Storage backend, and a copy
+# here would hold the MySQL admin password in plain text.
+*.tfstate
+*.tfstate.*
+# Real variable values, including the JWT signing key. terraform.tfvars.example
+# is committed and does not match this pattern.
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+# .terraform.lock.hcl is deliberately NOT ignored - it pins the provider
+# versions so every teammate resolves the same ones.
 
 # ---------- Docker ----------
 docker-compose.override.yml

@@ -68,6 +68,46 @@ public class ProjectStatusTransitionsTests
         Assert.Empty(ProjectStatusTransitions.NextFrom(ProjectStatus.Completed));
     }
 
+    [Fact]
+    public void Nothing_follows_a_cancelled_project()
+    {
+        // Terminal like Completed, by a different route — US-08.
+        Assert.Empty(ProjectStatusTransitions.NextFrom(ProjectStatus.Cancelled));
+        Assert.False(ProjectStatusTransitions.IsAllowed(ProjectStatus.Cancelled, ProjectStatus.Pending));
+        Assert.False(ProjectStatusTransitions.IsAllowed(ProjectStatus.Cancelled, ProjectStatus.Designing));
+    }
+
+    [Fact]
+    public void No_forward_move_ever_targets_cancelled()
+    {
+        // Cancelling is not a step in the lifecycle — PATCH /status must not be
+        // able to reach it, so it never appears on the right of a forward move.
+        foreach (var from in Enum.GetValues<ProjectStatus>())
+        {
+            Assert.False(ProjectStatusTransitions.IsAllowed(from, ProjectStatus.Cancelled));
+        }
+    }
+
+    [Theory]
+    [InlineData(ProjectStatus.Pending)]
+    [InlineData(ProjectStatus.Designing)]
+    [InlineData(ProjectStatus.DesignApproved)]
+    public void A_project_can_be_cancelled_before_construction_starts(ProjectStatus current)
+    {
+        Assert.True(ProjectStatusTransitions.CanCancelFrom(current));
+    }
+
+    [Theory]
+    [InlineData(ProjectStatus.Construction)]
+    [InlineData(ProjectStatus.Completed)]
+    [InlineData(ProjectStatus.Cancelled)]
+    public void A_project_cannot_be_cancelled_once_the_build_has_started_or_after_it_ends(ProjectStatus current)
+    {
+        // Work on the ground once Construction begins, nothing to cancel once
+        // Completed, and Cancelled is already done.
+        Assert.False(ProjectStatusTransitions.CanCancelFrom(current));
+    }
+
     [Theory]
     [InlineData(ProjectStatus.Pending, ProjectStatus.Designing)]
     [InlineData(ProjectStatus.Designing, ProjectStatus.DesignApproved)]
@@ -90,14 +130,14 @@ public class ProjectStatusTransitionsTests
         // instead of quietly becoming a dead end nobody can move a project out
         // of.
         var dead = Enum.GetValues<ProjectStatus>()
-            .Where(status => status != ProjectStatus.Completed)
+            .Where(status => status is not (ProjectStatus.Completed or ProjectStatus.Cancelled))
             .Where(status => ProjectStatusTransitions.NextFrom(status).Count == 0)
             .ToList();
 
         Assert.True(
             dead.Count == 0,
-            "Every status except Completed must have somewhere to go. These do not: "
-            + string.Join(", ", dead));
+            "Every status except the terminal ones (Completed, Cancelled) must have somewhere to go. "
+            + "These do not: " + string.Join(", ", dead));
     }
 
     [Fact]

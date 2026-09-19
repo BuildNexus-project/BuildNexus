@@ -2,6 +2,10 @@
 
 Local development stack for BuildNexus.
 
+**Deploying to Azure is a different document — see [RUNBOOK.md](RUNBOOK.md).**
+Everything below is about running the stack on your own machine; nothing here
+touches the deployed environment.
+
 ## Start
 
 ```bash

@@ -32,7 +32,19 @@ public sealed class KafkaProjectEventPublisher : IProjectEventPublisher, IDispos
         _logger = logger;
         _flushTimeout = TimeSpan.FromMilliseconds(kafkaOptions.MessageTimeoutMs);
 
-        _producer = new ProducerBuilder<string, string>(new ProducerConfig
+        _producer = new ProducerBuilder<string, string>(BuildProducerConfig(kafkaOptions)).Build();
+    }
+
+    /// <summary>
+    /// The librdkafka settings the producer is built with.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the constructor so the settings can be checked without
+    /// building a producer, which would start librdkafka's background threads.
+    /// </remarks>
+    public static ProducerConfig BuildProducerConfig(KafkaOptions kafkaOptions)
+    {
+        var config = new ProducerConfig
         {
             BootstrapServers = kafkaOptions.BootstrapServers,
             // Wait for every in-sync replica before calling a publish done. An
@@ -46,7 +58,53 @@ public sealed class KafkaProjectEventPublisher : IProjectEventPublisher, IDispos
             // Bounded, because the publish is awaited inside an HTTP request.
             // See the remarks on KafkaOptions.MessageTimeoutMs.
             MessageTimeoutMs = kafkaOptions.MessageTimeoutMs
-        }).Build();
+        };
+
+        // How to authenticate to the broker — each written only when configured.
+        // Unset, none of these keys reaches librdkafka and it keeps its own
+        // plaintext default, which is what the local broker speaks: a local run's
+        // producer is configured exactly as it was before these settings existed.
+        // Azure Event Hubs sets all four — SaslSsl, Plain, the literal username
+        // $ConnectionString, and the namespace connection string as the password.
+        if (kafkaOptions.SecurityProtocol is { } securityProtocol)
+        {
+            config.SecurityProtocol = securityProtocol;
+        }
+
+        if (kafkaOptions.SaslMechanism is { } saslMechanism)
+        {
+            config.SaslMechanism = saslMechanism;
+        }
+
+        if (!string.IsNullOrEmpty(kafkaOptions.SaslUsername))
+        {
+            config.SaslUsername = kafkaOptions.SaslUsername;
+        }
+
+        if (!string.IsNullOrEmpty(kafkaOptions.SaslPassword))
+        {
+            config.SaslPassword = kafkaOptions.SaslPassword;
+        }
+
+        // Connection tuning for Azure Event Hubs — likewise each written only when
+        // configured, so locally librdkafka keeps its own defaults. Independent of
+        // one another and of the security settings above.
+        if (kafkaOptions.RequestTimeoutMs is { } requestTimeoutMs)
+        {
+            config.RequestTimeoutMs = requestTimeoutMs;
+        }
+
+        if (kafkaOptions.SocketKeepaliveEnable is { } socketKeepaliveEnable)
+        {
+            config.SocketKeepaliveEnable = socketKeepaliveEnable;
+        }
+
+        if (kafkaOptions.MetadataMaxAgeMs is { } metadataMaxAgeMs)
+        {
+            config.MetadataMaxAgeMs = metadataMaxAgeMs;
+        }
+
+        return config;
     }
 
     public async Task PublishAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)

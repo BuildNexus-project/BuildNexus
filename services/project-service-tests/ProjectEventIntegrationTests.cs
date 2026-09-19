@@ -232,7 +232,8 @@ public class ProjectEventIntegrationTests
         var repository = new StubRepository();
         var outbox = new FakeOutboxRepository();
 
-        var controller = new ProjectsController(repository, outbox, NullLogger<ProjectsController>.Instance)
+        var controller = new ProjectsController(
+            repository, outbox, new FakeUserDirectoryClient(), NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {
@@ -319,5 +320,20 @@ public class ProjectEventIntegrationTests
 
             return Task.FromResult(true);
         }
+
+        // US-07 staff assignment is not exercised by these US-22 event tests.
+        public Task<bool> AssignArchitectAsync(
+            Guid projectId,
+            Guid architectId,
+            ProjectStatusChange? transition,
+            IReadOnlyList<OutboxEvent> outboxEvents,
+            DateTime updatedAtUtc) =>
+            Task.FromResult(false);
+
+        public Task<bool> AssignProjectManagerAsync(
+            Guid projectId,
+            Guid projectManagerId,
+            DateTime updatedAtUtc) =>
+            Task.FromResult(false);
     }
 }

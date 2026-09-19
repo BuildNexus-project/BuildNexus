@@ -75,4 +75,54 @@ public interface IProjectRepository
         ProjectStatusChange change,
         DateTime updatedAtUtc,
         IReadOnlyList<OutboxEvent> outboxEvents);
+
+    /// <summary>
+    /// Sets a project's assigned Architect, and — when <paramref name="transition"/>
+    /// is supplied — moves the project on and records it, all in one
+    /// transaction.
+    /// </summary>
+    /// <remarks>
+    /// US-07: assigning an Architect to a project that is still
+    /// <see cref="ProjectStatus.Pending"/> also moves it to
+    /// <see cref="ProjectStatus.Designing"/>. That move is a real transition —
+    /// it gets a history row and a <c>ProjectUpdated</c> event, exactly as
+    /// <see cref="UpdateStatusAsync"/> would give it — so it rides along here
+    /// rather than being a second, separate write that a crash could leave half
+    /// done.
+    /// <para>
+    /// <paramref name="transition"/> is <c>null</c> when the project is already
+    /// past <c>Pending</c> and the Architect is simply being set or replaced:
+    /// then only the column moves, and nothing is announced because nothing
+    /// about the lifecycle changed.
+    /// </para>
+    /// </remarks>
+    /// <param name="transition">
+    /// The <c>Pending → Designing</c> move to record alongside the assignment,
+    /// or <c>null</c> to set the column only.
+    /// </param>
+    /// <param name="outboxEvents">
+    /// The events <paramref name="transition"/> raises, enqueued in the same
+    /// transaction. Empty when <paramref name="transition"/> is <c>null</c>.
+    /// </param>
+    /// <returns>
+    /// <c>false</c> if nothing was written — the project is gone, or (with a
+    /// <paramref name="transition"/>) no longer <c>Pending</c> — and the caller
+    /// should re-read it.
+    /// </returns>
+    Task<bool> AssignArchitectAsync(
+        Guid projectId,
+        Guid architectId,
+        ProjectStatusChange? transition,
+        IReadOnlyList<OutboxEvent> outboxEvents,
+        DateTime updatedAtUtc);
+
+    /// <summary>
+    /// Sets a project's assigned Project Manager. No status change and nothing
+    /// announced — US-07 puts a PM on a project without moving it.
+    /// </summary>
+    /// <returns><c>false</c> if there is no project with that id.</returns>
+    Task<bool> AssignProjectManagerAsync(
+        Guid projectId,
+        Guid projectManagerId,
+        DateTime updatedAtUtc);
 }

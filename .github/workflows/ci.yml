@@ -8,10 +8,14 @@
 #   unit tests       Sprint 1  (below)
 #   integration      Sprint 3  — attaches with `needs: [backend-unit-tests, ...]`
 #   docker build     Sprint 4
-#   deploy           Sprint 4
+#   deploy           Sprint 4  (below — User Service SCRUM-52, Project Service SCRUM-53)
 #
-# The later three are deliberately not stubbed here: an empty job that always
+# The remaining two are deliberately not stubbed here: an empty job that always
 # passes reads as a green stage that proves nothing.
+#
+# The deploy stage is per service, not one job for all five. Each service gets
+# its own job, gated on its own paths, so a change to one service redeploys that
+# service and leaves the other four running untouched.
 #
 # There is no .sln in this repository, so every project is named by its explicit
 # path. A project added later must be added to the lists below or it is never
@@ -65,9 +69,13 @@ jobs:
         run: |
           dotnet restore services/user-service/UserService.csproj
           dotnet restore services/project-service/ProjectService.csproj
+          dotnet restore services/design-service/DesignService.csproj
+          dotnet restore services/construction-service/ConstructionService.csproj
           dotnet restore api-gateway/BuildNexus.ApiGateway.csproj
           dotnet restore services/user-service-tests/UserService.Tests.csproj
           dotnet restore services/project-service-tests/ProjectService.Tests.csproj
+          dotnet restore services/design-service-tests/DesignService.Tests.csproj
+          dotnet restore services/construction-service-tests/ConstructionService.Tests.csproj
           dotnet restore api-gateway-tests/ApiGateway.Tests.csproj
 
       # Release, matching the configuration the Docker build stage will publish.
@@ -75,9 +83,13 @@ jobs:
         run: |
           dotnet build services/user-service/UserService.csproj -c Release --no-restore
           dotnet build services/project-service/ProjectService.csproj -c Release --no-restore
+          dotnet build services/design-service/DesignService.csproj -c Release --no-restore
+          dotnet build services/construction-service/ConstructionService.csproj -c Release --no-restore
           dotnet build api-gateway/BuildNexus.ApiGateway.csproj -c Release --no-restore
           dotnet build services/user-service-tests/UserService.Tests.csproj -c Release --no-restore
           dotnet build services/project-service-tests/ProjectService.Tests.csproj -c Release --no-restore
+          dotnet build services/design-service-tests/DesignService.Tests.csproj -c Release --no-restore
+          dotnet build services/construction-service-tests/ConstructionService.Tests.csproj -c Release --no-restore
           dotnet build api-gateway-tests/ApiGateway.Tests.csproj -c Release --no-restore
 
   frontend-build:
@@ -139,6 +151,30 @@ jobs:
       PROJECT_DB_USER: buildnexus
       PROJECT_DB_PASSWORD: buildnexus-dev
 
+      # --- Why the Design Service database credentials are here ------------
+      # No design-db container is started in this job yet — no test in
+      # services/design-service-tests needs one. But compose interpolates the
+      # WHOLE file before it starts anything, so the `${DESIGN_DB_*:?...}`
+      # variables on the design-db and design-service blocks must be set or
+      # `docker compose up user-db project-db` fails to parse. Same reason,
+      # and same published development values, as the two blocks above.
+      DESIGN_DB_ROOT_PASSWORD: buildnexus-root-dev
+      DESIGN_DB_USER: buildnexus
+      DESIGN_DB_PASSWORD: buildnexus-dev
+
+      # --- Why the Construction Service database credentials are here ------
+      # This job now starts construction-db (US-23):
+      # MilestoneSetupRepositoryDatabaseTests runs the real migrations and the
+      # real INSERT IGNORE against it on localhost:3310. Compose also needs
+      # these to parse the `${CONSTRUCTION_DB_*:?...}` on the construction-db
+      # and construction-service blocks before it starts anything at all. Same
+      # published development values as the blocks above, and the same reason
+      # they are literals: a fixed connection string is compiled into the test
+      # assembly and these must match it exactly.
+      CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-dev
+      CONSTRUCTION_DB_USER: buildnexus
+      CONSTRUCTION_DB_PASSWORD: buildnexus-dev
+
       # --- Why the JWT values are here at all -------------------------------
       # Compose interpolates the WHOLE file before it starts anything, so the
       # required `${Jwt__*:?...}` variables declared on the user-service and
@@ -156,6 +192,19 @@ jobs:
       # key length at startup and the host refuses to boot below it.
       Jwt__SigningKey: ${{ secrets.JWT_SIGNING_KEY }}
 
+      # --- Why the internal service key is here (US-11) ---------------------
+      # Same trap as the Jwt__* block above: docker-compose.yml's user-service
+      # block requires InternalService__ApiKey to parse, even though this job
+      # only starts user-db. UserServiceFactory supplies its own value through
+      # AddInMemoryCollection, so the test run itself does not depend on this —
+      # it is set at job level so that stays true rather than failing as a
+      # puzzle if the factory ever stops overriding it.
+      #
+      # Repository secret, the same class of value as the JWT signing key: a
+      # shared key with a minimum-length check at startup, not a throwaway dev
+      # password like the ones below.
+      InternalService__ApiKey: ${{ secrets.INTERNAL_SERVICE_API_KEY }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -170,7 +219,7 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      # Neither test project is fully isolated.
+      # None of the three test projects is fully isolated.
       #
       # services/user-service-tests: RoleAccessTests and RegistrationRoleTests
       # boot the real User Service host through UserServiceFactory, which
@@ -183,12 +232,24 @@ jobs:
       # port of its own. Every other class in that project stubs its
       # collaborators.
       #
-      # --wait holds until both containers report healthy, not merely started,
+      # services/design-service-tests: DesignDocumentRepositoryDatabaseTests runs
+      # the real migrations and the real ADO.NET against design-db on
+      # localhost:3309 — again its own container, its own port. Every other class
+      # in that project (validator, contract, role-declaration, migration-script,
+      # and the controller suite over fakes) needs nothing running.
+      #
+      # services/construction-service-tests: MilestoneSetupRepositoryDatabaseTests
+      # runs the real migrations and the real INSERT IGNORE against
+      # construction-db on localhost:3310 — its own container, its own port. The
+      # consumer suite drives HandleAsync over a fake repository and the
+      # controller and role-declaration suites need nothing running.
+      #
+      # --wait holds until every container reports healthy, not merely started,
       # which the healthchecks defined on them make meaningful: MySQL accepts
       # connections some seconds after the process starts, and without this the
       # first test would race it.
       - name: Start the service databases
-        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db
+        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db construction-db
 
       # No Kafka container for any of these, still. OutboxDispatcherTests does
       # cover the dispatcher that publishes to the broker, but over a fake
@@ -196,18 +257,74 @@ jobs:
       # success and with a failure, and a real broker would only make the run
       # depend on how long it took to answer.
       # services/project-service-tests reaches MySQL and never the broker.
+      #
+      # --collect:"XPlat Code Coverage" activates coverlet.collector, which every
+      # *-tests project already references (US-33) — it was sitting unused until
+      # now. Each run writes a Cobertura XML under its own results directory, one
+      # per service, so a project's own file cannot be confused with another's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release
-          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
+          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
+
+      # Kept as a build artifact rather than only living on the runner: the raw
+      # Cobertura files are what a merged, human-readable report is built from
+      # next. Uploaded even on a failed run — whichever service's tests ran
+      # before the failure still measured real coverage, and it is worth seeing.
+      - name: Upload raw backend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-raw
+          path: coverage/
+          if-no-files-found: ignore
+
+      # One Cobertura file per service is not, on its own, "visible and
+      # trackable" (US-33) — nobody opens five XML files. reportgenerator merges
+      # them into one HTML report and a GitHub-flavoured summary. Runs even
+      # after a failed Test step: whichever services did run still measured
+      # real coverage, and skips cleanly if none did.
+      - name: Merge backend coverage report
+        if: always()
+        run: |
+          if ! find coverage -name 'coverage.cobertura.xml' -print -quit 2>/dev/null | grep -q .; then
+            echo "No backend coverage files found — nothing to merge."
+            exit 0
+          fi
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.11
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:"coverage/**/coverage.cobertura.xml" \
+            -targetdir:"coverage/report" \
+            -reporttypes:"Html;MarkdownSummaryGithub"
+
+      # The line/branch percentage lands in the job's own summary page, so
+      # "what is our coverage" is answered by opening the run — not by
+      # downloading and unzipping an artifact.
+      - name: Publish backend coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/report/SummaryGithub.md ]; then
+            cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload backend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-report
+          path: coverage/report/
+          if-no-files-found: ignore
 
       # A failed run is usually a database, and the container's log says why in
       # a way the test output does not. Both are printed rather than guessing
       # which of the two took the run down.
       - name: Database logs (on failure)
         if: failure()
-        run: docker compose -f infra/docker-compose.yml logs user-db project-db
+        run: docker compose -f infra/docker-compose.yml logs user-db project-db design-db construction-db
 
       - name: Stop the service databases
         if: always()
@@ -232,7 +349,223 @@ jobs:
       - name: Install
         run: npm ci
 
-      # `vitest run` — the one-shot runner. Plain `vitest` would watch and the
-      # job would never finish.
+      # `vitest run --coverage` (US-33) — the one-shot runner, instrumented.
+      # Plain `vitest` would watch and the job would never finish; V8 does the
+      # instrumentation itself, so this measures exactly what ran rather than a
+      # separate pass over transformed source.
       - name: Test
-        run: npm test
+        run: npm run test:coverage
+
+      # The json-summary reporter writes one small file with the four overall
+      # percentages — turned into a short table in the job's own summary page,
+      # the same place the backend's coverage lands, rather than making someone
+      # open the HTML report to see a number.
+      - name: Publish frontend coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "
+              const s = require('./coverage/coverage-summary.json').total;
+              const pct = (m) => s[m].pct + '% (' + s[m].covered + '/' + s[m].total + ')';
+              console.log('# Frontend coverage');
+              console.log('| Metric | Coverage |');
+              console.log('|---|---|');
+              console.log('| Lines | ' + pct('lines') + ' |');
+              console.log('| Statements | ' + pct('statements') + ' |');
+              console.log('| Functions | ' + pct('functions') + ' |');
+              console.log('| Branches | ' + pct('branches') + ' |');
+            " >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload frontend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------- deploy ----
+  # Which services actually changed.
+  #
+  # GitHub has no per-job `paths:` filter — `on.push.paths` would gate the WHOLE
+  # workflow, and build and unit tests must keep running for every change. So the
+  # filtering happens here instead, and each deploy job reads its own output.
+  #
+  # Skipped entirely off main, which skips every deploy job that needs it: a job
+  # whose dependency was skipped does not run.
+  changed-services:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      user-service: ${{ steps.filter.outputs.user-service }}
+      project-service: ${{ steps.filter.outputs.project-service }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # paths-filter compares this push against the commit before it, which
+          # the default shallow checkout does not contain.
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # One entry per deployable service. A later deployment story adds its
+          # own filter here and its own deploy job below; it does not touch this
+          # one's.
+          filters: |
+            user-service:
+              - 'services/user-service/**'
+            project-service:
+              - 'services/project-service/**'
+
+  deploy-user-service:
+    name: Deploy User Service
+    runs-on: ubuntu-latest
+    # Tests first. Deploying code that the unit test stage rejected would make
+    # the pipeline's ordering decorative.
+    needs: [changed-services, backend-unit-tests]
+    if: needs.changed-services.outputs.user-service == 'true'
+
+    # Two pushes in quick succession must not deploy over each other: App Service
+    # is mid-swap for the length of a deploy and the second would race the first.
+    # Queue rather than cancel — a cancelled deploy leaves the app half-updated.
+    concurrency:
+      group: deploy-user-service
+      cancel-in-progress: false
+
+    env:
+      # Must match var.user_service_app_name in infra/terraform/variables.tf.
+      # It cannot be read from `terraform output` here: Terraform runs locally
+      # against an `az login` session, and this runner has no Azure credentials
+      # beyond the publish profile below.
+      AZURE_WEBAPP_NAME: buildnexus-user-service-2026
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Release, and only this service's project — the other four are not
+      # rebuilt, restarted, or redeployed by this job.
+      - name: Publish
+        run: >-
+          dotnet publish services/user-service/UserService.csproj
+          -c Release
+          -o ${{ runner.temp }}/user-service-publish
+
+      # Authenticates with a publish profile, NOT a Service Principal. The
+      # university's Azure AD tenant blocks Service Principal creation for
+      # student accounts, so there is no azure/login step and no ARM_CLIENT_*
+      # secrets anywhere in this repository.
+      #
+      # The profile is a repository secret. It is regenerated whenever the App
+      # Service is destroyed and recreated by Terraform, so it has to be
+      # refreshed after a teardown — see infra/RUNBOOK.md.
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_USER_SERVICE }}
+          package: ${{ runner.temp }}/user-service-publish
+
+      # "The deploy succeeded" only means the package was accepted. This is what
+      # says the service actually came up: /health is anonymous, so no token is
+      # needed, and the app cannot answer it at all unless it reached MySQL and
+      # ran its migrations at startup.
+      #
+      # Retried, because App Service restarts the worker after a deploy and the
+      # first requests arrive while it is still starting.
+      - name: Verify the deployed service answers
+        run: |
+          url="https://${AZURE_WEBAPP_NAME}.azurewebsites.net/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 20); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 30 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "HTTP 200 on attempt $attempt:"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$url never returned 200. Check the App Service log stream — the usual cause is a startup failure against MySQL or a missing application setting."
+          exit 1
+
+  deploy-project-service:
+    name: Deploy Project Service
+    runs-on: ubuntu-latest
+    # Tests first, for the same reason as the User Service. Deliberately not
+    # dependent on deploy-user-service, nor it on this: each deploy is gated on
+    # its own path filter above, so a change under services/project-service/**
+    # redeploys this one App Service, and a User Service change never rebuilds
+    # or restarts it.
+    needs: [changed-services, backend-unit-tests]
+    if: needs.changed-services.outputs.project-service == 'true'
+
+    # Its own group rather than deploy-user-service's: two Project Service
+    # pushes queue behind each other, but never behind a User Service deploy.
+    concurrency:
+      group: deploy-project-service
+      cancel-in-progress: false
+
+    env:
+      # Must match var.project_service_app_name in infra/terraform/variables.tf,
+      # for the same reason the User Service's job hardcodes its own name.
+      AZURE_WEBAPP_NAME: buildnexus-project-service-2026
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Release, and only this service's project. Its migrations are embedded
+      # resources, so the published package carries the schema the code expects.
+      - name: Publish
+        run: >-
+          dotnet publish services/project-service/ProjectService.csproj
+          -c Release
+          -o ${{ runner.temp }}/project-service-publish
+
+      # A publish profile for THIS App Service, in its own repository secret —
+      # not the User Service's. A profile's credentials belong to one app, so
+      # neither deploy job can push over the other's App Service. Like the User
+      # Service's, it is regenerated whenever Terraform recreates the App Service
+      # and has to be refreshed after a teardown — see infra/RUNBOOK.md.
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROJECT_SERVICE }}
+          package: ${{ runner.temp }}/project-service-publish
+
+      # /health answers only once the app has migrated its database on Azure
+      # MySQL as the scoped project_service user and passed its startup
+      # validation, the Kafka__* checks included. It does not prove a publish
+      # to Event Hubs succeeds: the broker is only contacted when there is an
+      # event to send.
+      #
+      # Retried, because App Service restarts the worker after a deploy and the
+      # first requests arrive while it is still starting.
+      - name: Verify the deployed service answers
+        run: |
+          url="https://${AZURE_WEBAPP_NAME}.azurewebsites.net/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 20); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 30 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "HTTP 200 on attempt $attempt:"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$url never returned 200. Check the App Service log stream — the usual causes are a startup failure against MySQL (the project_service user or its grant) or a missing or half-set Kafka__* or Jwt__* application setting."
+          exit 1

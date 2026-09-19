@@ -1,5 +1,6 @@
 using System.Reflection;
 using BuildNexus.UserService.Authorization;
+using BuildNexus.UserService.Controllers;
 using BuildNexus.UserService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,14 +23,31 @@ public class EndpointRoleDeclarationTests
     public void Every_endpoint_either_names_its_roles_or_is_explicitly_anonymous()
     {
         var undeclared = Endpoints()
-            .Where(action => !IsAnonymous(action) && DeclaredRoles(action).Count == 0)
+            .Where(action => !IsAnonymous(action)
+                && !UsesADifferentAuthenticationScheme(action)
+                && DeclaredRoles(action).Count == 0)
             .Select(Describe)
             .ToList();
 
         Assert.True(
             undeclared.Count == 0,
-            "Every protected endpoint must declare its roles with [Authorize(Roles = ...)], or be "
-            + "explicitly [AllowAnonymous]. These declare neither: " + string.Join(", ", undeclared));
+            "Every protected endpoint must declare its roles with [Authorize(Roles = ...)], be "
+            + "explicitly [AllowAnonymous], or name a non-default AuthenticationSchemes (a caller other "
+            + "than a signed-in user, gated some other way). These declare none of those: "
+            + string.Join(", ", undeclared));
+    }
+
+    [Fact]
+    public void The_internal_user_lookup_is_gated_by_the_internal_scheme_not_a_role()
+    {
+        // A caller here holds the shared internal key, not a BuildNexus account
+        // — RolesFor's usual question ("which role") does not apply, and this
+        // pins that it is covered some other way rather than by accident.
+        var action = Endpoints().Single(a => a.DeclaringType == typeof(InternalController) && a.Name == "GetById");
+
+        Assert.False(IsAnonymous(action));
+        Assert.Empty(DeclaredRoles(action));
+        Assert.True(UsesADifferentAuthenticationScheme(action));
     }
 
     [Fact]
@@ -79,6 +97,10 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Admin], RolesFor("GetAll"));
         Assert.Equal([PlatformRoles.Admin], RolesFor("GetById"));
 
+        // GetById also exists on InternalController (a different lookup, gated a
+        // different way — see the test above) — RolesFor is scoped to
+        // UsersController so the two are never confused for each other.
+
         // US-37: administering an account is Admin only, on the way in as well
         // as on the way out. Editing someone's role is the authorisation
         // boundary itself, so nothing below Admin may reach either of these.
@@ -111,8 +133,22 @@ public class EndpointRoleDeclarationTests
         action.GetCustomAttribute<AllowAnonymousAttribute>() is not null
         || action.DeclaringType!.GetCustomAttribute<AllowAnonymousAttribute>() is not null;
 
+    /// <summary>
+    /// True for an endpoint gated by something other than the default JWT
+    /// bearer scheme — a caller proving it is a trusted service, not a
+    /// signed-in user, so "which role" is not the applicable question.
+    /// </summary>
+    private static bool UsesADifferentAuthenticationScheme(MethodInfo action) =>
+        action.GetCustomAttributes<AuthorizeAttribute>()
+            .Concat(action.DeclaringType!.GetCustomAttributes<AuthorizeAttribute>())
+            .Select(attribute => attribute.AuthenticationSchemes)
+            .Any(schemes => !string.IsNullOrWhiteSpace(schemes));
+
+    /// <summary>Scoped to <see cref="UsersController"/> — other controllers can and do reuse action names.</summary>
     private static IReadOnlyList<string> RolesFor(string actionName) =>
-        DeclaredRoles(Endpoints().Single(action => action.Name == actionName));
+        DeclaredRoles(Endpoints()
+            .Where(action => action.DeclaringType == typeof(UsersController))
+            .Single(action => action.Name == actionName));
 
     private static IReadOnlyList<string> Split(string roles) =>
         roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

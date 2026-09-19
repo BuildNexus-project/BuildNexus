@@ -50,7 +50,7 @@ public class UpdateProjectStatusRequestTests
     }
 
     [Theory]
-    [InlineData("Cancelled")]
+    [InlineData("Rejected")]
     [InlineData("design approved")]
     [InlineData("Approved")]
     public void Rejects_something_that_is_not_a_status(string status)
@@ -61,6 +61,16 @@ public class UpdateProjectStatusRequestTests
         Assert.Contains(
             Validate(new UpdateProjectStatusRequest { Status = status }),
             result => result.MemberNames.Contains("Status"));
+    }
+
+    [Fact]
+    public void Accepts_Cancelled_as_a_name_though_this_endpoint_will_not_move_a_project_there()
+    {
+        // Cancelled is a real status (US-08), so the annotation lets it through
+        // — but ProjectStatusTransitions never lists it as a forward move, so
+        // the controller's transition check refuses it. Cancellation has its
+        // own endpoint.
+        Assert.Empty(Validate(new UpdateProjectStatusRequest { Status = "Cancelled" }));
     }
 
     private static IReadOnlyList<ValidationResult> Validate(UpdateProjectStatusRequest request)
