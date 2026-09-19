@@ -312,7 +312,13 @@ terraform untaint azurerm_linux_web_app.user_service
 blob lease held but the lock metadata empty. During SCRUM-47 the first
 `terraform plan` failed with `HTTP response was nil; connection may have been
 reset` while acquiring the lock, and every attempt after it hit this error
-until the lease was broken — a retry a few minutes later did not clear it:
+until the lease was broken — a retry a few minutes later did not clear it. It
+recurred later the same day from the other end: a `terraform plan` printed
+`Error releasing the state lock` and advised `force-unlock`, and the next attempt
+found the blob leased (`az storage blob show` reported `leaseState: leased`,
+`leaseDuration: infinite`, empty metadata) with no `terraform.exe` running. A
+failed release leaves exactly the same state as a failed acquire, so check for a
+running Terraform first and then break the lease:
 
 ```
 Error: Error acquiring the state lock
@@ -394,6 +400,13 @@ Confirmed on 2026-09-19: after the rule was updated this way, a plain
 0 added, 0 changed, 0 destroyed, both refreshing `mysql_user` and `mysql_grant`
 over live connections.
 
+It failed again that evening, after the address had moved to `45.121.88.242`,
+and the same steps fixed it: a plain plan failed with the identical MySQL timeout,
+the `-refresh=false` plan showed only the two expected changes (the firewall rule
+and the `time_sleep` replacement), it applied as 1 added, 1 changed, 1 destroyed,
+and a plain `terraform plan -detailed-exitcode` then exited `0` — *No changes* —
+refreshing `mysql_user` and `mysql_grant`.
+
 #### If the error names an IPv6 address such as `[64:ff9b::…]:3306`
 
 The address family is a red herring, but it explains the odd-looking error and
@@ -435,18 +448,23 @@ one wrong turn worth avoiding.
 #### Expect the address to change between sessions on a phone hotspot
 
 The rule that worked on 2026-09-15 held `103.21.164.44`. On 2026-09-19 the same
-SSID gave `103.21.166.122` and, later that morning, `103.21.165.15` — all inside
-`103.21.164.x`–`103.21.166.x`, which looks like a carrier-grade NAT pool rotating
-the address. The Windows log recorded five Wi-Fi connection events between 10:20
-and 10:58 that morning; whether each one produced a new address was not tested. The machine also joins `SLIIT-STD`; that network's public
-address was not measured, so it is not known to be steadier.
+SSID gave four different IPv4-path addresses in one day: `103.21.166.122`, then
+`103.21.165.15`, then `103.21.166.49`, then, that evening, `45.121.88.242`. The
+first three share `103.21.164.x`–`103.21.166.x`, but the last is in a different
+range, and `45.121.88.x`/`45.121.89.x` was where the NAT64 path had appeared
+earlier — so it is not one tidy pool, and an address's range cannot be relied on
+to tell you which path it came through. The Windows log recorded five Wi-Fi
+connection events between 10:20 and 10:58 that morning; whether each one produced
+a new address was not tested. The machine also joins `SLIIT-STD`; that network's
+public address was not measured, so it is not known to be steadier.
 
 Treat `terraform_operator_ip` as something to re-measure at the start of every
 session on a hotspot, and do the `-refresh=false` step above whenever it differs
-from the rule. Widening the rule to cover the whole range would stop the churn,
-but it would admit hundreds of unrelated subscribers' addresses to the
-database's public endpoint with only a password and TLS in front of it. That was
-not done and is not recommended.
+from the rule. Widening the rule to cover the churn is not workable: no single
+range spans the addresses seen, and any range wide enough to try would admit
+hundreds of unrelated subscribers' addresses to the database's public endpoint
+with only a password and TLS in front of it. That was not done and is not
+recommended.
 
 `time_sleep.mysql_firewall_propagation` (in `main.tf`) exists for a *different*,
 still-possible failure — Azure's own documented lag between a firewall rule
@@ -700,9 +718,15 @@ than read off the source:
 | Service | `/health` | Verified |
 |---|---|---|
 | User Service | Yes | Azure — already required by its own App Service health check (`terraform/user-service.tf`), and polled by `deploy-user-service` in CI on every deploy. Also confirmed live during this story, after the App Service was started and redeployed: `GET /health` → `200`, and 17 such requests are recorded in Application Insights (9 sent by hand; the other 8 are attributed to App Service's own health check). |
-| Project Service | Yes | Azure — same arrangement, `terraform/project-service.tf` and `deploy-project-service`. **Not probed live:** the App Service was found stopped (`403 - This web app is stopped`) and was left that way, so this row rests on the source, the Terraform health check and the CI verify step, not on a fresh request. |
-| Design Service | Yes | Local `docker compose` — run natively against `design-db` for this story's verification: `curl http://localhost:5103/health` → `200 {"service":"design-service","status":"healthy"}`. Not deployed to Azure yet. |
-| Construction Service | Yes | Local `docker compose` — same approach, against `construction-db`: `curl http://localhost:5104/health` → `200 {"service":"construction-service","status":"healthy"}`. Not deployed to Azure yet. |
+| Project Service | Yes | Azure — same arrangement, `terraform/project-service.tf` and `deploy-project-service`. **Not probed on Azure:** the App Service was found stopped (`403 - This web app is stopped`) and was left that way. Instead run natively (`dotnet run`) against `project-db` from `docker compose`: `curl http://localhost:5102/health` → `200 {"service":"project-service","status":"healthy"}`. That proves the endpoint answers; it does not prove the deployed instance does. |
+| Design Service | Yes | Not deployed to Azure yet. Run natively (`dotnet run`) against `design-db` from `docker compose`: `curl http://localhost:5103/health` → `200 {"service":"design-service","status":"healthy"}`. |
+| Construction Service | Yes | Not deployed to Azure yet. Run natively against `construction-db` from `docker compose`: `curl http://localhost:5104/health` → `200 {"service":"construction-service","status":"healthy"}`. |
+
+The three native checks were repeated on the final commit of the story. Only the
+databases came from `docker compose`; the services themselves were not run as
+compose containers, because building those images failed on a network pull during
+this story. So this verifies the endpoint in each service's code, not its
+Dockerfile.
 | Payment Service | Out of scope | `services/payment-service/` has no ASP.NET Core project — no `.csproj`, no `Program.cs`, not even an entry in `docker-compose.yml` — only a placeholder `README.md`. There is no host to add an endpoint to yet; the API Gateway's `payment` cluster route answers `502` until the story that builds this service lands. Revisit this row then. |
 
 ## Verifying the Application Insights proof of concept (SCRUM-47)
@@ -818,6 +842,13 @@ Things worth knowing when reading it:
 - **An unknown route answered `401`, not `404`.** That is consistent with the
   service's deny-by-default `FallbackPolicy` in `Program.cs`; the mechanism was
   not investigated further.
+- **`GET /` `401` keeps accruing, and each one counts as a failed request.** A
+  later count found 55 of them over roughly four and a half hours — about one
+  every five minutes — alongside 287 `GET /health` `200`s. That cadence is
+  consistent with App Service's Always On ping (`always_on = true`) hitting a
+  route the deny-by-default policy rejects; it was not confirmed as the source.
+  Either way, the Failures view carries a steady trickle of platform noise next
+  to any real errors, so filter on `Name` when reading it.
 - **No `AppDependencies` or `AppExceptions` rows were produced.** The SDK
   auto-instruments ASP.NET Core and outbound `HttpClient`, but not
   `MySqlConnector`, so the database calls under a request are not traced.
