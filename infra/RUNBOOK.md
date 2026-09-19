@@ -14,7 +14,7 @@ local run.
 |---|---|---|
 | Resource group | `buildnexus-rg` | The whole application stack. Destroying it destroys everything below. |
 | App Service plan | `buildnexus-asp` | Linux, B1. Shared by every service. |
-| MySQL Flexible Server | `buildnexus-mysql-2026` | Shared. One *database* per service on it, each with its own scoped MySQL user rather than the administrator — Project Service onward; User Service still connects as the administrator (SCRUM-52 predates the convention). |
+| MySQL Flexible Server | `buildnexus-mysql-2026` | Shared. One *database* per service on it, each with its own scoped MySQL user rather than the administrator — Project Service onward; User Service still connects as the administrator (SCRUM-52 predates the convention). `version = "8.0.21"` in Terraform is the family Azure provisions from, not what runs: the server reported `8.0.46-azure` on 2026-09-19, because Azure applies minor updates itself. Terraform shows no drift for this. |
 | User Service | `buildnexus-user-service-2026` | <https://buildnexus-user-service-2026.azurewebsites.net> |
 | User Service database | `buildnexus_user_db` | On the shared server above. Connects as the server administrator. |
 | Project Service | `buildnexus-project-service-2026` | <https://buildnexus-project-service-2026.azurewebsites.net> |
@@ -718,7 +718,7 @@ than read off the source:
 | Service | `/health` | Verified |
 |---|---|---|
 | User Service | Yes | Azure — already required by its own App Service health check (`terraform/user-service.tf`), and polled by `deploy-user-service` in CI on every deploy. Also confirmed live during this story, after the App Service was started and redeployed: `GET /health` → `200`, and 17 such requests are recorded in Application Insights (9 sent by hand; the other 8 are attributed to App Service's own health check). |
-| Project Service | Yes | Azure — same arrangement, `terraform/project-service.tf` and `deploy-project-service`. **Not probed on Azure:** the App Service was found stopped (`403 - This web app is stopped`) and was left that way. Instead run natively (`dotnet run`) against `project-db` from `docker compose`: `curl http://localhost:5102/health` → `200 {"service":"project-service","status":"healthy"}`. That proves the endpoint answers; it does not prove the deployed instance does. |
+| Project Service | Yes | Azure — `terraform/project-service.tf` and `deploy-project-service`. Found stopped during this story and started again before the sprint merge: `GET /health` → `200 {"service":"project-service","status":"healthy"}`. Also confirmed natively against `project-db` from `docker compose` on `http://localhost:5102/health`. |
 | Design Service | Yes | Not deployed to Azure yet. Run natively (`dotnet run`) against `design-db` from `docker compose`: `curl http://localhost:5103/health` → `200 {"service":"design-service","status":"healthy"}`. |
 | Construction Service | Yes | Not deployed to Azure yet. Run natively against `construction-db` from `docker compose`: `curl http://localhost:5104/health` → `200 {"service":"construction-service","status":"healthy"}`. |
 
