@@ -189,12 +189,16 @@ notice when it goes stale. Get the current one and put it in
 `terraform.tfvars` before every apply, not just the first:
 
 ```
-curl -s https://api.ipify.org
+curl -4 -s https://api.ipify.org
 ```
 
-If this differs from what is already in `terraform.tfvars`, an apply that needs
-to touch `mysql_user` or `mysql_grant` times out connecting — see the known
-issue below before assuming anything else is wrong.
+The `-4` matters. Plain `curl -s` can report a different address than the one
+the IPv4 path uses — see the known issue below.
+
+If this differs from what is already in `terraform.tfvars`, a plan or apply that
+has to reach `mysql_user` or `mysql_grant` times out connecting, and once those
+exist in state a plain re-apply cannot fix it — see the known issue below
+before assuming anything else is wrong.
 
 ### Apply
 
@@ -340,17 +344,109 @@ taken effect yet. That has been the wrong diagnosis every time it has actually
 happened. Check the IP first:
 
 ```
-curl -s https://api.ipify.org
+curl -4 -s https://api.ipify.org
 ```
 
-against `terraform_operator_ip` in `terraform.tfvars`. `terraform_operator_ip`
-is a snapshot of one address on one network, not a live lookup, and Terraform
-has no way to notice it changed — a laptop that moved networks, or a connection
-behind carrier-grade NAT that rotates its public address between sessions,
-silently invalidates it. If the two differ, update `terraform.tfvars` and
-re-apply: Terraform updates the `terraform-operator` firewall rule in place, the
-sleep's trigger notices the address changed and waits again, and the connection
-that follows succeeds.
+against `terraform_operator_ip` in `terraform.tfvars` **and** against what the
+server actually has (`az mysql flexible-server firewall-rule list -g buildnexus-rg
+-n buildnexus-mysql-2026 -o table`). `terraform_operator_ip` is a snapshot of one
+address on one network, not a live lookup, and Terraform has no way to notice it
+changed. The rule allows exactly that one IPv4 address; from any other address
+the connection never completes — a timeout, not a refusal, which is what
+`did not properly respond` means.
+
+#### Once `mysql_user` and `mysql_grant` exist in state, a plain re-apply cannot fix it
+
+Terraform refreshes every resource before it plans, and refreshing an existing
+`mysql_user` or `mysql_grant` opens a real MySQL connection. That needs the
+firewall to already admit this machine — but the rule that would admit it is part
+of the same plan. So the plan fails at the refresh, before it can propose the
+rule change, let alone apply it. It is a deadlock, and retrying does not break
+it.
+
+The earlier advice here — update `terraform.tfvars` and re-apply — only works
+while those two resources are being *created*, when there is nothing to refresh.
+Seen during SCRUM-47, when the rule held the previous session's address: the same
+configuration failed a plain `terraform plan` twice, then planned successfully with
+`-refresh=false`, showing only the rule update and the `time_sleep` replacement.
+
+To break it, update the rule through Terraform without refreshing, then go back
+to ordinary plans. This is the full configuration, not `-target`:
+
+```
+curl -4 -s https://api.ipify.org          # put this in terraform.tfvars
+cd infra/terraform
+terraform plan -refresh=false -out=opip.tfplan
+terraform apply opip.tfplan
+rm opip.tfplan                            # the plan file holds sensitive values
+terraform plan                            # an ordinary plan can refresh over MySQL again
+```
+
+Read the `-refresh=false` plan before applying it. It must show only
+`azurerm_mysql_flexible_server_firewall_rule.terraform_operator` (update) and
+`time_sleep.mysql_firewall_propagation` (replace). A plan built without refreshing
+does not look at live state, so anything else in it is unverified — stop there.
+Do not reach for `-target` instead: it leaves the operator-IP change unapplied and
+the next full plan fails the same way.
+
+Confirmed on 2026-09-19: after the rule was updated this way, a plain
+`terraform plan` reported *No changes* and a plain `terraform apply` finished with
+0 added, 0 changed, 0 destroyed, both refreshing `mysql_user` and `mysql_grant`
+over live connections.
+
+#### If the error names an IPv6 address such as `[64:ff9b::…]:3306`
+
+The address family is a red herring, but it explains the odd-looking error and
+one wrong turn worth avoiding.
+
+- **Where it comes from.** The server's address is the IPv4 `A` record,
+  `20.195.37.236`. On the phone hotspot (`Pixel_4230`) name resolution also returns
+  `64:ff9b::14c3:25ec`; `64:ff9b::/96` is the NAT64 prefix and its last 32 bits,
+  `14c3:25ec`, are that same IPv4 address, so it is a synthesized `AAAA` (the
+  network's DNS64 resolver is `2405:6b00:66:8bd1::9`). The machine also has global IPv6 there,
+  and Windows' prefix policy ranks `::/0` (40) above IPv4 (35), so the IPv6 path
+  is tried first. That is why the provider's error shows an IPv6 address.
+- **It is not the cause.** The IPv4 path to the server failed identically. The
+  network did not filter the port: TCP 3306 to a non-Azure test host
+  (`portquiz.net`) connected over both the IPv4 and the NAT64 path, and TCP 443
+  to Azure connected over IPv4 and over native IPv6 (NAT64 to Azure was not
+  tested). What differed was the address the server's firewall saw, which is the
+  most consistent explanation; the decisive check was that allowing the current
+  IPv4 address made the connections succeed. Since the rule held a single IPv4 address and the connections that then
+  succeeded can only have arrived from it, they must have come over the IPv4 path
+  — consistent with the dialer trying IPv6 first and falling back to IPv4 when
+  that attempt does not connect; the fallback itself was inferred, not observed.
+- **Why plain `curl -s` gave the wrong value.** `api.ipify.org` is IPv4-only, so
+  on this network curl takes the synthesized IPv6 address and leaves through the
+  NAT64 gateway, reporting the *gateway's* address. Measured on 2026-09-19:
+  `curl -4` gave `103.21.166.122` and later `103.21.165.15`, while the NAT64 path
+  gave `45.121.89.223` and, a short while later, `45.121.89.193`. The value first
+  put in `terraform.tfvars` this session came from plain `curl` and was
+  `45.121.89.223` — the same as the NAT64 reading, so it was almost certainly a
+  NAT64 address. Use `-4`.
+- **There is no IPv6 rule to write instead.** The Azure CLI documents the
+  firewall rule's start and end address as "Must be IPv4 format", and Microsoft's
+  docs say an IPv6 rule fails validation. Traffic that arrives by NAT64 reaches the
+  server as IPv4 from the gateway's pool, which is what an IPv4 rule matches — but
+  that pool address changed between two requests made a short while apart, so a
+  single-address rule cannot reliably cover it. The IPv4 path was steadier: six
+  samples over about a minute returned the same address.
+
+#### Expect the address to change between sessions on a phone hotspot
+
+The rule that worked on 2026-09-15 held `103.21.164.44`. On 2026-09-19 the same
+SSID gave `103.21.166.122` and, later that morning, `103.21.165.15` — all inside
+`103.21.164.x`–`103.21.166.x`, which looks like a carrier-grade NAT pool rotating
+the address. The Windows log recorded five Wi-Fi connection events between 10:20
+and 10:58 that morning; whether each one produced a new address was not tested. The machine also joins `SLIIT-STD`; that network's public
+address was not measured, so it is not known to be steadier.
+
+Treat `terraform_operator_ip` as something to re-measure at the start of every
+session on a hotspot, and do the `-refresh=false` step above whenever it differs
+from the rule. Widening the rule to cover the whole range would stop the churn,
+but it would admit hundreds of unrelated subscribers' addresses to the
+database's public endpoint with only a password and TLS in front of it. That was
+not done and is not recommended.
 
 `time_sleep.mysql_firewall_propagation` (in `main.tf`) exists for a *different*,
 still-possible failure — Azure's own documented lag between a firewall rule
@@ -641,35 +737,19 @@ its own it does not put the SDK on the running app — that is the code this
 story added, and the app is still running whatever it was last deployed with
 until the next step.
 
-During SCRUM-47 a plain `terraform plan` did not complete, for a reason
-unrelated to this change. It printed the full plan and then failed refreshing
-the existing `mysql_user.project_service`:
+During SCRUM-47 a plain `terraform plan` failed refreshing the existing
+`mysql_user.project_service` with a connection timeout to an IPv6 address
+(`[64:ff9b::14c3:25ec]:3306`), because the firewall rule still held the previous
+session's address. The full explanation and the fix are under "Known issue:
+`mysql_user` or `mysql_grant` times out connecting" above — set
+`terraform_operator_ip` from `curl -4 -s https://api.ipify.org`, and if the rule
+is out of date, update it with `terraform plan -refresh=false` / `terraform apply`
+first.
 
-```
-Error: failed to connect to MySQL: could not create new connection: could not
-connect to server: dial tcp [64:ff9b::14c3:25ec]:3306: connectex: A connection
-attempt failed because the connected party did not properly respond...
-```
-
-That is an IPv6 address in the `64:ff9b::/96` NAT64 range, which suggests the
-machine's resolver synthesized it from the server's IPv4 address, and the
-connection then timed out. It failed identically on two consecutive attempts, so
-it was not a one-off. The cause was not investigated further. Because the new monitoring
-resources do not use the `mysql` provider, the apply was scoped to them:
-
-```
-terraform plan -target=azurerm_log_analytics_workspace.main \
-               -target=azurerm_application_insights.main \
-               -target=azurerm_linux_web_app.user_service \
-               -out=tfplan
-terraform apply tfplan
-rm tfplan          # the plan file holds sensitive values
-```
-
-That is a workaround, not the intended procedure. It deliberately left
-unapplied the pending `terraform_operator_ip` change (the firewall rule and
-`time_sleep.mysql_firewall_propagation`), so the next full apply still has that
-drift to reconcile — and will need MySQL to be reachable when it runs.
+The monitoring resources were first applied with `-target` while that was still
+undiagnosed. That is not the procedure: it left the operator-IP change
+unapplied, which was then reconciled with a full, un-targeted apply as described
+there.
 
 **2. Redeploy the User Service** with this branch's code, so the running
 process actually contains `UseAzureMonitor()` — see "Forcing a redeploy
@@ -784,7 +864,7 @@ Terraform manages firewall rules as individual resources, so an extra one added
 here is not reverted by a later apply.
 
 ```
-MYIP=$(curl -s https://api.ipify.org)
+MYIP=$(curl -4 -s https://api.ipify.org)   # -4: see "Known issue: mysql_user or mysql_grant times out connecting"
 
 az mysql flexible-server firewall-rule create \
   --resource-group buildnexus-rg --name buildnexus-mysql-2026 \
