@@ -47,7 +47,7 @@ variable "mysql_administrator_password" {
 }
 
 variable "terraform_operator_ip" {
-  description = "Public IPv4 address of the machine running Terraform. It is let through the MySQL firewall so the mysql provider can create — and on destroy, drop — each service's scoped database user. No default: it is one machine's address on one network, so it lives in that operator's git-ignored terraform.tfvars rather than in the repository. `curl -s https://api.ipify.org` prints it."
+  description = "Public IPv4 address of the machine running Terraform. It is let through the MySQL firewall so the mysql provider can create — and on destroy, drop — each service's scoped database user. No default: it is one machine's address on one network, so it lives in that operator's git-ignored terraform.tfvars rather than in the repository. `curl -4 -s https://api.ipify.org` prints it — keep the -4, since on a DNS64/NAT64 network plain `curl -s` can report the NAT64 gateway's address instead. See infra/RUNBOOK.md, 'Known issue: mysql_user or mysql_grant times out connecting'."
   type        = string
 
   validation {
@@ -55,7 +55,7 @@ variable "terraform_operator_ip" {
     # range, and not IPv6. Checked here so a typo fails at plan time rather than
     # as a mysql provider connection timeout minutes into an apply.
     condition     = can(regex("^[0-9]{1,3}([.][0-9]{1,3}){3}$", var.terraform_operator_ip)) && can(cidrhost("${var.terraform_operator_ip}/32", 0))
-    error_message = "terraform_operator_ip must be a single IPv4 address, such as the one `curl -s https://api.ipify.org` prints."
+    error_message = "terraform_operator_ip must be a single IPv4 address, such as the one `curl -4 -s https://api.ipify.org` prints."
   }
 }
 

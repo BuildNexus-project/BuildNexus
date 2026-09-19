@@ -14,18 +14,27 @@ local run.
 |---|---|---|
 | Resource group | `buildnexus-rg` | The whole application stack. Destroying it destroys everything below. |
 | App Service plan | `buildnexus-asp` | Linux, B1. Shared by every service. |
-| MySQL Flexible Server | `buildnexus-mysql-2026` | Shared. One *database* per service on it, each with its own scoped MySQL user rather than the administrator — Project Service onward; User Service still connects as the administrator (SCRUM-52 predates the convention). |
+| MySQL Flexible Server | `buildnexus-mysql-2026` | Shared. One *database* per service on it, each with its own scoped MySQL user rather than the administrator — Project Service onward; User Service still connects as the administrator (SCRUM-52 predates the convention). `version = "8.0.21"` in Terraform is the family Azure provisions from, not what runs: the server reported `8.0.46-azure` on 2026-09-19, because Azure applies minor updates itself. Terraform shows no drift for this. |
 | User Service | `buildnexus-user-service-2026` | <https://buildnexus-user-service-2026.azurewebsites.net> |
 | User Service database | `buildnexus_user_db` | On the shared server above. Connects as the server administrator. |
 | Project Service | `buildnexus-project-service-2026` | <https://buildnexus-project-service-2026.azurewebsites.net> |
 | Project Service database | `buildnexus_project_db` | On the shared server above. Connects as its own `project_service` MySQL user, scoped to this one database. |
 | Event Hubs namespace | `buildnexus-events-2026` | Standard tier. The Kafka-compatible endpoint on `9093`, shared by every publishing service. |
 | Event Hub `project-events` | `project-events` | Inside the namespace above — the Kafka topic Project Service publishes to. |
+| Log Analytics workspace | `buildnexus-logs` | Backs the Application Insights resource below. Capped at `daily_quota_gb = 1`. |
+| Application Insights | `buildnexus-appinsights` | Workspace-based. Wired into the User Service only, as SCRUM-47's proof of concept — see "Application settings" below. |
 
 Event Hubs Standard bills per throughput unit per hour whether or not anything is
 published to it. It is the first resource in this stack that charges while
 completely idle, which is one more reason to actually run `terraform destroy`
 between sessions rather than leaving the stack up "just in case".
+
+The Log Analytics workspace and Application Insights are the opposite: both are
+pure consumption resources, billed only on data ingested, with 5 GB free every
+month. A resource that receives zero telemetry costs zero — there is no hourly
+charge to avoid by destroying these two between sessions, though `terraform
+destroy` still takes them with it along with everything else in the resource
+group.
 
 Terraform's own state lives somewhere else entirely — resource group
 `buildnexus-tfstate-rg`, storage account `buildnexustfstate2026`, container
@@ -180,12 +189,16 @@ notice when it goes stale. Get the current one and put it in
 `terraform.tfvars` before every apply, not just the first:
 
 ```
-curl -s https://api.ipify.org
+curl -4 -s https://api.ipify.org
 ```
 
-If this differs from what is already in `terraform.tfvars`, an apply that needs
-to touch `mysql_user` or `mysql_grant` times out connecting — see the known
-issue below before assuming anything else is wrong.
+The `-4` matters. Plain `curl -s` can report a different address than the one
+the IPv4 path uses — see the known issue below.
+
+If this differs from what is already in `terraform.tfvars`, a plan or apply that
+has to reach `mysql_user` or `mysql_grant` times out connecting, and once those
+exist in state a plain re-apply cannot fix it — see the known issue below
+before assuming anything else is wrong.
 
 ### Apply
 
@@ -296,7 +309,16 @@ terraform untaint azurerm_linux_web_app.user_service
 ```
 
 **4. The state is locked with no owner.** An interrupted command can leave the
-blob lease held but the lock metadata empty:
+blob lease held but the lock metadata empty. During SCRUM-47 the first
+`terraform plan` failed with `HTTP response was nil; connection may have been
+reset` while acquiring the lock, and every attempt after it hit this error
+until the lease was broken — a retry a few minutes later did not clear it. It
+recurred later the same day from the other end: a `terraform plan` printed
+`Error releasing the state lock` and advised `force-unlock`, and the next attempt
+found the blob leased (`az storage blob show` reported `leaseState: leased`,
+`leaseDuration: infinite`, empty metadata) with no `terraform.exe` running. A
+failed release leaves exactly the same state as a failed acquire, so check for a
+running Terraform first and then break the lease:
 
 ```
 Error: Error acquiring the state lock
@@ -328,17 +350,121 @@ taken effect yet. That has been the wrong diagnosis every time it has actually
 happened. Check the IP first:
 
 ```
-curl -s https://api.ipify.org
+curl -4 -s https://api.ipify.org
 ```
 
-against `terraform_operator_ip` in `terraform.tfvars`. `terraform_operator_ip`
-is a snapshot of one address on one network, not a live lookup, and Terraform
-has no way to notice it changed — a laptop that moved networks, or a connection
-behind carrier-grade NAT that rotates its public address between sessions,
-silently invalidates it. If the two differ, update `terraform.tfvars` and
-re-apply: Terraform updates the `terraform-operator` firewall rule in place, the
-sleep's trigger notices the address changed and waits again, and the connection
-that follows succeeds.
+against `terraform_operator_ip` in `terraform.tfvars` **and** against what the
+server actually has (`az mysql flexible-server firewall-rule list -g buildnexus-rg
+-n buildnexus-mysql-2026 -o table`). `terraform_operator_ip` is a snapshot of one
+address on one network, not a live lookup, and Terraform has no way to notice it
+changed. The rule allows exactly that one IPv4 address; from any other address
+the connection never completes — a timeout, not a refusal, which is what
+`did not properly respond` means.
+
+#### Once `mysql_user` and `mysql_grant` exist in state, a plain re-apply cannot fix it
+
+Terraform refreshes every resource before it plans, and refreshing an existing
+`mysql_user` or `mysql_grant` opens a real MySQL connection. That needs the
+firewall to already admit this machine — but the rule that would admit it is part
+of the same plan. So the plan fails at the refresh, before it can propose the
+rule change, let alone apply it. It is a deadlock, and retrying does not break
+it.
+
+The earlier advice here — update `terraform.tfvars` and re-apply — only works
+while those two resources are being *created*, when there is nothing to refresh.
+Seen during SCRUM-47, when the rule held the previous session's address: the same
+configuration failed a plain `terraform plan` twice, then planned successfully with
+`-refresh=false`, showing only the rule update and the `time_sleep` replacement.
+
+To break it, update the rule through Terraform without refreshing, then go back
+to ordinary plans. This is the full configuration, not `-target`:
+
+```
+curl -4 -s https://api.ipify.org          # put this in terraform.tfvars
+cd infra/terraform
+terraform plan -refresh=false -out=opip.tfplan
+terraform apply opip.tfplan
+rm opip.tfplan                            # the plan file holds sensitive values
+terraform plan                            # an ordinary plan can refresh over MySQL again
+```
+
+Read the `-refresh=false` plan before applying it. It must show only
+`azurerm_mysql_flexible_server_firewall_rule.terraform_operator` (update) and
+`time_sleep.mysql_firewall_propagation` (replace). A plan built without refreshing
+does not look at live state, so anything else in it is unverified — stop there.
+Do not reach for `-target` instead: it leaves the operator-IP change unapplied and
+the next full plan fails the same way.
+
+Confirmed on 2026-09-19: after the rule was updated this way, a plain
+`terraform plan` reported *No changes* and a plain `terraform apply` finished with
+0 added, 0 changed, 0 destroyed, both refreshing `mysql_user` and `mysql_grant`
+over live connections.
+
+It failed again that evening, after the address had moved to `45.121.88.242`,
+and the same steps fixed it: a plain plan failed with the identical MySQL timeout,
+the `-refresh=false` plan showed only the two expected changes (the firewall rule
+and the `time_sleep` replacement), it applied as 1 added, 1 changed, 1 destroyed,
+and a plain `terraform plan -detailed-exitcode` then exited `0` — *No changes* —
+refreshing `mysql_user` and `mysql_grant`.
+
+#### If the error names an IPv6 address such as `[64:ff9b::…]:3306`
+
+The address family is a red herring, but it explains the odd-looking error and
+one wrong turn worth avoiding.
+
+- **Where it comes from.** The server's address is the IPv4 `A` record,
+  `20.195.37.236`. On the phone hotspot (`Pixel_4230`) name resolution also returns
+  `64:ff9b::14c3:25ec`; `64:ff9b::/96` is the NAT64 prefix and its last 32 bits,
+  `14c3:25ec`, are that same IPv4 address, so it is a synthesized `AAAA` (the
+  network's DNS64 resolver is `2405:6b00:66:8bd1::9`). The machine also has global IPv6 there,
+  and Windows' prefix policy ranks `::/0` (40) above IPv4 (35), so the IPv6 path
+  is tried first. That is why the provider's error shows an IPv6 address.
+- **It is not the cause.** The IPv4 path to the server failed identically. The
+  network did not filter the port: TCP 3306 to a non-Azure test host
+  (`portquiz.net`) connected over both the IPv4 and the NAT64 path, and TCP 443
+  to Azure connected over IPv4 and over native IPv6 (NAT64 to Azure was not
+  tested). What differed was the address the server's firewall saw, which is the
+  most consistent explanation; the decisive check was that allowing the current
+  IPv4 address made the connections succeed. Since the rule held a single IPv4 address and the connections that then
+  succeeded can only have arrived from it, they must have come over the IPv4 path
+  — consistent with the dialer trying IPv6 first and falling back to IPv4 when
+  that attempt does not connect; the fallback itself was inferred, not observed.
+- **Why plain `curl -s` gave the wrong value.** `api.ipify.org` is IPv4-only, so
+  on this network curl takes the synthesized IPv6 address and leaves through the
+  NAT64 gateway, reporting the *gateway's* address. Measured on 2026-09-19:
+  `curl -4` gave `103.21.166.122` and later `103.21.165.15`, while the NAT64 path
+  gave `45.121.89.223` and, a short while later, `45.121.89.193`. The value first
+  put in `terraform.tfvars` this session came from plain `curl` and was
+  `45.121.89.223` — the same as the NAT64 reading, so it was almost certainly a
+  NAT64 address. Use `-4`.
+- **There is no IPv6 rule to write instead.** The Azure CLI documents the
+  firewall rule's start and end address as "Must be IPv4 format", and Microsoft's
+  docs say an IPv6 rule fails validation. Traffic that arrives by NAT64 reaches the
+  server as IPv4 from the gateway's pool, which is what an IPv4 rule matches — but
+  that pool address changed between two requests made a short while apart, so a
+  single-address rule cannot reliably cover it. The IPv4 path was steadier: six
+  samples over about a minute returned the same address.
+
+#### Expect the address to change between sessions on a phone hotspot
+
+The rule that worked on 2026-09-15 held `103.21.164.44`. On 2026-09-19 the same
+SSID gave four different IPv4-path addresses in one day: `103.21.166.122`, then
+`103.21.165.15`, then `103.21.166.49`, then, that evening, `45.121.88.242`. The
+first three share `103.21.164.x`–`103.21.166.x`, but the last is in a different
+range, and `45.121.88.x`/`45.121.89.x` was where the NAT64 path had appeared
+earlier — so it is not one tidy pool, and an address's range cannot be relied on
+to tell you which path it came through. The Windows log recorded five Wi-Fi
+connection events between 10:20 and 10:58 that morning; whether each one produced
+a new address was not tested. The machine also joins `SLIIT-STD`; that network's
+public address was not measured, so it is not known to be steadier.
+
+Treat `terraform_operator_ip` as something to re-measure at the start of every
+session on a hotspot, and do the `-refresh=false` step above whenever it differs
+from the rule. Widening the rule to cover the churn is not workable: no single
+range spans the addresses seen, and any range wide enough to try would admit
+hundreds of unrelated subscribers' addresses to the database's public endpoint
+with only a password and TLS in front of it. That was not done and is not
+recommended.
 
 `time_sleep.mysql_firewall_propagation` (in `main.tf`) exists for a *different*,
 still-possible failure — Azure's own documented lag between a firewall rule
@@ -581,6 +707,156 @@ startup. Confirm the whole path by creating or approving a project and tailing
 the log for either a `Published <EventType> <eventId> ... to project-events`
 line or a logged Kafka exception in its place.
 
+## Health checks across services (SCRUM-47)
+
+SCRUM-47's first acceptance criterion is that each service exposes a
+health-check endpoint. "Each service" here means every service that currently
+exists as running code — Azure for the two already deployed there, local
+`docker compose` for the two that exist only there. Verified directly rather
+than read off the source:
+
+| Service | `/health` | Verified |
+|---|---|---|
+| User Service | Yes | Azure — already required by its own App Service health check (`terraform/user-service.tf`), and polled by `deploy-user-service` in CI on every deploy. Also confirmed live during this story, after the App Service was started and redeployed: `GET /health` → `200`, and 17 such requests are recorded in Application Insights (9 sent by hand; the other 8 are attributed to App Service's own health check). |
+| Project Service | Yes | Azure — `terraform/project-service.tf` and `deploy-project-service`. Found stopped during this story and started again before the sprint merge: `GET /health` → `200 {"service":"project-service","status":"healthy"}`. Also confirmed natively against `project-db` from `docker compose` on `http://localhost:5102/health`. |
+| Design Service | Yes | Not deployed to Azure yet. Run natively (`dotnet run`) against `design-db` from `docker compose`: `curl http://localhost:5103/health` → `200 {"service":"design-service","status":"healthy"}`. |
+| Construction Service | Yes | Not deployed to Azure yet. Run natively against `construction-db` from `docker compose`: `curl http://localhost:5104/health` → `200 {"service":"construction-service","status":"healthy"}`. |
+
+The three native checks were repeated on the final commit of the story. Only the
+databases came from `docker compose`; the services themselves were not run as
+compose containers, because building those images failed on a network pull during
+this story. So this verifies the endpoint in each service's code, not its
+Dockerfile.
+| Payment Service | Out of scope | `services/payment-service/` has no ASP.NET Core project — no `.csproj`, no `Program.cs`, not even an entry in `docker-compose.yml` — only a placeholder `README.md`. There is no host to add an endpoint to yet; the API Gateway's `payment` cluster route answers `502` until the story that builds this service lands. Revisit this row then. |
+
+## Verifying the Application Insights proof of concept (SCRUM-47)
+
+Application Insights only shows data once three separate things are all true:
+the resource exists (`terraform apply` has run since `main.tf` added it), the
+User Service is actually running, and it has been redeployed with the code
+that reads `APPLICATIONINSIGHTS_CONNECTION_STRING`. None of the three implies
+the others.
+
+**Check the App Service is actually running first.** Both App Services were
+found stopped when SCRUM-47 started: `curl` on `/health` answered `403 - This
+web app is stopped`, which is the platform's own page for a stopped app, not a
+connection failure or a missing endpoint. A stopped app serves nothing, so it
+produces no telemetry. Start it:
+
+```
+az webapp start --resource-group buildnexus-rg --name buildnexus-user-service-2026
+```
+
+**1. Apply.** From a machine with `az login` and `ARM_ACCESS_KEY` set (see
+"One-time setup per machine" above):
+
+```
+cd infra/terraform
+terraform apply
+```
+
+This creates `buildnexus-logs` and `buildnexus-appinsights` and adds
+`APPLICATIONINSIGHTS_CONNECTION_STRING` to the User Service's app settings. On
+its own it does not put the SDK on the running app — that is the code this
+story added, and the app is still running whatever it was last deployed with
+until the next step.
+
+During SCRUM-47 a plain `terraform plan` failed refreshing the existing
+`mysql_user.project_service` with a connection timeout to an IPv6 address
+(`[64:ff9b::14c3:25ec]:3306`), because the firewall rule still held the previous
+session's address. The full explanation and the fix are under "Known issue:
+`mysql_user` or `mysql_grant` times out connecting" above — set
+`terraform_operator_ip` from `curl -4 -s https://api.ipify.org`, and if the rule
+is out of date, update it with `terraform plan -refresh=false` / `terraform apply`
+first.
+
+The monitoring resources were first applied with `-target` while that was still
+undiagnosed. That is not the procedure: it left the operator-IP change
+unapplied, which was then reconciled with a full, un-targeted apply as described
+there.
+
+**2. Redeploy the User Service** with this branch's code, so the running
+process actually contains `UseAzureMonitor()` — see "Forcing a redeploy
+without a code change" above for the `dotnet publish` / `zip` /
+`az webapp deploy` sequence.
+
+**3. Generate real traffic.** A mix of successful and failing requests is
+enough for a proof of concept. Requests that need no account avoid writing test
+data into the shared database:
+
+```
+curl https://buildnexus-user-service-2026.azurewebsites.net/health
+curl -X POST https://buildnexus-user-service-2026.azurewebsites.net/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"someone@example.invalid","password":"wrong-password"}'
+```
+
+The first gives `200`, the second `401`, and posting `{}` to the login route
+gives `400`. Logging in with a real account's password should add a `200` to
+that route; that was not tried here.
+
+**4. Read it back.** In the Portal: the Application Insights resource →
+Investigate → Failures / Performance, or Transaction search for individual
+requests.
+
+From the CLI, `az rest` needs no extension. `az monitor log-analytics query`
+does: in a non-interactive shell it stops at an install prompt and fails with
+`EOFError`, which reads as "no data" if a script swallows the error.
+(`az monitor app-insights query` was not tried; it is likely to behave the same
+way, since that command group is also an extension.) Workspace-based
+Application Insights stores requests in the workspace's `AppRequests` table:
+
+```
+WS=$(az monitor log-analytics workspace show --resource-group buildnexus-rg \
+       --workspace-name buildnexus-logs --query customerId -o tsv)
+
+printf '{"query":"%s"}' 'AppRequests | where TimeGenerated > ago(1h) | summarize Requests=count() by Name, ResultCode, Success | order by Requests desc' > q.json
+
+az rest --method post --url "https://api.loganalytics.io/v1/workspaces/$WS/query" \
+  --resource "https://api.loganalytics.io" --body @q.json --query "tables[0].rows" -o json
+```
+
+(`workspace show` itself does not need the extension.) Telemetry usually takes
+one to two minutes to appear after the request that generated it — an empty
+result immediately after step 3 is not yet a failure.
+
+### What the proof of concept showed
+
+Recorded from the workspace after the steps above, for the User Service.
+`AppRequests` for the period, by route and status:
+
+| Route | Status | Requests | Source |
+|---|---|---|---|
+| `GET /health` | `200` | 17 | 9 sent by hand; the other 8 were not, and are attributed to App Service's health check (`health_check_path`) by subtraction |
+| `POST api/auth/login` | `401` | 6 | wrong credentials, sent by hand |
+| `POST api/auth/login` | `400` | 3 | malformed body, sent by hand |
+| `GET /api/does-not-exist` | `401` | 3 | sent by hand — see below |
+| `GET /` | `401` | 2 | not sent by hand; presumably the platform's warm-up probe |
+| `GET /robots933456.txt` | `401` | 1 | not sent by hand; presumably the platform's warm-up probe |
+
+Things worth knowing when reading it:
+
+- **The `401` and `400` responses were recorded with `Success = false`**, so
+  they appear as failed requests, not only 5xx would. Only these two codes were
+  observed; nothing was sent that would return a 404 or a 5xx.
+- **An unknown route answered `401`, not `404`.** That is consistent with the
+  service's deny-by-default `FallbackPolicy` in `Program.cs`; the mechanism was
+  not investigated further.
+- **`GET /` `401` keeps accruing, and each one counts as a failed request.** A
+  later count found 55 of them over roughly four and a half hours — about one
+  every five minutes — alongside 287 `GET /health` `200`s. That cadence is
+  consistent with App Service's Always On ping (`always_on = true`) hitting a
+  route the deny-by-default policy rejects; it was not confirmed as the source.
+  Either way, the Failures view carries a steady trickle of platform noise next
+  to any real errors, so filter on `Name` when reading it.
+- **No `AppDependencies` or `AppExceptions` rows were produced.** The SDK
+  auto-instruments ASP.NET Core and outbound `HttpClient`, but not
+  `MySqlConnector`, so the database calls under a request are not traced.
+  Getting them would need explicit instrumentation — a further application
+  change that SCRUM-47's acceptance criteria do not ask for, and not made here.
+- `AppTraces` (existing `ILogger` output), `AppMetrics` and
+  `AppPerformanceCounters` also received rows, so logs are centralized too.
+
 ## Creating the first Admin
 
 Not automated, and deliberately a manual step. Required after every
@@ -619,7 +895,7 @@ Terraform manages firewall rules as individual resources, so an extra one added
 here is not reverted by a later apply.
 
 ```
-MYIP=$(curl -s https://api.ipify.org)
+MYIP=$(curl -4 -s https://api.ipify.org)   # -4: see "Known issue: mysql_user or mysql_grant times out connecting"
 
 az mysql flexible-server firewall-rule create \
   --resource-group buildnexus-rg --name buildnexus-mysql-2026 \
@@ -674,6 +950,7 @@ next `terraform apply`, silently, which is a bad afternoon.
 | `InternalService__ApiKey` | `var.internal_service_api_key`. Sensitive, no default. |
 | `PasswordReset__ResetUrlTemplate` | Built from `var.frontend_origin`. |
 | `ASPNETCORE_ENVIRONMENT` | `Production`. Turns off Swagger and `AdminSeeder`. |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | `azurerm_application_insights.main.connection_string` (SCRUM-47). Read automatically by `UseAzureMonitor()` in `Program.cs` under this exact name — no custom configuration key. Every other environment leaves it unset, which is what tells `Program.cs` to skip registering Azure Monitor there instead of throwing at startup with nothing to send telemetry to. |
 
 `Email__SmtpHost` is deliberately unset. Blank, the service resolves
 `IEmailSender` to `LoggingEmailSender` and password reset emails go to the log

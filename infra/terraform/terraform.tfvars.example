@@ -25,9 +25,16 @@ mysql_administrator_password = "REPLACE-ME"
 # Public IPv4 address of the machine you run Terraform from. The mysql provider
 # connects to the server from here to create each service's database user, so
 # the server's firewall has to let this address through. It changes with the
-# network you are on — check it again before an apply from somewhere new:
+# network you are on — and on a phone hotspot, between sessions — so check it
+# again before every apply:
 #
-#   curl -s https://api.ipify.org
+#   curl -4 -s https://api.ipify.org
+#
+# Keep the -4. On a network with DNS64/NAT64, plain `curl -s` can take an IPv6
+# path and report the NAT64 gateway's address rather than the machine's own IPv4
+# address. If the firewall rule is already out of date, a plain terraform plan
+# cannot fix it — see "Known issue: mysql_user or mysql_grant times out
+# connecting" in infra/RUNBOOK.md.
 #
 terraform_operator_ip = "REPLACE-ME"
 

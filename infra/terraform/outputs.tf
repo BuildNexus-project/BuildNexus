@@ -38,3 +38,8 @@ output "eventhub_kafka_bootstrap_servers" {
   description = "Kafka bootstrap address of the shared Event Hubs namespace. Not a secret; the connection string that authenticates against it is, and is not output."
   value       = local.eventhub_kafka_bootstrap_servers
 }
+
+output "application_insights_name" {
+  description = "Application Insights resource name, as the `az monitor app-insights` commands in infra/RUNBOOK.md want it. Not a secret; the connection string that authenticates telemetry ingestion is, and is not output."
+  value       = azurerm_application_insights.main.name
+}

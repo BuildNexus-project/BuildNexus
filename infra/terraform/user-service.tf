@@ -120,6 +120,14 @@ resource "azurerm_linux_web_app" "user_service" {
     # log stream instead of being sent. There is no mail relay in this stack and
     # a deployed environment mailing real addresses is not something to switch on
     # by accident.
+
+    # SCRUM-47. Read automatically by UseAzureMonitor() in Program.cs under this
+    # exact, well-known name — no custom configuration key needed. Left unset in
+    # every other environment (local dotnet run, docker compose, the
+    # WebApplicationFactory-based test host), which is what tells Program.cs to
+    # skip registering Azure Monitor there instead of throwing at startup with
+    # no connection string to send telemetry to.
+    APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.main.connection_string
   }
 
 }
