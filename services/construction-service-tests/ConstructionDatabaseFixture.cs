@@ -43,8 +43,31 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
 
     public MilestoneSetupRepository Repository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.MilestoneRepository"/> over the same
+    /// development database. Added for US-12: the milestone tests need to
+    /// exercise the ADO.NET SQL — the gate check against
+    /// <c>milestone_setups</c>, the duplicate-key translation, the aggregate
+    /// query — which only a real engine can answer.
+    /// </summary>
+    public MilestoneRepository MilestoneRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
+
+    /// <summary>
+    /// Plants a <c>milestone_setups</c> row for a project — the local marker
+    /// the <c>DesignApproved</c> consumer would leave (US-23), and the row
+    /// <see cref="Data.MilestoneRepository.CreateAsync"/> and
+    /// <see cref="Data.MilestoneRepository.GetProgressForProjectAsync"/>
+    /// check to answer "has the design been approved?".
+    /// </summary>
+    public Task PlantApprovedDesignAsync(Guid projectId) =>
+        Repository.CreatePlaceholderIfAbsentAsync(
+            projectId,
+            sourceDocumentId: Guid.NewGuid(),
+            sourceEventId: Guid.NewGuid(),
+            approvedAtUtc: DateTime.UtcNow);
 
     public Task InitializeAsync()
     {
@@ -60,25 +83,39 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
             })
             .Build();
 
-        Repository = new MilestoneSetupRepository(new MySqlConnectionFactory(configuration));
+        var connectionFactory = new MySqlConnectionFactory(configuration);
+        Repository = new MilestoneSetupRepository(connectionFactory);
+        MilestoneRepository = new MilestoneRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Removes the placeholders this run created, leaving the development
-    /// database as it was found.
+    /// Removes the placeholders and milestones this run created, leaving the
+    /// development database as it was found.
     /// </summary>
     public async Task DisposeAsync()
     {
         await using var connection = new MySqlConnection(ConnectionString);
         await connection.OpenAsync();
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM milestone_setups WHERE project_id LIKE @prefix;";
-        command.Parameters.AddWithValue("@prefix", RunId + "-%");
+        // Both tables use project_id from the same run-scoped namespace, so a
+        // LIKE on the run prefix reaches every row this run created. No FK
+        // between them, so the order does not matter — construction_milestones
+        // first is a preference for tidiness, not a constraint.
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "DELETE FROM construction_milestones WHERE project_id LIKE @prefix;";
+            command.Parameters.AddWithValue("@prefix", RunId + "-%");
+            await command.ExecuteNonQueryAsync();
+        }
 
-        await command.ExecuteNonQueryAsync();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "DELETE FROM milestone_setups WHERE project_id LIKE @prefix;";
+            command.Parameters.AddWithValue("@prefix", RunId + "-%");
+            await command.ExecuteNonQueryAsync();
+        }
 
         GC.SuppressFinalize(this);
     }
