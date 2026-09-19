@@ -62,7 +62,22 @@ public class EndpointRoleDeclarationTests
         // DesignApproved consumer has done. An Admin checks a run without
         // needing a role on any of the projects involved; the clients and
         // architects on those projects do not see this list.
-        Assert.Equal([PlatformRoles.Admin], RolesFor("List"));
+        Assert.Equal([PlatformRoles.Admin], RolesForActionOn<Controllers.MilestoneSetupsController>("List"));
+    }
+
+    [Fact]
+    public void Managing_construction_milestones_is_the_project_managers_alone()
+    {
+        // US-12: the story is framed around the Project Manager — no other
+        // role creates, moves, lists or reads these rows in this story.
+        // Broader read access (a Client watching their project's progress,
+        // an Architect seeing the plan) is a later-story concern; the class
+        // -level [Authorize] on MilestonesController is the single place to
+        // widen it when that happens.
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("Create"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("List"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("UpdateStatus"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("GetProgress"));
     }
 
     private static IEnumerable<MethodInfo> Endpoints() =>
@@ -85,8 +100,17 @@ public class EndpointRoleDeclarationTests
         action.GetCustomAttribute<AllowAnonymousAttribute>() is not null
         || action.DeclaringType!.GetCustomAttribute<AllowAnonymousAttribute>() is not null;
 
-    private static IReadOnlyList<string> RolesFor(string actionName) =>
-        DeclaredRoles(Endpoints().Single(action => action.Name == actionName));
+    /// <summary>
+    /// Roles declared on one action of one controller. Disambiguates action
+    /// names that appear on more than one controller — e.g. <c>List</c> lives
+    /// on both <c>MilestoneSetupsController</c> and <c>MilestonesController</c>.
+    /// </summary>
+    private static IReadOnlyList<string> RolesForActionOn<TController>(string actionName)
+        where TController : ControllerBase =>
+        DeclaredRoles(typeof(TController)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Single(method => method.Name == actionName
+                              && method.GetCustomAttributes<HttpMethodAttribute>().Any()));
 
     private static IReadOnlyList<string> Split(string roles) =>
         roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
