@@ -935,3 +935,222 @@ describe('ProjectDetailPage cancellation', () => {
     expect(within(rows[2]).getByText('Client withdrew funding')).toBeInTheDocument()
   })
 })
+
+describe('ProjectDetailPage — Milestones section (US-12)', () => {
+  const asProjectManager = { role: 'ProjectManager' as Role, userId: PROJECT_MANAGER_ID }
+
+  const MILESTONE_ID = 'a1000000-0000-4000-8000-000000000001'
+
+  /** One milestone as the Construction Service returns it. */
+  function milestone(overrides: Record<string, unknown> = {}) {
+    return {
+      id: MILESTONE_ID,
+      projectId: PROJECT_ID,
+      name: 'Foundation poured',
+      status: 'NotStarted',
+      createdAtUtc: '2026-08-15T09:00:00',
+      updatedAtUtc: '2026-08-15T09:00:00',
+      ...overrides,
+    }
+  }
+
+  /** A ProjectProgress rollup as the Construction Service returns it. */
+  function progressRow(overrides: Record<string, unknown> = {}) {
+    return {
+      projectId: PROJECT_ID,
+      totalMilestones: 3,
+      completedMilestones: 1,
+      progressPercent: 33.33,
+      ...overrides,
+    }
+  }
+
+  /** A DesignApproved project — the earliest status at which milestones open. */
+  function designApprovedProject(overrides: Record<string, unknown> = {}) {
+    return projectDetail({
+      status: 'DesignApproved',
+      allowedNextStatuses: ['Construction'],
+      ...overrides,
+    })
+  }
+
+  /** The Milestones panel, so a query cannot stray into another section. */
+  function milestonesPanel(): HTMLElement {
+    return screen.getByRole('heading', { name: 'Milestones' }).closest('section') as HTMLElement
+  }
+
+  it('is not rendered for a Client, even one who owns the project', async () => {
+    // The endpoints behind the section are Project-Manager only; the service
+    // would refuse a Client anyway. Not offering the section beats offering
+    // one the caller cannot use.
+    renderPage(asOwningClient, apiResponse(200, designApprovedProject()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByRole('heading', { name: 'Milestones' })).not.toBeInTheDocument()
+  })
+
+  it('shows a friendly gate message for a Project Manager viewing a Designing project', async () => {
+    // AC-1: milestones open once the design has been approved. A Designing
+    // project's milestone_setups row does not exist yet, so the service
+    // would 404; the page tells the PM when the section will open instead.
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Designing' })),
+    )
+
+    await screen.findByRole('heading', { name: 'Milestones' })
+
+    expect(
+      within(milestonesPanel()).getByText(
+        "Milestones open once this project's design has been approved.",
+      ),
+    ).toBeInTheDocument()
+
+    // And no milestone endpoints were called — the gate is applied before
+    // the fetches.
+    expect(requests.some((request) => request.path.includes('/api/construction/'))).toBe(false)
+  })
+
+  it('renders the progress rollup and the milestones table for a DesignApproved project', async () => {
+    renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      apiResponse(200, [milestone({ status: 'Completed' }), milestone({
+        id: 'a1000000-0000-4000-8000-000000000002',
+        name: 'Roof on',
+        status: 'InProgress',
+      })]),
+      apiResponse(200, progressRow({ totalMilestones: 2, completedMilestones: 1, progressPercent: 50.00 })),
+    )
+
+    // The percentage is what AC-3 promises — rendered with two decimals so
+    // 50.00 is unmistakably one-of-two, not one-of-three rounded.
+    expect(await within(milestonesPanel()).findByText('50.00%')).toBeInTheDocument()
+    expect(within(milestonesPanel()).getByText('1 of 2 completed')).toBeInTheDocument()
+
+    // Both milestone names are on the page.
+    expect(within(milestonesPanel()).getByText('Foundation poured')).toBeInTheDocument()
+    expect(within(milestonesPanel()).getByText('Roof on')).toBeInTheDocument()
+  })
+
+  it('changing a milestone status PATCHes the service and refreshes the progress rollup', async () => {
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      apiResponse(200, [milestone()]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+      // PATCH reply — the milestone moved to InProgress.
+      apiResponse(200, milestone({ status: 'InProgress', updatedAtUtc: '2026-08-16T09:00:00' })),
+      // AC-3: after the change the page re-reads /progress, which now
+      // reflects the move. The percentage is still 0% because 'InProgress'
+      // does not count toward completion — only 'Completed' does — and this
+      // pins that invariant end-to-end.
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+    )
+
+    await within(milestonesPanel()).findByText('0.00%')
+
+    await choose('Change status of Foundation poured', 'In Progress')
+
+    // The PATCH went out with the wire enum value.
+    await waitFor(() => {
+      const patch = requests.find(
+        (request) => request.path === `/api/construction/milestones/${MILESTONE_ID}/status`,
+      )
+      expect(patch?.method).toBe('PATCH')
+      expect(patch?.body).toEqual({ status: 'InProgress' })
+    })
+
+    // And the progress endpoint was re-read to keep AC-3 honest — the count
+    // of GETs against /progress is now two.
+    const progressGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/progress`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    expect(progressGets).toHaveLength(2)
+  })
+
+  it('adding a milestone POSTs, appends the row locally, and refreshes progress', async () => {
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      apiResponse(200, []),
+      apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
+      // POST reply: the created milestone.
+      apiResponse(201, milestone({ name: 'Foundation poured' })),
+      // The refreshed progress — one milestone defined, zero completed.
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+    )
+
+    await within(milestonesPanel()).findByText(
+      'No milestones defined yet. Add the first one below.',
+    )
+
+    fireEvent.change(screen.getByLabelText('Add a milestone'), {
+      target: { value: '  Foundation poured  ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    // The name reached the service trimmed — the schema's .trim() ran before
+    // react-hook-form handed the values to the submit handler.
+    await waitFor(() => {
+      const post = requests.find(
+        (request) => request.path === `/api/construction/projects/${PROJECT_ID}/milestones`
+                  && request.method === 'POST',
+      )
+      expect(post?.body).toEqual({ name: 'Foundation poured' })
+    })
+
+    // The row was appended locally rather than the whole list refetched —
+    // the milestone the POST returned is on the page, and only one GET
+    // /milestones has been made.
+    await within(milestonesPanel()).findByText('Foundation poured')
+    const milestoneListGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/milestones`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    expect(milestoneListGets).toHaveLength(1)
+
+    // But progress was refreshed — AC-3.
+    const progressGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/progress`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    expect(progressGets).toHaveLength(2)
+  })
+
+  it('surfaces the service’s 409 detail verbatim when a name is already taken', async () => {
+    renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      apiResponse(200, [milestone()]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+      // POST reply: 409 with problem details detail explaining the clash.
+      apiResponse(409, {
+        title: 'Milestone name already used.',
+        detail: "A milestone named 'Foundation poured' already exists for project 00000000-0000-0000-0000-000000000000.",
+        status: 409,
+      }),
+    )
+
+    await within(milestonesPanel()).findByText('Foundation poured')
+
+    fireEvent.change(screen.getByLabelText('Add a milestone'), {
+      target: { value: 'Foundation poured' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    // The service's own reason reaches the PM — the form does not swallow it
+    // into "something went wrong". The name in the detail is what tells them
+    // which milestone clashed.
+    expect(
+      await within(milestonesPanel()).findByText(
+        /already exists for project/i,
+      ),
+    ).toBeInTheDocument()
+  })
+})
