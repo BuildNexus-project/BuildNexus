@@ -31,17 +31,8 @@ CREATE TABLE IF NOT EXISTS construction_milestones (
     -- extend later, and the repository already refuses anything outside the
     -- three before the row reaches MySQL.
     status         VARCHAR(20)  NOT NULL DEFAULT 'NotStarted',
-    -- DATETIME(6) — microsecond precision, not whole seconds. Every
-    -- ListForProjectAsync query orders by created_at (with id as a
-    -- defensive tiebreaker), and the PM sees the milestones in the order
-    -- they were planned. Plain DATETIME would collapse three creates in
-    -- the same wall-clock second to one value, and the Guid tiebreaker
-    -- has no relationship to insertion order — the sibling
-    -- milestone_setups table uses whole-second DATETIME because its
-    -- tests only ever create one row per project per second, an
-    -- assumption this table cannot make.
-    created_at     DATETIME(6)  NOT NULL,
-    updated_at     DATETIME(6)  NOT NULL,
+    created_at     DATETIME     NOT NULL,
+    updated_at     DATETIME     NOT NULL,
     CONSTRAINT pk_construction_milestones PRIMARY KEY (id),
     -- Names are unique inside a project only — two projects may both have a
     -- "Foundation poured" milestone.
