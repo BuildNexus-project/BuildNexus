@@ -974,9 +974,17 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     })
   }
 
-  /** The Milestones panel, so a query cannot stray into another section. */
-  function milestonesPanel(): HTMLElement {
-    return screen.getByRole('heading', { name: 'Milestones' }).closest('section') as HTMLElement
+  /**
+   * The Milestones panel, so a query cannot stray into another section.
+   *
+   * Async because the section only renders after `ProjectDetailPage` resolves
+   * its project fetch — a synchronous `getByRole` would run before the
+   * heading is on the page.
+   */
+  async function milestonesPanel(): Promise<HTMLElement> {
+    return (await screen.findByRole('heading', { name: 'Milestones' })).closest(
+      'section',
+    ) as HTMLElement
   }
 
   it('is not rendered for a Client, even one who owns the project', async () => {
@@ -1000,9 +1008,10 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     )
 
     await screen.findByRole('heading', { name: 'Milestones' })
+    const panel = await milestonesPanel()
 
     expect(
-      within(milestonesPanel()).getByText(
+      within(panel).getByText(
         "Milestones open once this project's design has been approved.",
       ),
     ).toBeInTheDocument()
@@ -1024,14 +1033,16 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       apiResponse(200, progressRow({ totalMilestones: 2, completedMilestones: 1, progressPercent: 50.00 })),
     )
 
+    const panel = await milestonesPanel()
+
     // The percentage is what AC-3 promises — rendered with two decimals so
     // 50.00 is unmistakably one-of-two, not one-of-three rounded.
-    expect(await within(milestonesPanel()).findByText('50.00%')).toBeInTheDocument()
-    expect(within(milestonesPanel()).getByText('1 of 2 completed')).toBeInTheDocument()
+    expect(await within(panel).findByText('50.00%')).toBeInTheDocument()
+    expect(within(panel).getByText('1 of 2 completed')).toBeInTheDocument()
 
     // Both milestone names are on the page.
-    expect(within(milestonesPanel()).getByText('Foundation poured')).toBeInTheDocument()
-    expect(within(milestonesPanel()).getByText('Roof on')).toBeInTheDocument()
+    expect(within(panel).getByText('Foundation poured')).toBeInTheDocument()
+    expect(within(panel).getByText('Roof on')).toBeInTheDocument()
   })
 
   it('changing a milestone status PATCHes the service and refreshes the progress rollup', async () => {
@@ -1049,7 +1060,8 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
     )
 
-    await within(milestonesPanel()).findByText('0.00%')
+    const panel = await milestonesPanel()
+    await within(panel).findByText('0.00%')
 
     await choose('Change status of Foundation poured', 'In Progress')
 
@@ -1084,7 +1096,9 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
     )
 
-    await within(milestonesPanel()).findByText(
+    const panel = await milestonesPanel()
+
+    await within(panel).findByText(
       'No milestones defined yet. Add the first one below.',
     )
 
@@ -1106,7 +1120,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     // The row was appended locally rather than the whole list refetched —
     // the milestone the POST returned is on the page, and only one GET
     // /milestones has been made.
-    await within(milestonesPanel()).findByText('Foundation poured')
+    await within(panel).findByText('Foundation poured')
     const milestoneListGets = requests.filter(
       (request) =>
         request.path === `/api/construction/projects/${PROJECT_ID}/milestones`
@@ -1137,7 +1151,9 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       }),
     )
 
-    await within(milestonesPanel()).findByText('Foundation poured')
+    const panel = await milestonesPanel()
+
+    await within(panel).findByText('Foundation poured')
 
     fireEvent.change(screen.getByLabelText('Add a milestone'), {
       target: { value: 'Foundation poured' },
@@ -1148,7 +1164,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     // into "something went wrong". The name in the detail is what tells them
     // which milestone clashed.
     expect(
-      await within(milestonesPanel()).findByText(
+      await within(panel).findByText(
         /already exists for project/i,
       ),
     ).toBeInTheDocument()
