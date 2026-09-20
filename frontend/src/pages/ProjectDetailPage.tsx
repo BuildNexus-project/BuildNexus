@@ -393,8 +393,10 @@ function MilestonesSection({
 
   if (!canHaveMilestones) {
     return (
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Milestones</h2>
+      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
         <p className="text-muted-foreground text-sm">
           Milestones open once this project's design has been approved.
         </p>
@@ -404,8 +406,10 @@ function MilestonesSection({
 
   if (designNotReadyYet) {
     return (
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Milestones</h2>
+      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
         <p className="text-muted-foreground text-sm">
           This project's design approval hasn't reached the Construction Service yet. Try again in a
           moment.
@@ -416,8 +420,10 @@ function MilestonesSection({
 
   if (loadError) {
     return (
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Milestones</h2>
+      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
         <p role="alert" className="text-destructive text-sm">
           {loadError}
         </p>
@@ -427,17 +433,21 @@ function MilestonesSection({
 
   if (milestones === null || progress === null) {
     return (
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Milestones</h2>
+      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
         <p className="text-muted-foreground text-sm">Loading milestones…</p>
       </section>
     )
   }
 
   return (
-    <section className="flex flex-col gap-4">
+    <section aria-labelledby="milestones-heading" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-sm font-medium">Milestones</h2>
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
         <span className="text-muted-foreground text-xs">
           {progress.completedMilestones} of {progress.totalMilestones} completed
         </span>

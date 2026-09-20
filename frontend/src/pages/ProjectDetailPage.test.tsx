@@ -977,14 +977,15 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
   /**
    * The Milestones panel, so a query cannot stray into another section.
    *
-   * Async because the section only renders after `ProjectDetailPage` resolves
-   * its project fetch — a synchronous `getByRole` would run before the
-   * heading is on the page.
+   * Queries the landmark by its accessible name (the aria-labelledby on the
+   * <section> resolves to the "Milestones" heading), which is stable across
+   * every render branch of MilestonesSection — gate, loading, error, and the
+   * full UI all label their section the same way. Async because the section
+   * only mounts after ProjectDetailPage's project fetch resolves; findByRole
+   * waits, getByRole would not.
    */
   async function milestonesPanel(): Promise<HTMLElement> {
-    return (await screen.findByRole('heading', { name: 'Milestones' })).closest(
-      'section',
-    ) as HTMLElement
+    return await screen.findByRole('region', { name: 'Milestones' })
   }
 
   it('is not rendered for a Client, even one who owns the project', async () => {
@@ -1007,7 +1008,6 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       apiResponse(200, projectDetail({ status: 'Designing' })),
     )
 
-    await screen.findByRole('heading', { name: 'Milestones' })
     const panel = await milestonesPanel()
 
     expect(
