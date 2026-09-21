@@ -100,4 +100,3 @@ public class MilestoneSetupRepository : IMilestoneSetupRepository
         CreatedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(reader.GetOrdinal("created_at")), DateTimeKind.Utc)
     };
 }
-}
