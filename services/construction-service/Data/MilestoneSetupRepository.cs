@@ -88,7 +88,16 @@ public class MilestoneSetupRepository : IMilestoneSetupRepository
         ProjectId = reader.GetGuid(reader.GetOrdinal("project_id")),
         SourceDocumentId = reader.GetGuid(reader.GetOrdinal("source_document_id")),
         SourceEventId = reader.GetGuid(reader.GetOrdinal("source_event_id")),
-        ApprovedAtUtc = reader.GetDateTime(reader.GetOrdinal("approved_at")),
-        CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at"))
+        // MySQL DATETIME has no timezone, so MySqlConnector reads it back as
+        // DateTimeKind.Unspecified. System.Text.Json then serializes it
+        // without a Z, and the browser interprets a suffix-less ISO string
+        // as local time — so a UTC timestamp comes back offset by the
+        // caller's timezone after a reload. Both columns here store UTC
+        // (approved_at is stamped by the DesignApproved consumer with
+        // occurredAt.UtcDateTime; created_at with DateTime.UtcNow), so
+        // stamping the read Kind as Utc keeps the invariant end to end.
+        ApprovedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(reader.GetOrdinal("approved_at")), DateTimeKind.Utc),
+        CreatedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(reader.GetOrdinal("created_at")), DateTimeKind.Utc)
     };
+}
 }

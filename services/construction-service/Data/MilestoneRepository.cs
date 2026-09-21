@@ -270,7 +270,16 @@ public class MilestoneRepository : IMilestoneRepository
         // Persisted as its own name for legibility, so the round trip is a
         // plain enum parse — no int-to-name mapping to keep in sync.
         Status = Enum.Parse<MilestoneStatus>(reader.GetString(reader.GetOrdinal("status"))),
-        CreatedAtUtc = reader.GetDateTime(reader.GetOrdinal("created_at")),
-        UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("updated_at"))
+        // MySQL's DATETIME type has no timezone attached, so MySqlConnector
+        // reads the value back as DateTimeKind.Unspecified — it cannot know
+        // the column stores UTC. System.Text.Json then serializes that
+        // Unspecified value without a Z suffix, and the browser reads the
+        // no-suffix ISO string as local time — so "Last updated" would show
+        // 5h 30m off after a reload for a Colombo caller (and 8h off for a
+        // Singapore caller, etc). The columns do store UTC — every write
+        // path here uses DateTime.UtcNow — so stamping the read Kind as Utc
+        // restores the invariant the write side already keeps.
+        CreatedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(reader.GetOrdinal("created_at")), DateTimeKind.Utc),
+        UpdatedAtUtc = DateTime.SpecifyKind(reader.GetDateTime(reader.GetOrdinal("updated_at")), DateTimeKind.Utc)
     };
 }
