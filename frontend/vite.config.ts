@@ -41,10 +41,7 @@ export default defineConfig({
       // proxies on to whichever of the five services owns the path. Pointing
       // this at a single service again would bypass that.
       '/api': {
-        // LOCAL-ONLY WORKAROUND — do not commit. Gateway moved to 5100 on this
-        // machine because macOS AirPlay Receiver holds port 5000. Revert to
-        // 5000 (or disable AirPlay Receiver) to match the team's default.
-        target: 'http://localhost:5100',
+        target: 'http://localhost:5000',
         changeOrigin: true,
       },
     },
