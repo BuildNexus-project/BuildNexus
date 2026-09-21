@@ -1173,4 +1173,59 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       ),
     ).toBeInTheDocument()
   })
+
+  it('the design-not-ready-yet variant offers a Try again button that re-runs the load', async () => {
+    // The initial /progress returns 404 with the "design not approved
+    // yet" detail — the narrow race where the project moved to
+    // DesignApproved but the Kafka event has not been consumed by the
+    // Construction Service yet. The PM sees the friendly note and clicks
+    // Try again; the second attempt succeeds and the full UI renders.
+    // Without the button the PM would have to full-page reload the page,
+    // which is what this test pins as no longer required.
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      // First attempt: milestones list is fine, progress 404s (race).
+      apiResponse(200, []),
+      apiResponse(404, {
+        title: 'Progress not available.',
+        detail: "This project's design has not yet been approved, so it has no milestone progress to report.",
+        status: 404,
+      }),
+      // Second attempt (after Try again): both succeed — the event has
+      // now been consumed on the service side.
+      apiResponse(200, [milestone()]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+    )
+
+    const panel = await milestonesPanel()
+
+    // The race variant renders.
+    await within(panel).findByText(
+      "This project's design approval hasn't reached the Construction Service yet. Try again in a moment.",
+    )
+
+    const retryButton = within(panel).getByRole('button', { name: 'Try again' })
+    fireEvent.click(retryButton)
+
+    // The full UI appears after the retry — progress bar, milestone row,
+    // and the "Add a milestone" form.
+    await within(panel).findByText('0.00%')
+    await within(panel).findByText('Foundation poured')
+    expect(within(panel).getByLabelText('Add a milestone')).toBeInTheDocument()
+
+    // Two round trips of both endpoints — one before the retry, one after.
+    const milestoneGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/milestones`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    const progressGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/progress`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    expect(milestoneGets).toHaveLength(2)
+    expect(progressGets).toHaveLength(2)
+  })
 })

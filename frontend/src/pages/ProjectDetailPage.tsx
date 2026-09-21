@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useParams } from 'react-router-dom'
@@ -271,14 +271,24 @@ function MilestonesSection({
     projectStatus === 'Construction' ||
     projectStatus === 'Completed'
 
-  useEffect(() => {
-    if (!canHaveMilestones) {
-      return
-    }
+  /**
+   * The load pass — extracted so the initial useEffect and the "Try again"
+   * button on the designNotReadyYet variant both run the same code. Wrapped
+   * in useCallback so the effect's dependency array stays stable; without
+   * that, the effect would refire on every render.
+   *
+   * Returns a `cancelled` guard the effect can flip during teardown, so a
+   * component that unmounts mid-fetch does not call setState on a dead
+   * instance. The retry button passes a fresh guard that never flips —
+   * the click is a foreground action, not a lifecycle race.
+   */
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
+      // Clear the recoverable states before the new attempt so the UI does
+      // not show a stale "try again" hint while the retry is in flight.
+      setDesignNotReadyYet(false)
+      setLoadError(null)
 
-    let cancelled = false
-
-    async function load() {
       try {
         // Both concurrent. Progress can 404 on a narrow race — the project
         // moved to DesignApproved but the DesignApproved event has not been
@@ -294,7 +304,7 @@ function MilestonesSection({
           }),
         ])
 
-        if (cancelled) {
+        if (isCancelled()) {
           return
         }
 
@@ -302,18 +312,26 @@ function MilestonesSection({
         setProgress(progressResult)
         setDesignNotReadyYet(progressResult === null)
       } catch (error) {
-        if (!cancelled) {
+        if (!isCancelled()) {
           setLoadError(apiErrorMessage(error, 'Could not load milestones for this project.'))
         }
       }
+    },
+    [authFetch, projectId],
+  )
+
+  useEffect(() => {
+    if (!canHaveMilestones) {
+      return
     }
 
-    void load()
+    let cancelled = false
+    void load(() => cancelled)
 
     return () => {
       cancelled = true
     }
-  }, [authFetch, canHaveMilestones, projectId])
+  }, [canHaveMilestones, load])
 
   /**
    * Re-reads the progress rollup after something has changed the milestones.
@@ -393,7 +411,7 @@ function MilestonesSection({
 
   if (!canHaveMilestones) {
     return (
-      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
         <h2 id="milestones-heading" className="text-sm font-medium">
           Milestones
         </h2>
@@ -406,7 +424,7 @@ function MilestonesSection({
 
   if (designNotReadyYet) {
     return (
-      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
         <h2 id="milestones-heading" className="text-sm font-medium">
           Milestones
         </h2>
@@ -414,13 +432,27 @@ function MilestonesSection({
           This project's design approval hasn't reached the Construction Service yet. Try again in a
           moment.
         </p>
+        {/* Recoverable state → give the PM the action they need, so the
+            section is not a dead-end that forces a full-page reload. The
+            button re-runs the same load pass the effect ran on mount. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={() => {
+            void load(() => false)
+          }}
+        >
+          Try again
+        </Button>
       </section>
     )
   }
 
   if (loadError) {
     return (
-      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
         <h2 id="milestones-heading" className="text-sm font-medium">
           Milestones
         </h2>
@@ -433,7 +465,7 @@ function MilestonesSection({
 
   if (milestones === null || progress === null) {
     return (
-      <section aria-labelledby="milestones-heading" className="flex flex-col gap-3">
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
         <h2 id="milestones-heading" className="text-sm font-medium">
           Milestones
         </h2>
@@ -443,7 +475,7 @@ function MilestonesSection({
   }
 
   return (
-    <section aria-labelledby="milestones-heading" className="flex flex-col gap-4">
+    <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="milestones-heading" className="text-sm font-medium">
           Milestones
