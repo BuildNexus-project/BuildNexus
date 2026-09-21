@@ -73,6 +73,34 @@ public interface IMilestoneRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Creates any of the given template names that a project does not
+    /// already have. Idempotent — names already on the project are left
+    /// alone, so a PM clicking twice or applying the template after typing
+    /// one or two by hand does not hit a duplicate-name conflict.
+    /// </summary>
+    /// <remarks>
+    /// The same design-approval gate as <see cref="CreateAsync"/> applies —
+    /// a project without a <c>milestone_setups</c> row (the marker the
+    /// <c>DesignApproved</c> consumer plants) gets <c>null</c> back, and the
+    /// caller maps that to <c>400 Bad Request</c>. Every insert runs in one
+    /// transaction alongside the gate check, so a race that revokes the
+    /// gate mid-flight rolls back the whole batch — the caller never sees
+    /// a half-applied template.
+    /// <para>
+    /// Returns the milestones the project has after this call for the
+    /// given template names — the union of "was already there" and "just
+    /// inserted", oldest first. An empty result means the gate refused;
+    /// callers distinguish an empty template application ("nothing new to
+    /// insert, but everything asked for is already there") by the whole
+    /// list still coming back rather than <c>null</c>.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<Milestone>?> CreateFromTemplateAsync(
+        Guid projectId,
+        IReadOnlyList<string> templateNames,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Every milestone defined for a project, oldest first, so the PM sees
     /// them in the order they were planned.
     /// </summary>

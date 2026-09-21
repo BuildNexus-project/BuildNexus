@@ -78,6 +78,7 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("List"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("UpdateStatus"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("GetProgress"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("CreateFromTemplate"));
     }
 
     private static IEnumerable<MethodInfo> Endpoints() =>

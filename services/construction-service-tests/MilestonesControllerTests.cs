@@ -253,4 +253,60 @@ public class MilestonesControllerTests
         var problem = Assert.IsAssignableFrom<ProblemDetails>(objectResult.Value);
         Assert.Contains("design", problem.Detail!, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ---------- CreateFromTemplate ----------
+
+    [Fact]
+    public async Task CreateFromTemplate_returns_201_with_the_full_template_set()
+    {
+        var repository = new FakeMilestoneRepository
+        {
+            NextTemplateResult = MilestoneTemplates.Canonical
+                .Select((name, index) => new Milestone
+                {
+                    Id = Guid.Parse($"22222222-0000-4000-8000-{index:D12}"),
+                    ProjectId = ProjectId,
+                    Name = name,
+                    Status = MilestoneStatus.NotStarted,
+                    CreatedAtUtc = Now.AddTicks(index),
+                    UpdatedAtUtc = Now.AddTicks(index),
+                })
+                .ToList()
+        };
+        var controller = new MilestonesController(repository);
+
+        var result = await controller.CreateFromTemplate(ProjectId, default);
+
+        var created = Assert.IsType<CreatedAtActionResult>(result);
+        Assert.Equal(nameof(MilestonesController.List), created.ActionName);
+        Assert.Equal(ProjectId, created.RouteValues!["projectId"]);
+
+        var rows = Assert.IsAssignableFrom<IEnumerable<MilestoneResponse>>(created.Value).ToList();
+        Assert.Equal(MilestoneTemplates.Canonical, rows.Select(r => r.Name).ToList());
+        Assert.All(rows, r => Assert.Equal(MilestoneStatus.NotStarted, r.Status));
+
+        // The controller passed the canonical template names through
+        // unchanged — no mutation, no reordering.
+        var call = Assert.Single(repository.CreateFromTemplateCalls);
+        Assert.Equal(ProjectId, call.ProjectId);
+        Assert.Equal(MilestoneTemplates.Canonical, call.TemplateNames);
+    }
+
+    [Fact]
+    public async Task CreateFromTemplate_returns_400_when_the_design_has_not_been_approved()
+    {
+        // Same gate as Create — null return from the repo becomes a 400
+        // with the same reason the PM sees on a single-milestone create.
+        var repository = new FakeMilestoneRepository { NextTemplateResult = null };
+        var controller = new MilestonesController(repository);
+
+        var result = await controller.CreateFromTemplate(ProjectId, default);
+
+        var objectResult = Assert.IsAssignableFrom<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, objectResult.StatusCode);
+
+        var problem = Assert.IsAssignableFrom<ProblemDetails>(objectResult.Value);
+        Assert.Contains("design", problem.Detail!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("approved", problem.Detail!, StringComparison.OrdinalIgnoreCase);
+    }
 }

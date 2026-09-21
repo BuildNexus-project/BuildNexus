@@ -62,6 +62,25 @@ public sealed class FakeMilestoneRepository : IMilestoneRepository
         CancellationToken cancellationToken = default) =>
         Task.FromResult(ListRows);
 
+    /// <summary>One entry per <see cref="CreateFromTemplateAsync"/> call, in order.</summary>
+    public List<CreateFromTemplateCall> CreateFromTemplateCalls { get; } = [];
+
+    /// <summary>
+    /// What <see cref="CreateFromTemplateAsync"/> returns. Null simulates
+    /// the design-approval gate refusing (mirrors <see cref="CreateAsync"/>);
+    /// an empty list simulates the gate passing with nothing to insert.
+    /// </summary>
+    public IReadOnlyList<Milestone>? NextTemplateResult { get; set; } = Array.Empty<Milestone>();
+
+    public Task<IReadOnlyList<Milestone>?> CreateFromTemplateAsync(
+        Guid projectId,
+        IReadOnlyList<string> templateNames,
+        CancellationToken cancellationToken = default)
+    {
+        CreateFromTemplateCalls.Add(new CreateFromTemplateCall(projectId, templateNames));
+        return Task.FromResult(NextTemplateResult);
+    }
+
     public Task<ProjectProgress?> GetProgressForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default) =>
@@ -70,4 +89,6 @@ public sealed class FakeMilestoneRepository : IMilestoneRepository
     public readonly record struct CreateCall(Guid ProjectId, string Name);
 
     public readonly record struct UpdateStatusCall(Guid MilestoneId, MilestoneStatus NewStatus);
+
+    public readonly record struct CreateFromTemplateCall(Guid ProjectId, IReadOnlyList<string> TemplateNames);
 }

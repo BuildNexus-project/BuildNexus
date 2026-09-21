@@ -1,6 +1,7 @@
 using BuildNexus.ConstructionService.Authorization;
 using BuildNexus.ConstructionService.Contracts;
 using BuildNexus.ConstructionService.Data;
+using BuildNexus.ConstructionService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -91,6 +92,49 @@ public class MilestonesController : ControllerBase
                 title: "Milestone name already used.",
                 detail: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Applies the canonical construction template — Foundation, Walls,
+    /// Roof, Electrical, Plumbing, Painting, Finishing — to an approved
+    /// project. Idempotent: names already on the project are left alone,
+    /// so a repeat click or a template applied on top of a couple of
+    /// hand-typed milestones is fine.
+    /// </summary>
+    /// <response code="201">The milestones the project has, matching the template names. Newly-inserted rows and previously-existing rows are indistinguishable in the response — the PM sees the full template set either way.</response>
+    /// <response code="400">The project's design has not yet been approved.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is not a Project Manager.</response>
+    [HttpPost("api/construction/projects/{projectId:guid}/milestones/from-template")]
+    [ProducesResponseType(typeof(IReadOnlyList<MilestoneResponse>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> CreateFromTemplate(
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        var milestones = await _repository.CreateFromTemplateAsync(
+            projectId,
+            MilestoneTemplates.Canonical,
+            cancellationToken);
+
+        if (milestones is null)
+        {
+            // Same 400 shape as Create — the gate is the same gate, so the
+            // reason the PM sees is the same reason.
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Design not yet approved.",
+                detail: "Milestones can only be created for a project once its design has been approved.");
+        }
+
+        var response = milestones.Select(MilestoneResponse.From).ToList();
+
+        // Point Location at the list, same as Create — the story does not
+        // need a per-milestone GET and the listing is the natural place to
+        // see the rows that were just planted.
+        return CreatedAtAction(nameof(List), new { projectId }, response);
     }
 
     /// <summary>

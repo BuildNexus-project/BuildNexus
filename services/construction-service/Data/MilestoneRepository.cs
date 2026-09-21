@@ -147,6 +147,130 @@ public class MilestoneRepository : IMilestoneRepository
         return milestone;
     }
 
+    public async Task<IReadOnlyList<Milestone>?> CreateFromTemplateAsync(
+        Guid projectId,
+        IReadOnlyList<string> templateNames,
+        CancellationToken cancellationToken = default)
+    {
+        // Empty template is a no-op — return an empty list so the caller
+        // still gets the "not null" signal that means "the gate passed",
+        // without a pointless transaction round trip.
+        if (templateNames.Count == 0)
+        {
+            // Still gate-check before returning empty, so a caller cannot use
+            // an empty template to probe whether a project's design has been
+            // approved. Same shape as the non-empty path returns.
+            await using var probeConnection = await _connectionFactory.OpenConnectionAsync();
+            return await IsDesignApprovedAsync(probeConnection, transaction: null, projectId, cancellationToken)
+                ? Array.Empty<Milestone>()
+                : null;
+        }
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        if (!await IsDesignApprovedAsync(connection, transaction, projectId, cancellationToken))
+        {
+            // Gate refused — return null so the controller maps to 400.
+            // No rollback needed; nothing was written.
+            return null;
+        }
+
+        // INSERT ... SELECT ... WHERE NOT EXISTS makes each insert idempotent
+        // in one round trip — MySQL checks for the (project_id, name) pair
+        // and inserts only if it is not already there. No SELECT-then-INSERT
+        // race window inside this transaction: the WHERE NOT EXISTS is
+        // evaluated by the engine at insert time, holding whatever locks the
+        // engine needs. Names already on the project are silently skipped.
+        //
+        // A duplicate-name insert from a concurrent transaction would still
+        // hit the UNIQUE key and throw error 1062; that is genuinely
+        // exceptional here (two PMs applying the template at the same
+        // millisecond) and rolling back the whole batch is the safe answer.
+        const string insertSql = @"
+            INSERT INTO construction_milestones (id, project_id, name, status, created_at, updated_at)
+            SELECT @id, @projectId, @name, @status, @createdAt, @updatedAt
+            WHERE NOT EXISTS (
+                SELECT 1 FROM construction_milestones
+                WHERE project_id = @projectId AND name = @name
+            );";
+
+        // The status stamp is the same for every insert in this batch: they
+        // are all planted at once, at the same moment, and share creation
+        // time. The per-row created_at gets a one-microsecond bump per row
+        // so the list ordering matches the canonical template order — see
+        // MilestoneTemplates for why that order matters.
+        var stampBase = DateTime.UtcNow;
+
+        for (var index = 0; index < templateNames.Count; index++)
+        {
+            var name = templateNames[index];
+            var stamp = stampBase.AddTicks(index); // 100 ns per Tick — comfortably below DATETIME(6)'s microsecond resolution
+
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = insertSql;
+            AddParameter(command, "@id", Guid.NewGuid());
+            AddParameter(command, "@projectId", projectId);
+            AddParameter(command, "@name", name);
+            AddParameter(command, "@status", MilestoneStatus.NotStarted.ToString());
+            AddParameter(command, "@createdAt", stamp);
+            AddParameter(command, "@updatedAt", stamp);
+
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        // Return the current state of the template names on this project —
+        // union of what was already there and what this call just inserted.
+        // The caller ignores what it already had and appends the new rows,
+        // so returning the whole set is the least confusing shape.
+        return await ListForProjectFilteredByNamesAsync(projectId, templateNames, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads the milestones a project has whose name is in a given set.
+    /// Used by <see cref="CreateFromTemplateAsync"/> to report the post
+    /// -template state without pulling every unrelated milestone the PM
+    /// may have added.
+    /// </summary>
+    private async Task<IReadOnlyList<Milestone>> ListForProjectFilteredByNamesAsync(
+        Guid projectId,
+        IReadOnlyList<string> names,
+        CancellationToken cancellationToken)
+    {
+        // IN (@n0, @n1, ...) with an explicit parameter per name — never a
+        // string-concatenated list. Names are user-facing template constants
+        // today but the same code path would work for any caller-supplied
+        // list, and a parameterised IN clause is the shape that survives
+        // that change safely.
+        var parameterNames = names.Select((_, index) => $"@n{index}").ToArray();
+
+        var sql = $@"
+            SELECT {SelectColumns}
+            FROM construction_milestones
+            WHERE project_id = @projectId AND name IN ({string.Join(", ", parameterNames)})
+            ORDER BY created_at, id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@projectId", projectId);
+        for (var index = 0; index < names.Count; index++)
+        {
+            AddParameter(command, parameterNames[index], names[index]);
+        }
+
+        var rows = new List<Milestone>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(Map(reader));
+        }
+        return rows;
+    }
+
     public async Task<IReadOnlyList<Milestone>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)
