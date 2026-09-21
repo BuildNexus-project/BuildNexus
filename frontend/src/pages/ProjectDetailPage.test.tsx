@@ -977,15 +977,16 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
   /**
    * The Milestones panel, so a query cannot stray into another section.
    *
-   * Queries the landmark by its accessible name (the aria-labelledby on the
-   * <section> resolves to the "Milestones" heading), which is stable across
-   * every render branch of MilestonesSection — gate, loading, error, and the
-   * full UI all label their section the same way. Async because the section
-   * only mounts after ProjectDetailPage's project fetch resolves; findByRole
-   * waits, getByRole would not.
+   * Queries the section by its data-testid rather than by role/name. The
+   * section is already labelled by its heading for real screen readers via
+   * aria-labelledby, so the accessibility side of this is settled — the test
+   * id is a stable test seam that JSDOM's incomplete accessibility-tree
+   * inference cannot miss. Async because the section only mounts after
+   * ProjectDetailPage's project fetch resolves; findByTestId waits,
+   * getByTestId would not.
    */
   async function milestonesPanel(): Promise<HTMLElement> {
-    return await screen.findByRole('region', { name: 'Milestones' })
+    return await screen.findByTestId('milestones-panel')
   }
 
   it('is not rendered for a Client, even one who owns the project', async () => {
@@ -1144,9 +1145,12 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       apiResponse(200, [milestone()]),
       apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
       // POST reply: 409 with problem details detail explaining the clash.
+      // The service intentionally does not include the project id — the PM
+      // is already on the project's own page and a raw Guid would just
+      // read as noise. Naming only the milestone is enough context here.
       apiResponse(409, {
         title: 'Milestone name already used.',
-        detail: "A milestone named 'Foundation poured' already exists for project 00000000-0000-0000-0000-000000000000.",
+        detail: "A milestone named 'Foundation poured' already exists on this project.",
         status: 409,
       }),
     )
@@ -1165,7 +1169,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     // which milestone clashed.
     expect(
       await within(panel).findByText(
-        /already exists for project/i,
+        /already exists on this project/i,
       ),
     ).toBeInTheDocument()
   })

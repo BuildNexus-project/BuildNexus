@@ -8,10 +8,21 @@ namespace BuildNexus.ConstructionService.Data;
 /// distinct type so the controller can translate it to <c>409 Conflict</c>
 /// without matching on a raw <c>MySqlException</c>.
 /// </summary>
+/// <remarks>
+/// <see cref="Exception.Message"/> deliberately does not include the project
+/// id. The controller passes it straight through as the problem-details
+/// <c>detail</c>, and the frontend renders that detail verbatim next to the
+/// PM's "Add a milestone" form on the project's own page — where the
+/// project id is context the PM already has. A raw Guid in the sentence
+/// reads as machine noise; naming only the milestone keeps the message
+/// about what the PM just did. The <see cref="ProjectId"/> and
+/// <see cref="Name"/> properties still carry the values for anywhere they
+/// are needed programmatically (logging, structured telemetry).
+/// </remarks>
 public sealed class DuplicateMilestoneNameException : Exception
 {
     public DuplicateMilestoneNameException(Guid projectId, string name)
-        : base($"A milestone named '{name}' already exists for project {projectId}.")
+        : base($"A milestone named '{name}' already exists on this project.")
     {
         ProjectId = projectId;
         Name = name;

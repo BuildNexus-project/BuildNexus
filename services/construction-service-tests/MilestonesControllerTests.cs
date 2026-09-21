@@ -116,6 +116,11 @@ public class MilestonesControllerTests
 
         var problem = Assert.IsAssignableFrom<ProblemDetails>(objectResult.Value);
         Assert.Contains("Foundation poured", problem.Detail!);
+        // The project id used to leak into the message ("...for project
+        // 00000000-0000-0000-0000-000000000000."). The PM is already on the
+        // project's own page and the Guid reads as machine noise — pinned
+        // out so a future edit that puts it back is caught.
+        Assert.DoesNotContain(ProjectId.ToString(), problem.Detail!);
     }
 
     // ---------- List ----------
