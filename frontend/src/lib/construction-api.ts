@@ -132,3 +132,22 @@ export function updateMilestoneStatus(
 export function fetchProjectProgress(authFetch: AuthFetch, projectId: string) {
   return authFetch<ProjectProgress>(`/api/construction/projects/${projectId}/progress`)
 }
+
+/**
+ * Plants the seven canonical construction milestones — Foundation, Walls,
+ * Roof, Electrical, Plumbing, Painting, Finishing — on an approved project
+ * in one call (US-12 Definition of Done).
+ *
+ * Project-Manager only. Idempotent on the service: names already on the
+ * project are silently skipped, so a repeat click or a template applied on
+ * top of a couple of hand-typed milestones is fine. Returns the union of
+ * previously-existing and newly-inserted rows for the template names, in
+ * canonical order. A project whose design has not yet been approved comes
+ * back as {@link ApiError} with status 400.
+ */
+export function createMilestonesFromTemplate(authFetch: AuthFetch, projectId: string) {
+  return authFetch<Milestone[]>(
+    `/api/construction/projects/${projectId}/milestones/from-template`,
+    { method: 'POST' },
+  )
+}

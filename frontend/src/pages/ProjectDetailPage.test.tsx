@@ -1099,9 +1099,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
 
     const panel = await milestonesPanel()
 
-    await within(panel).findByText(
-      'No milestones defined yet. Add the first one below.',
-    )
+    await within(panel).findByText(/No milestones defined yet/i)
 
     fireEvent.change(screen.getByLabelText('Add a milestone'), {
       target: { value: '  Foundation poured  ' },
@@ -1227,5 +1225,77 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     )
     expect(milestoneGets).toHaveLength(2)
     expect(progressGets).toHaveLength(2)
+  })
+
+  it('the Create from template button plants the seven canonical milestones in one click', async () => {
+    // DoD: a PM can turn an empty project into the standard build plan
+    // with one click, rather than typing seven names by hand. The
+    // response order matches the canonical build order, and the progress
+    // is refreshed afterwards for AC-3.
+    const canonicalNames = [
+      'Foundation',
+      'Walls',
+      'Roof',
+      'Electrical',
+      'Plumbing',
+      'Painting',
+      'Finishing',
+    ]
+
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      apiResponse(200, []),
+      apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
+      // POST reply: the full template set the service returns after applying.
+      apiResponse(
+        201,
+        canonicalNames.map((name, index) => milestone({
+          id: `33333333-0000-4000-8000-${String(index).padStart(12, '0')}`,
+          name,
+          status: 'NotStarted',
+          createdAtUtc: '2026-08-15T09:00:00',
+          updatedAtUtc: '2026-08-15T09:00:00',
+        })),
+      ),
+      // Refreshed progress after the template: seven planted, zero done.
+      apiResponse(200, progressRow({ totalMilestones: 7, completedMilestones: 0, progressPercent: 0 })),
+    )
+
+    const panel = await milestonesPanel()
+
+    // Empty state renders the template button.
+    const templateButton = await within(panel).findByRole('button', { name: 'Create from template' })
+    fireEvent.click(templateButton)
+
+    // Every canonical name is on the page after the click.
+    for (const name of canonicalNames) {
+      await within(panel).findByText(name)
+    }
+
+    // The POST went to the from-template endpoint with no body — the
+    // canonical names are the service's own constant, not something the
+    // caller sends.
+    const templatePosts = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/milestones/from-template`
+        && request.method === 'POST',
+    )
+    expect(templatePosts).toHaveLength(1)
+
+    // And the progress rollup was refreshed after the template landed — the
+    // seven planted rows update the "X of Y completed" counter and the bar.
+    const progressGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/progress`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    expect(progressGets).toHaveLength(2)
+
+    // The template button disappears once the list is non-empty — a repeat
+    // click would be an idempotent no-op, but the UI should not invite it.
+    expect(
+      within(panel).queryByRole('button', { name: 'Create from template' }),
+    ).not.toBeInTheDocument()
   })
 })

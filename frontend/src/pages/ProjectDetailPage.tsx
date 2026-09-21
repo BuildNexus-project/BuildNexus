@@ -30,6 +30,7 @@ import { ApiError, apiErrorMessage } from '@/lib/api'
 import { fetchAllUsers, type AdminUserSummary } from '@/lib/auth-api'
 import {
   createMilestone,
+  createMilestonesFromTemplate,
   fetchProjectMilestones,
   fetchProjectProgress,
   MILESTONE_STATUS_LABELS,
@@ -248,6 +249,12 @@ function MilestonesSection({
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  // "Create from template" one-click flow: applyingTemplate flips true while
+  // the POST is in flight so the button can show a busy label and refuse a
+  // double-click. templateError surfaces the service's own reason (a design
+  // -not-approved 400, or anything else) next to the button.
+  const [applyingTemplate, setApplyingTemplate] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
 
   const {
     register,
@@ -409,6 +416,37 @@ function MilestonesSection({
     }
   }
 
+  /**
+   * Plants the seven canonical milestones on the project in one call.
+   *
+   * The service side is idempotent (names already on the project are
+   * silently skipped), so a race with the PM typing a milestone by hand in
+   * the same second, or a repeat click, is harmless — the response is the
+   * union of what was already there and what was just inserted, which we
+   * set as the whole list. The progress rollup then refreshes for AC-3.
+   */
+  async function applyTemplate() {
+    setTemplateError(null)
+    setApplyingTemplate(true)
+
+    try {
+      const result = await createMilestonesFromTemplate(authFetch, projectId)
+      // The response is the full template set (previously-present +
+      // newly-inserted) in canonical order — set it as the list rather
+      // than appending, since the template call is a state-setting
+      // operation from the PM's point of view: "make the project look
+      // like the template". Ordering is already correct on the wire.
+      setMilestones(result)
+      await refreshProgress()
+    } catch (error) {
+      setTemplateError(
+        apiErrorMessage(error, 'Could not apply the template. Please try again.'),
+      )
+    } finally {
+      setApplyingTemplate(false)
+    }
+  }
+
   if (!canHaveMilestones) {
     return (
       <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
@@ -512,9 +550,39 @@ function MilestonesSection({
       </div>
 
       {milestones.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No milestones defined yet. Add the first one below.
-        </p>
+        // Empty state — the one place the "Create from template" button
+        // lives. Once the PM has any milestone (template or hand-typed)
+        // the button disappears: the idempotent backend would tolerate a
+        // repeat click, but keeping the button visible after the template
+        // lands would invite confusion about what a second click would do.
+        <div className="flex flex-col gap-3">
+          <p className="text-muted-foreground text-sm">
+            No milestones defined yet. Add the first one below, or use the standard construction
+            template.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="self-start"
+              onClick={() => {
+                void applyTemplate()
+              }}
+              disabled={applyingTemplate}
+            >
+              {applyingTemplate ? 'Creating…' : 'Create from template'}
+            </Button>
+            <span className="text-muted-foreground text-xs">
+              Foundation, Walls, Roof, Electrical, Plumbing, Painting, Finishing.
+            </span>
+          </div>
+          {templateError && (
+            <p role="alert" className="text-destructive text-sm">
+              {templateError}
+            </p>
+          )}
+        </div>
       ) : (
         <Table>
           <TableHeader>
