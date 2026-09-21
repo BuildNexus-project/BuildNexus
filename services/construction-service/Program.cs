@@ -16,11 +16,17 @@ var builder = WebApplication.CreateBuilder(args);
 // ("NotStarted" / "InProgress" / "Completed") rather than the enum's integer
 // ordinal — kinder to the React side, and safer, because inserting or
 // reordering an enum member would silently change the wire value of the
-// existing ones.
+// existing ones. allowIntegerValues: false rejects requests that send the
+// integer form ({"status": 1}) — the wire contract is the string name, and
+// accepting the ordinal too would recreate the "reordering silently changes
+// the meaning" hole the string form was chosen to close.
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter(
+                namingPolicy: null,
+                allowIntegerValues: false));
     });
 builder.Services.AddEndpointsApiExplorer();
 

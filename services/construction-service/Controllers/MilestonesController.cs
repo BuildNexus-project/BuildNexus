@@ -138,7 +138,11 @@ public class MilestonesController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        var milestone = await _repository.UpdateStatusAsync(id, request.Status, cancellationToken);
+        // ModelState.IsValid guarantees Status is non-null: the [Required] on
+        // the nullable enum fires when the field is missing (which a plain
+        // MilestoneStatus value type would have silently bound to NotStarted,
+        // silently demoting a Completed milestone on an empty-body PATCH).
+        var milestone = await _repository.UpdateStatusAsync(id, request.Status!.Value, cancellationToken);
 
         if (milestone is null)
         {
