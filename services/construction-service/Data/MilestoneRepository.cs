@@ -205,7 +205,12 @@ public class MilestoneRepository : IMilestoneRepository
         for (var index = 0; index < templateNames.Count; index++)
         {
             var name = templateNames[index];
-            var stamp = stampBase.AddTicks(index); // 100 ns per Tick — comfortably below DATETIME(6)'s microsecond resolution
+            // One microsecond per row, not one Tick. A Tick is 100 ns — a tenth
+            // of what DATETIME(6) can store — so a per-Tick bump is truncated
+            // away on write and all seven rows land on the same created_at.
+            // ORDER BY created_at, id would then fall through to the random
+            // Guid tiebreaker and hand back the template in arbitrary order.
+            var stamp = stampBase.AddTicks(index * TimeSpan.TicksPerMicrosecond);
 
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;

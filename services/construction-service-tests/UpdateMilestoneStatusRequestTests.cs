@@ -27,7 +27,16 @@ public class UpdateMilestoneStatusRequestTests
     /// so a change there is a change here — tests would then fail
     /// meaningfully rather than silently drift from the app's real behaviour.
     /// </summary>
-    private static readonly JsonSerializerOptions AppJsonOptions = new()
+    /// <remarks>
+    /// Seeded from <see cref="JsonSerializerDefaults.Web"/> because that is
+    /// what <c>AddJsonOptions</c> starts from — camelCase property names and
+    /// case-insensitive matching. A bare <c>new JsonSerializerOptions()</c> is
+    /// case-<em>sensitive</em>, so <c>{"status": …}</c> would not bind to
+    /// <c>Status</c> at all: every payload below would silently leave the
+    /// property null, and the two "is refused" tests would pass for the wrong
+    /// reason — no exception, because nothing was ever read.
+    /// </remarks>
+    private static readonly JsonSerializerOptions AppJsonOptions = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) }
     };
