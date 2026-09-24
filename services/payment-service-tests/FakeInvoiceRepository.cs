@@ -1,0 +1,60 @@
+using BuildNexus.PaymentService.Data;
+using BuildNexus.PaymentService.Models;
+
+namespace BuildNexus.PaymentService.Tests;
+
+/// <summary>
+/// An in-memory <see cref="IInvoiceRepository"/> for the controller suites.
+/// </summary>
+/// <remarks>
+/// The SQL is covered against the real engine in
+/// <see cref="InvoiceRepositoryDatabaseTests"/>; this stands in only for the
+/// storage, so a controller test fails for a controller reason.
+/// </remarks>
+public class FakeInvoiceRepository : IInvoiceRepository
+{
+    private readonly List<Invoice> _invoices = [];
+
+    /// <summary>Every call a controller made, in order, for asserting on arguments.</summary>
+    public List<(Guid ProjectId, decimal Amount, Guid CreatedBy)> Created { get; } = [];
+
+    public Task<Invoice> CreateAsync(
+        Guid projectId,
+        decimal amount,
+        Guid createdBy,
+        CancellationToken cancellationToken = default)
+    {
+        Created.Add((projectId, amount, createdBy));
+
+        var invoice = new Invoice
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = projectId,
+            Amount = amount,
+            Status = InvoiceStatus.Pending,
+            CreatedBy = createdBy,
+            // Nudged forward per row so newest-first ordering is deterministic
+            // rather than depending on how fast the test runs.
+            CreatedAtUtc = DateTime.UtcNow.AddMilliseconds(_invoices.Count),
+            PaidAtUtc = null
+        };
+
+        _invoices.Add(invoice);
+
+        return Task.FromResult(invoice);
+    }
+
+    public Task<IReadOnlyList<Invoice>> ListForProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<Invoice> rows =
+        [
+            .. _invoices
+                .Where(invoice => invoice.ProjectId == projectId)
+                .OrderByDescending(invoice => invoice.CreatedAtUtc)
+        ];
+
+        return Task.FromResult(rows);
+    }
+}

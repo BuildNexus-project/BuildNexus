@@ -83,6 +83,30 @@ public class EndpointRoleDeclarationTests
             RolesForActionOn<Controllers.ClientQuotationsController>("List"));
     }
 
+    [Fact]
+    public void Raising_and_reviewing_invoices_belongs_to_the_project_managers_and_admins()
+    {
+        // US-15 AC-2: billing is the same two roles' business as quoting. A
+        // Client is billed rather than billing, and sees their own invoices
+        // through ClientInvoicesController instead.
+        Assert.Equal(
+            [PlatformRoles.ProjectManager, PlatformRoles.Admin],
+            RolesForActionOn<Controllers.InvoicesController>("Generate"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager, PlatformRoles.Admin],
+            RolesForActionOn<Controllers.InvoicesController>("List"));
+    }
+
+    [Fact]
+    public void Viewing_your_own_projects_invoices_is_the_clients_alone()
+    {
+        // The "current cost" half of the story's purpose. Ownership-scoped the
+        // same way the quotation view is, which InvoicesControllerTests pins.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.ClientInvoicesController>("List"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)

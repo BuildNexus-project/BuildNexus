@@ -128,6 +128,37 @@ public class MigrationScriptTests
         Assert.Contains("client_id", sql, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void An_invoice_records_a_unique_id_an_amount_and_a_status()
+    {
+        // AC-2, restated where the data lives.
+        var sql = StripComments(ReadScript(Script("003_create_invoices.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS invoices", sql, StringComparison.Ordinal);
+        Assert.Contains("pk_invoices PRIMARY KEY (id)", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?i)amount\s+DECIMAL\(15,\s*2\)", sql);
+        Assert.DoesNotMatch(@"(?i)amount\s+(FLOAT|DOUBLE|REAL)", sql);
+    }
+
+    [Fact]
+    public void Every_status_the_service_can_produce_is_allowed_by_the_schema()
+    {
+        // Written over the enum rather than over today's names: a status added to
+        // InvoiceStatus in a later story without a matching migration would
+        // otherwise only surface as a constraint violation the first time
+        // somebody used it.
+        var sql = string.Concat(ScriptNames().Select(ReadScript));
+
+        var missing = Enum.GetNames<Models.InvoiceStatus>()
+            .Where(status => !sql.Contains($"'{status}'", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "These statuses exist in InvoiceStatus but no migration allows them in the database: "
+            + string.Join(", ", missing));
+    }
+
     private static string Script(string fileName) =>
         ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 

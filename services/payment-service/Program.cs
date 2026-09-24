@@ -11,13 +11,28 @@ using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+// System.Text.Json is configured once here so every controller reads and writes
+// the same shape: InvoiceStatus round-trips as its own name ("Pending" / "Paid")
+// rather than the enum's integer ordinal — kinder to the React side, and safer,
+// because inserting or reordering an enum member would silently change the wire
+// value of the existing ones. allowIntegerValues: false rejects requests that
+// send the integer form ({"status": 1}) — the wire contract is the string name,
+// and accepting the ordinal too would recreate the hole the string form closes.
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter(
+                namingPolicy: null,
+                allowIntegerValues: false));
+    });
 builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IQuotationRepository, QuotationRepository>();
 builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and the ownership rows the Client's quotation view is

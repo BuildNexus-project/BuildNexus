@@ -53,6 +53,14 @@ public class PaymentDatabaseFixture : IAsyncLifetime
     /// </summary>
     public ProjectOwnerRepository ProjectOwnerRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.InvoiceRepository"/> over the same development
+    /// database. Added for AC-2: the two CHECK constraints — the amount, and the
+    /// status paired with its settlement date — are enforced by MySQL rather than
+    /// by C#, so only the real engine can show that they refuse what they should.
+    /// </summary>
+    public InvoiceRepository InvoiceRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -73,6 +81,7 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         var connectionFactory = new MySqlConnectionFactory(configuration);
         QuotationRepository = new QuotationRepository(connectionFactory);
         ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
+        InvoiceRepository = new InvoiceRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -90,7 +99,7 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         // LIKE on the run prefix reaches every row this run created. No FKs
         // between them, so the order is a preference for tidiness, not a
         // constraint.
-        foreach (var table in new[] { "quotations", "project_owners" })
+        foreach (var table in new[] { "quotations", "invoices", "project_owners" })
         {
             await using var command = connection.CreateCommand();
             command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";
