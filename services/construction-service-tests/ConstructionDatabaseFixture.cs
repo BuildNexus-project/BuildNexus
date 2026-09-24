@@ -52,6 +52,16 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public MilestoneRepository MilestoneRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.ProjectOwnerRepository"/> over the same
+    /// development database. Added for US-13: the ownership check is what keeps
+    /// one Client from reading another's build progress, so its SQL — the
+    /// <c>INSERT IGNORE</c> that absorbs a redelivered <c>ProjectCreated</c>,
+    /// and the <c>EXISTS</c> that answers the pair — is worth exercising
+    /// against the real engine rather than a stub.
+    /// </summary>
+    public ProjectOwnerRepository ProjectOwnerRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -86,6 +96,7 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         var connectionFactory = new MySqlConnectionFactory(configuration);
         Repository = new MilestoneSetupRepository(connectionFactory);
         MilestoneRepository = new MilestoneRepository(connectionFactory);
+        ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -99,20 +110,14 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         await using var connection = new MySqlConnection(ConnectionString);
         await connection.OpenAsync();
 
-        // Both tables use project_id from the same run-scoped namespace, so a
-        // LIKE on the run prefix reaches every row this run created. No FK
-        // between them, so the order does not matter — construction_milestones
-        // first is a preference for tidiness, not a constraint.
-        await using (var command = connection.CreateCommand())
+        // All three tables use project_id from the same run-scoped namespace, so
+        // a LIKE on the run prefix reaches every row this run created. No FKs
+        // between them, so the order does not matter — this order is a
+        // preference for tidiness, not a constraint.
+        foreach (var table in new[] { "construction_milestones", "milestone_setups", "project_owners" })
         {
-            command.CommandText = "DELETE FROM construction_milestones WHERE project_id LIKE @prefix;";
-            command.Parameters.AddWithValue("@prefix", RunId + "-%");
-            await command.ExecuteNonQueryAsync();
-        }
-
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "DELETE FROM milestone_setups WHERE project_id LIKE @prefix;";
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";
             command.Parameters.AddWithValue("@prefix", RunId + "-%");
             await command.ExecuteNonQueryAsync();
         }

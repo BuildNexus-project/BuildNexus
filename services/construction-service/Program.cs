@@ -48,6 +48,11 @@ builder.Services.AddOptions<KafkaOptions>()
 // approved design. Nothing on any request path waits on it.
 builder.Services.AddHostedService<DesignEventsConsumer>();
 
+// Reads project-events and records which Client owns each project, so the
+// Client-facing progress reads (US-13) can be scoped to the caller's own
+// projects. Nothing on any request path waits on it.
+builder.Services.AddHostedService<ProjectEventsConsumer>();
+
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
 
