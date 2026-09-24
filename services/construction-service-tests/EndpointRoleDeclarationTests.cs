@@ -70,15 +70,30 @@ public class EndpointRoleDeclarationTests
     {
         // US-12: the story is framed around the Project Manager — no other
         // role creates, moves, lists or reads these rows in this story.
-        // Broader read access (a Client watching their project's progress,
-        // an Architect seeing the plan) is a later-story concern; the class
-        // -level [Authorize] on MilestonesController is the single place to
-        // widen it when that happens.
+        // US-13 gave the Client a read of the same data without widening this
+        // gate: it is a separate Client-only endpoint on
+        // ConstructionProgressController, so the PM's contract did not move and
+        // the two gates cannot be widened by accident together.
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("Create"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("List"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("UpdateStatus"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("GetProgress"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("CreateFromTemplate"));
+    }
+
+    [Fact]
+    public void Watching_a_projects_construction_progress_is_the_clients_alone()
+    {
+        // US-13: the story is framed around the Client watching their own
+        // project. The role is only half the gate — the endpoint also refuses a
+        // Client who does not own the project, which
+        // ConstructionProgressControllerTests pins. Staff roles are outside it
+        // because they already have the Project Manager's richer view on
+        // MilestonesController, and an Admin administers accounts rather than
+        // watching builds.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.ConstructionProgressController>("GetSummary"));
     }
 
     private static IEnumerable<MethodInfo> Endpoints() =>

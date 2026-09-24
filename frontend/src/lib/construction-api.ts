@@ -57,6 +57,46 @@ export type ProjectProgress = {
 }
 
 /**
+ * Everything a Client's dashboard needs to show how their project is
+ * advancing (US-13): the per-milestone status, and the rollup the progress bar
+ * is drawn from.
+ *
+ * The rollup fields sit at the top level, mirroring {@link ProjectProgress},
+ * rather than nesting it — the dashboard reads `progressPercent` the same way
+ * the Project Manager's view does. The service recomputes the percentage on
+ * every read, so it cannot disagree with the `milestones` beside it.
+ */
+export type ProjectProgressSummary = {
+  projectId: string
+  totalMilestones: number
+  completedMilestones: number
+  progressPercent: number
+  /** Oldest first — the order the PM planned them in, which is the order the build runs in. */
+  milestones: Milestone[]
+}
+
+/**
+ * How the signed-in Client's project is advancing (US-13 AC-1).
+ *
+ * Client-only, and only for a project the caller owns — the service checks its
+ * own record of who owns the project and answers {@link ApiError} with status
+ * 403 otherwise, whether the project belongs to someone else, has no recorded
+ * owner, or does not exist. A project whose design has not yet been approved
+ * comes back as 403's counterpart, a 404: there is no construction plan to
+ * report on. A project that is approved but has no milestones yet is a real
+ * answer with an empty list at `0`, not an error.
+ *
+ * One request rather than the two the PM's screen makes: the dashboard re-reads
+ * this on a timer, so two calls per refresh would double the traffic and open a
+ * window where the list and the percentage disagree.
+ */
+export function fetchProjectProgressSummary(authFetch: AuthFetch, projectId: string) {
+  return authFetch<ProjectProgressSummary>(
+    `/api/construction/projects/${projectId}/progress-summary`,
+  )
+}
+
+/**
  * What a Project Manager submits to add a milestone.
  *
  * There is no project id here: it is in the URL. The initial status is always

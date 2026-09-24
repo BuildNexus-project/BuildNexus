@@ -34,6 +34,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IMilestoneSetupRepository, MilestoneSetupRepository>();
 builder.Services.AddScoped<IMilestoneRepository, MilestoneRepository>();
+builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.
@@ -46,6 +47,11 @@ builder.Services.AddOptions<KafkaOptions>()
 // Reads design-events and creates a milestone-setup placeholder for each
 // approved design. Nothing on any request path waits on it.
 builder.Services.AddHostedService<DesignEventsConsumer>();
+
+// Reads project-events and records which Client owns each project, so the
+// Client-facing progress reads (US-13) can be scoped to the caller's own
+// projects. Nothing on any request path waits on it.
+builder.Services.AddHostedService<ProjectEventsConsumer>();
 
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
