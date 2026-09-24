@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useParams } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -25,6 +28,20 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError, apiErrorMessage } from '@/lib/api'
 import { fetchAllUsers, type AdminUserSummary } from '@/lib/auth-api'
+import {
+  createMilestone,
+  createMilestonesFromTemplate,
+  fetchProjectMilestones,
+  fetchProjectProgress,
+  MILESTONE_STATUS_LABELS,
+  MILESTONE_STATUSES,
+  updateMilestoneStatus,
+  type Milestone,
+  type MilestoneStatus,
+  type ProjectProgress,
+} from '@/lib/construction-api'
+import { createMilestoneSchema, type CreateMilestoneValues } from '@/lib/construction-schemas'
+import { applyApiErrorToForm } from '@/lib/form-errors'
 import {
   assignArchitect,
   assignProjectManager,
@@ -204,6 +221,456 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 }
 
 /**
+ * The construction milestones for a project (US-12) — one row per milestone,
+ * with a Select to move each one along and a small form to add the next one.
+ * Above the table sits a live progress rollup: a percentage the service
+ * recomputes on every read from the milestones behind it, so what shows
+ * matches what is stored.
+ *
+ * Rendered only for a Project Manager: every endpoint behind this section is
+ * PM-only, and offering controls the service will refuse is worse than not
+ * showing them at all. A caller whose project has not yet had its design
+ * approved sees a short explanation of when the section will open rather than
+ * a failed request.
+ */
+function MilestonesSection({
+  projectId,
+  projectStatus,
+}: {
+  projectId: string
+  projectStatus: ProjectStatus
+}) {
+  const { authFetch } = useAuth()
+
+  const [milestones, setMilestones] = useState<Milestone[] | null>(null)
+  const [progress, setProgress] = useState<ProjectProgress | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [designNotReadyYet, setDesignNotReadyYet] = useState(false)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  // "Create from template" one-click flow: applyingTemplate flips true while
+  // the POST is in flight so the button can show a busy label and refuse a
+  // double-click. templateError surfaces the service's own reason (a design
+  // -not-approved 400, or anything else) next to the button.
+  const [applyingTemplate, setApplyingTemplate] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateMilestoneValues>({
+    resolver: zodResolver(createMilestoneSchema),
+    defaultValues: { name: '' },
+  })
+
+  // The service refuses milestone reads and writes for a project whose
+  // milestone_setups row has not been planted — Pending and Designing are
+  // exactly the statuses where that row does not yet exist. Not asking at
+  // all beats asking and rendering an error the caller cannot act on.
+  // Cancelled is left out on purpose: a closed-out project has no
+  // construction plan, so the section would only ever be read-only clutter.
+  const canHaveMilestones =
+    projectStatus === 'DesignApproved' ||
+    projectStatus === 'Construction' ||
+    projectStatus === 'Completed'
+
+  /**
+   * The load pass — extracted so the initial useEffect and the "Try again"
+   * button on the designNotReadyYet variant both run the same code. Wrapped
+   * in useCallback so the effect's dependency array stays stable; without
+   * that, the effect would refire on every render.
+   *
+   * Returns a `cancelled` guard the effect can flip during teardown, so a
+   * component that unmounts mid-fetch does not call setState on a dead
+   * instance. The retry button passes a fresh guard that never flips —
+   * the click is a foreground action, not a lifecycle race.
+   */
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
+      // Clear the recoverable states before the new attempt so the UI does
+      // not show a stale "try again" hint while the retry is in flight.
+      setDesignNotReadyYet(false)
+      setLoadError(null)
+
+      try {
+        // Both concurrent. Progress can 404 on a narrow race — the project
+        // moved to DesignApproved but the DesignApproved event has not been
+        // consumed by the Construction Service yet — so a 404 here becomes
+        // a short "try again" note rather than a red error.
+        const [milestonesResult, progressResult] = await Promise.all([
+          fetchProjectMilestones(authFetch, projectId),
+          fetchProjectProgress(authFetch, projectId).catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 404) {
+              return null
+            }
+            throw error
+          }),
+        ])
+
+        if (isCancelled()) {
+          return
+        }
+
+        setMilestones(milestonesResult)
+        setProgress(progressResult)
+        setDesignNotReadyYet(progressResult === null)
+      } catch (error) {
+        if (!isCancelled()) {
+          setLoadError(apiErrorMessage(error, 'Could not load milestones for this project.'))
+        }
+      }
+    },
+    [authFetch, projectId],
+  )
+
+  useEffect(() => {
+    if (!canHaveMilestones) {
+      return
+    }
+
+    let cancelled = false
+    void load(() => cancelled)
+
+    return () => {
+      cancelled = true
+    }
+  }, [canHaveMilestones, load])
+
+  /**
+   * Re-reads the progress rollup after something has changed the milestones.
+   *
+   * AC-3: the percentage is recomputed by the service on every read, so this
+   * is what makes the number on screen match the row the PM just moved. A
+   * 404 that only appears now — after the project used to answer — is the
+   * same race as on the initial load; the same friendly note is shown.
+   */
+  async function refreshProgress() {
+    try {
+      const fresh = await fetchProjectProgress(authFetch, projectId)
+      setProgress(fresh)
+      setDesignNotReadyYet(false)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        setProgress(null)
+        setDesignNotReadyYet(true)
+      }
+      // Any other error: leave the existing progress number in place rather
+      // than blank the value the PM is looking at. The status-change error
+      // banner already tells them the change itself failed.
+    }
+  }
+
+  async function onCreate(values: CreateMilestoneValues) {
+    setFormError(null)
+
+    try {
+      const created = await createMilestone(authFetch, projectId, { name: values.name })
+
+      // Append locally rather than refetch the list — the service ordered the
+      // rows oldest-first and this new one is the newest, so it belongs at
+      // the end. One fewer request, one less flicker for the PM.
+      setMilestones((previous) => (previous ? [...previous, created] : [created]))
+      reset({ name: '' })
+
+      await refreshProgress()
+    } catch (error) {
+      // A 400 detail from the service names the specific reason — the
+      // design has not yet been approved, or the name failed validation —
+      // and applyApiErrorToForm routes per-field messages to the form.
+      // A 409 (duplicate name) has no field to attach to, so its detail
+      // reads as the form-level message here.
+      setFormError(
+        applyApiErrorToForm(error, setError, 'Could not add this milestone. Please try again.'),
+      )
+    }
+  }
+
+  async function onStatusChange(milestone: Milestone, next: MilestoneStatus) {
+    if (next === milestone.status) {
+      return
+    }
+
+    setUpdateError(null)
+    setUpdatingId(milestone.id)
+
+    try {
+      const updated = await updateMilestoneStatus(authFetch, milestone.id, next)
+
+      setMilestones((previous) =>
+        previous ? previous.map((row) => (row.id === updated.id ? updated : row)) : null,
+      )
+
+      // AC-3: the percentage recalculates automatically on every status
+      // change. The PATCH reply carries the fresh milestone but not the
+      // rollup — that is a separate query — so the number below is re-read
+      // to keep it in step with the row that just moved.
+      await refreshProgress()
+    } catch (error) {
+      setUpdateError(apiErrorMessage(error, 'Could not update this milestone. Please try again.'))
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  /**
+   * Plants the seven canonical milestones on the project in one call.
+   *
+   * The service side is idempotent (names already on the project are
+   * silently skipped), so a race with the PM typing a milestone by hand in
+   * the same second, or a repeat click, is harmless — the response is the
+   * union of what was already there and what was just inserted, which we
+   * set as the whole list. The progress rollup then refreshes for AC-3.
+   */
+  async function applyTemplate() {
+    setTemplateError(null)
+    setApplyingTemplate(true)
+
+    try {
+      const result = await createMilestonesFromTemplate(authFetch, projectId)
+      // The response is the full template set (previously-present +
+      // newly-inserted) in canonical order — set it as the list rather
+      // than appending, since the template call is a state-setting
+      // operation from the PM's point of view: "make the project look
+      // like the template". Ordering is already correct on the wire.
+      setMilestones(result)
+      await refreshProgress()
+    } catch (error) {
+      setTemplateError(
+        apiErrorMessage(error, 'Could not apply the template. Please try again.'),
+      )
+    } finally {
+      setApplyingTemplate(false)
+    }
+  }
+
+  if (!canHaveMilestones) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          Milestones open once this project's design has been approved.
+        </p>
+      </section>
+    )
+  }
+
+  if (designNotReadyYet) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          This project's design approval hasn't reached the Construction Service yet. Try again in a
+          moment.
+        </p>
+        {/* Recoverable state → give the PM the action they need, so the
+            section is not a dead-end that forces a full-page reload. The
+            button re-runs the same load pass the effect ran on mount. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={() => {
+            void load(() => false)
+          }}
+        >
+          Try again
+        </Button>
+      </section>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p role="alert" className="text-destructive text-sm">
+          {loadError}
+        </p>
+      </section>
+    )
+  }
+
+  if (milestones === null || progress === null) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p className="text-muted-foreground text-sm">Loading milestones…</p>
+      </section>
+    )
+  }
+
+  return (
+    <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <span className="text-muted-foreground text-xs">
+          {progress.completedMilestones} of {progress.totalMilestones} completed
+        </span>
+      </div>
+
+      {/* The rollup: a decimal-precise number and a bar. tabular-nums so the
+          two decimals do not shift the layout as the value moves. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between">
+          <span className="text-2xl font-semibold tabular-nums">
+            {progress.progressPercent.toFixed(2)}%
+          </span>
+          <span className="text-muted-foreground text-xs">
+            Recalculates automatically as milestones move.
+          </span>
+        </div>
+        <div
+          role="progressbar"
+          aria-valuenow={Math.round(progress.progressPercent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Project progress"
+          className="bg-muted h-2 w-full overflow-hidden rounded-full"
+        >
+          <div
+            className="bg-primary h-full transition-[width] duration-500 ease-out"
+            style={{ width: `${progress.progressPercent}%` }}
+          />
+        </div>
+      </div>
+
+      {milestones.length === 0 ? (
+        // Empty state — the one place the "Create from template" button
+        // lives. Once the PM has any milestone (template or hand-typed)
+        // the button disappears: the idempotent backend would tolerate a
+        // repeat click, but keeping the button visible after the template
+        // lands would invite confusion about what a second click would do.
+        <div className="flex flex-col gap-3">
+          <p className="text-muted-foreground text-sm">
+            No milestones defined yet. Add the first one below, or use the standard construction
+            template.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="self-start"
+              onClick={() => {
+                void applyTemplate()
+              }}
+              disabled={applyingTemplate}
+            >
+              {applyingTemplate ? 'Creating…' : 'Create from template'}
+            </Button>
+            <span className="text-muted-foreground text-xs">
+              Foundation, Walls, Roof, Electrical, Plumbing, Painting, Finishing.
+            </span>
+          </div>
+          {templateError && (
+            <p role="alert" className="text-destructive text-sm">
+              {templateError}
+            </p>
+          )}
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Milestone</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last updated</TableHead>
+            </TableRow>
+          </TableHeader>
+
+          <TableBody>
+            {milestones.map((milestone) => (
+              <TableRow key={milestone.id}>
+                <TableCell className="font-medium">{milestone.name}</TableCell>
+                <TableCell>
+                  <Select
+                    value={milestone.status}
+                    onValueChange={(value) => {
+                      if (value) {
+                        void onStatusChange(milestone, value as MilestoneStatus)
+                      }
+                    }}
+                    disabled={updatingId !== null}
+                  >
+                    <SelectTrigger
+                      className="w-full sm:w-40"
+                      aria-label={`Change status of ${milestone.name}`}
+                    >
+                      <SelectValue>
+                        {(value: MilestoneStatus | null) =>
+                          value ? MILESTONE_STATUS_LABELS[value] : '—'
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MILESTONE_STATUSES.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {MILESTONE_STATUS_LABELS[status]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs">
+                  {formatMoment(milestone.updatedAtUtc)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {updateError && (
+        <p role="alert" className="text-destructive text-sm">
+          {updateError}
+        </p>
+      )}
+
+      <form
+        onSubmit={handleSubmit(onCreate)}
+        noValidate
+        className="flex flex-col gap-3 sm:flex-row sm:items-end"
+      >
+        <Field className="flex-1">
+          <FieldLabel htmlFor="milestoneName">Add a milestone</FieldLabel>
+          <Input
+            id="milestoneName"
+            placeholder="e.g. Foundation poured"
+            aria-invalid={Boolean(errors.name)}
+            {...register('name')}
+          />
+          <FieldError errors={[errors.name]} />
+        </Field>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Adding…' : 'Add'}
+        </Button>
+      </form>
+
+      {formError && (
+        <p role="alert" className="text-destructive text-sm">
+          {formError}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
  * One project in full, with its status history, and the controls to move it
  * along (US-06).
  *
@@ -239,6 +706,11 @@ export function ProjectDetailPage() {
   // Client an error for something that is not theirs to see. Staff assignment
   // is Admin-only for the same reason.
   const isAdmin = user !== null && ADMIN_ROLES.includes(user.role)
+
+  // The Milestones section (US-12) is Project-Manager only, matching the
+  // service's own [Authorize] gate on the endpoints behind it. Offering a
+  // control the service will refuse is worse than not showing it at all.
+  const isProjectManager = user !== null && user.role === 'ProjectManager'
 
   useEffect(() => {
     if (!projectId) {
@@ -758,6 +1230,13 @@ export function ProjectDetailPage() {
                   </Table>
                 )}
               </section>
+            </>
+          )}
+
+          {isProjectManager && (
+            <>
+              <Separator />
+              <MilestonesSection projectId={project.id} projectStatus={project.status} />
             </>
           )}
 

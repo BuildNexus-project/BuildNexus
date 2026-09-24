@@ -11,12 +11,29 @@ using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+// System.Text.Json is configured once here so every controller reads and
+// writes the same shape: MilestoneStatus round-trips as its own name
+// ("NotStarted" / "InProgress" / "Completed") rather than the enum's integer
+// ordinal — kinder to the React side, and safer, because inserting or
+// reordering an enum member would silently change the wire value of the
+// existing ones. allowIntegerValues: false rejects requests that send the
+// integer form ({"status": 1}) — the wire contract is the string name, and
+// accepting the ordinal too would recreate the "reordering silently changes
+// the meaning" hole the string form was chosen to close.
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter(
+                namingPolicy: null,
+                allowIntegerValues: false));
+    });
 builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IMilestoneSetupRepository, MilestoneSetupRepository>();
+builder.Services.AddScoped<IMilestoneRepository, MilestoneRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.
