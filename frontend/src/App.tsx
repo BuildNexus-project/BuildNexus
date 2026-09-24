@@ -12,12 +12,13 @@ import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
 
 export default function App() {
   return (
@@ -87,6 +88,18 @@ export default function App() {
             <ProtectedRoute>
               <DesignDocumentsPage />
             </ProtectedRoute>
+          }
+        />
+        {/* Project-Manager and Admin, matching the Payment Service's own gate on
+            generating a quotation and raising an invoice. An Architect designs
+            rather than prices, and a Client is told the figure rather than
+            setting it — they see their own costs through /my-costs instead. */}
+        <Route
+          path="/projects/:projectId/costs"
+          element={
+            <RoleRoute allowedRoles={COST_MANAGEMENT_ROLES}>
+              <ProjectCostsPage />
+            </RoleRoute>
           }
         />
         {/* Client-only, matching the Construction Service's own gate on the
