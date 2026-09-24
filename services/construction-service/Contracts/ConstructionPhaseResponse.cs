@@ -38,6 +38,12 @@ public class ConstructionPhaseResponse
     /// <summary><c>null</c> until the project is handed over to the Client.</summary>
     public DateTime? HandedOverAtUtc { get; set; }
 
+    /// <summary>
+    /// The Project Manager who handed the project over; <c>null</c> until then.
+    /// Handover raises no event, so this is the only record of who ended the project.
+    /// </summary>
+    public Guid? HandedOverByUserId { get; set; }
+
     public DateTime UpdatedAtUtc { get; set; }
 
     public static ConstructionPhaseResponse From(ConstructionPhase phase) => new()
@@ -47,6 +53,7 @@ public class ConstructionPhaseResponse
         StartedAtUtc = phase.StartedAtUtc,
         CompletedAtUtc = phase.CompletedAtUtc,
         HandedOverAtUtc = phase.HandedOverAtUtc,
+        HandedOverByUserId = phase.HandedOverByUserId,
         UpdatedAtUtc = phase.UpdatedAtUtc
     };
 }

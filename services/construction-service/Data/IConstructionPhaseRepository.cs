@@ -57,7 +57,32 @@ public enum ConstructionTransitionOutcome
     MilestonesIncomplete,
 
     /// <summary>Construction is already marked complete, or already handed over.</summary>
-    AlreadyCompleted
+    AlreadyCompleted,
+
+    // ---- handover ----
+
+    /// <summary>
+    /// The build is still under way. AC-4 hands over a <em>finished</em> project, so
+    /// a <c>Started</c> phase is refused — distinct from
+    /// <see cref="NotStarted"/>, which is the project that never began.
+    /// </summary>
+    NotCompleted,
+
+    /// <summary>
+    /// The project's final payment is not recorded as settled — AC-4's second
+    /// precondition, read from the local marker the <c>FinalPaymentSettled</c>
+    /// consumer plants.
+    /// </summary>
+    /// <remarks>
+    /// Also the answer while the Payment Service is unbuilt and publishes nothing, so
+    /// every handover is refused this way until it ships. That is the safe direction:
+    /// a project held back can be handed over once the marker arrives, whereas one
+    /// handed over unpaid cannot be un-handed.
+    /// </remarks>
+    FinalPaymentNotSettled,
+
+    /// <summary>The project has already been handed over. Terminal — nothing follows it.</summary>
+    AlreadyHandedOver
 }
 
 /// <summary>
@@ -124,6 +149,32 @@ public interface IConstructionPhaseRepository
     Task<ConstructionTransitionResult> CompleteAsync(
         Guid projectId,
         Guid completedBy,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Hands the finished project over to the Client, moving it to its terminal state
+    /// (AC-4).
+    /// </summary>
+    /// <remarks>
+    /// Two preconditions, checked independently of each other and of the earlier
+    /// transitions' gates: the phase must be <c>Completed</c>, and the project's final
+    /// payment must be recorded as settled. The settlement is read from
+    /// <c>payment_settlements</c> in the same transaction as the write — the local
+    /// replica of a Payment Service fact, so no cross-service call sits on this path.
+    /// <para>
+    /// Publishes nothing. US-14 names two events and this is not one of them: the
+    /// Project Service reaches <c>Completed</c> on <c>ConstructionCompleted</c>, and
+    /// the handover itself is this service's own terminal state plus the summary the
+    /// Client reads from it.
+    /// </para>
+    /// </remarks>
+    /// <param name="handedOverBy">
+    /// The Project Manager actioning the handover. Recorded on the phase row as the
+    /// author of the terminal move.
+    /// </param>
+    Task<ConstructionTransitionResult> HandOverAsync(
+        Guid projectId,
+        Guid handedOverBy,
         CancellationToken cancellationToken = default);
 
     /// <summary>

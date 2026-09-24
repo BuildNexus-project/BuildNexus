@@ -23,6 +23,9 @@ public sealed class FakeConstructionPhaseRepository : IConstructionPhaseReposito
     /// <summary>One entry per <see cref="CompleteAsync"/> call, in order.</summary>
     public List<TransitionCall> CompleteCalls { get; } = [];
 
+    /// <summary>One entry per <see cref="HandOverAsync"/> call, in order.</summary>
+    public List<TransitionCall> HandOverCalls { get; } = [];
+
     /// <summary>One entry per <see cref="GetForProjectAsync"/> call, in order.</summary>
     public List<Guid> GetCalls { get; } = [];
 
@@ -33,6 +36,10 @@ public sealed class FakeConstructionPhaseRepository : IConstructionPhaseReposito
     /// <summary>What <see cref="CompleteAsync"/> answers.</summary>
     public ConstructionTransitionResult NextCompleteResult { get; set; } =
         ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.NotStarted);
+
+    /// <summary>What <see cref="HandOverAsync"/> answers.</summary>
+    public ConstructionTransitionResult NextHandOverResult { get; set; } =
+        ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.NotCompleted);
 
     /// <summary>What <see cref="GetForProjectAsync"/> answers. Null means construction has not started.</summary>
     public ConstructionPhase? NextPhase { get; set; }
@@ -53,6 +60,15 @@ public sealed class FakeConstructionPhaseRepository : IConstructionPhaseReposito
     {
         CompleteCalls.Add(new TransitionCall(projectId, completedBy));
         return Task.FromResult(NextCompleteResult);
+    }
+
+    public Task<ConstructionTransitionResult> HandOverAsync(
+        Guid projectId,
+        Guid handedOverBy,
+        CancellationToken cancellationToken = default)
+    {
+        HandOverCalls.Add(new TransitionCall(projectId, handedOverBy));
+        return Task.FromResult(NextHandOverResult);
     }
 
     public Task<ConstructionPhase?> GetForProjectAsync(

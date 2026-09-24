@@ -23,7 +23,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
     private const int DuplicateKeyErrorNumber = 1062;
 
     private const string SelectColumns =
-        "project_id, status, started_at, completed_at, handed_over_at, updated_at";
+        "project_id, status, started_at, completed_at, handed_over_at, handed_over_by, updated_at";
 
     private readonly IDbConnectionFactory _connectionFactory;
 
@@ -68,14 +68,15 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
             StartedAtUtc = now,
             CompletedAtUtc = null,
             HandedOverAtUtc = null,
+            HandedOverByUserId = null,
             UpdatedAtUtc = now
         };
 
         const string insertSql = @"
             INSERT INTO construction_phases
-                (project_id, status, started_at, completed_at, handed_over_at, updated_at)
+                (project_id, status, started_at, completed_at, handed_over_at, handed_over_by, updated_at)
             VALUES
-                (@projectId, @status, @startedAt, NULL, NULL, @updatedAt);";
+                (@projectId, @status, @startedAt, NULL, NULL, NULL, @updatedAt);";
 
         try
         {
@@ -189,6 +190,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
             StartedAtUtc = existing.StartedAtUtc,
             CompletedAtUtc = now,
             HandedOverAtUtc = existing.HandedOverAtUtc,
+            HandedOverByUserId = existing.HandedOverByUserId,
             UpdatedAtUtc = now
         };
 
@@ -204,6 +206,95 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         await transaction.CommitAsync(cancellationToken);
 
         return ConstructionTransitionResult.Succeeded(completedPhase);
+    }
+
+    public async Task<ConstructionTransitionResult> HandOverAsync(
+        Guid projectId,
+        Guid handedOverBy,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        // Locked for the length of the transaction, so two handovers cannot both read
+        // the same Completed row and both act on it.
+        var existing = await ReadPhaseForUpdateAsync(connection, transaction, projectId, cancellationToken);
+
+        if (existing is null)
+        {
+            // The build was never started, so there is nothing to hand over.
+            return ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.NotStarted);
+        }
+
+        if (existing.Status is ConstructionPhaseStatus.HandedOver)
+        {
+            // Terminal: nothing may leave this state, a second handover included.
+            return ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.AlreadyHandedOver);
+        }
+
+        if (existing.Status is not ConstructionPhaseStatus.Completed)
+        {
+            // Still Started. AC-4 hands over a finished project, and this is its own
+            // answer rather than being folded into "not started" — the build is under
+            // way, which is a different thing for the PM to be told.
+            return ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.NotCompleted);
+        }
+
+        // AC-4's second precondition, checked independently of the first: the final
+        // payment must be settled. Read from the local marker the FinalPaymentSettled
+        // consumer plants, in this same transaction — the Payment Service is never
+        // called on this path.
+        if (!await IsFinalPaymentSettledAsync(connection, transaction, projectId, cancellationToken))
+        {
+            return ConstructionTransitionResult.Rejected(
+                ConstructionTransitionOutcome.FinalPaymentNotSettled);
+        }
+
+        var now = DateTime.UtcNow;
+
+        // The WHERE carries the status this transaction read under the row lock, so a
+        // concurrent transition cannot slip a different state in underneath.
+        const string updateSql = @"
+            UPDATE construction_phases
+            SET status = @status,
+                handed_over_at = @handedOverAt,
+                handed_over_by = @handedOverBy,
+                updated_at = @updatedAt
+            WHERE project_id = @projectId AND status = @expectedStatus;";
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = updateSql;
+            AddParameter(command, "@status", ConstructionPhaseStatus.HandedOver.ToString());
+            AddParameter(command, "@handedOverAt", now);
+            AddParameter(command, "@handedOverBy", handedOverBy);
+            AddParameter(command, "@updatedAt", now);
+            AddParameter(command, "@projectId", projectId);
+            AddParameter(command, "@expectedStatus", ConstructionPhaseStatus.Completed.ToString());
+
+            if (await command.ExecuteNonQueryAsync(cancellationToken) == 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return ConstructionTransitionResult.Rejected(
+                    ConstructionTransitionOutcome.AlreadyHandedOver);
+            }
+        }
+
+        // Nothing is enqueued: handover raises no event. US-14 names two, and the
+        // Project Service already reaches Completed on ConstructionCompleted.
+        await transaction.CommitAsync(cancellationToken);
+
+        return ConstructionTransitionResult.Succeeded(new ConstructionPhase
+        {
+            ProjectId = existing.ProjectId,
+            Status = ConstructionPhaseStatus.HandedOver,
+            StartedAtUtc = existing.StartedAtUtc,
+            CompletedAtUtc = existing.CompletedAtUtc,
+            HandedOverAtUtc = now,
+            HandedOverByUserId = handedOverBy,
+            UpdatedAtUtc = now
+        });
     }
 
     public async Task<ConstructionPhase?> GetForProjectAsync(
@@ -264,6 +355,40 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         const string sql = @"
             SELECT 1
             FROM milestone_setups
+            WHERE project_id = @projectId
+            LIMIT 1;";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        AddParameter(command, "@projectId", projectId);
+
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
+    /// <summary>
+    /// Is this project's final payment recorded as settled — the local answer to AC-4's
+    /// payment precondition, planted by <c>PaymentEventsConsumer</c>.
+    /// </summary>
+    /// <remarks>
+    /// Read here rather than through <see cref="IPaymentSettlementRepository"/> so it
+    /// runs on the caller's connection and inside its transaction: a settlement read on
+    /// a second connection could be revoked between the check and the write, and AC-4's
+    /// whole point is that an unpaid project is not handed over.
+    /// <para>
+    /// A project with no row reads as not settled, which covers both "not paid" and
+    /// "this service has not learned of the payment yet".
+    /// </para>
+    /// </remarks>
+    private static async Task<bool> IsFinalPaymentSettledAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = @"
+            SELECT 1
+            FROM payment_settlements
             WHERE project_id = @projectId
             LIMIT 1;";
 
@@ -342,6 +467,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         StartedAtUtc = ReadUtc(reader, "started_at")!.Value,
         CompletedAtUtc = ReadUtc(reader, "completed_at"),
         HandedOverAtUtc = ReadUtc(reader, "handed_over_at"),
+        HandedOverByUserId = ReadNullableGuid(reader, "handed_over_by"),
         UpdatedAtUtc = ReadUtc(reader, "updated_at")!.Value
     };
 
@@ -357,6 +483,17 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
     /// already keeps. Same reasoning as <see cref="MilestoneRepository"/>'s own
     /// mapping.
     /// </remarks>
+    /// <summary>
+    /// Reads a nullable <c>CHAR(36)</c> id. Null on a phase that has not reached the
+    /// stage the column records.
+    /// </summary>
+    private static Guid? ReadNullableGuid(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+
+        return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
+    }
+
     private static DateTime? ReadUtc(DbDataReader reader, string column)
     {
         var ordinal = reader.GetOrdinal(column);

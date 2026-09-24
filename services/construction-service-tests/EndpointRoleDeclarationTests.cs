@@ -97,6 +97,9 @@ public class EndpointRoleDeclarationTests
             RolesForActionOn<Controllers.ConstructionPhaseController>("Complete"));
         Assert.Equal(
             [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("HandOver"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
             RolesForActionOn<Controllers.ConstructionPhaseController>("Get"));
     }
 

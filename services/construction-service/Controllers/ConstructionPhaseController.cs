@@ -105,6 +105,43 @@ public class ConstructionPhaseController : ControllerBase
     }
 
     /// <summary>
+    /// Hands the finished project over to the Client, moving it to its terminal state
+    /// (AC-4).
+    /// </summary>
+    /// <remarks>
+    /// Gated independently of the earlier transitions: construction must be marked
+    /// complete <em>and</em> the project's final payment recorded as settled. The
+    /// settlement is a local replica of a Payment Service fact, read in the same
+    /// transaction as the write, so nothing on this path waits on that service.
+    /// <para>
+    /// Publishes nothing — US-14 names two events and this is not one of them. Once a
+    /// project is handed over no transition may leave that state.
+    /// </para>
+    /// </remarks>
+    /// <response code="200">The phase as it now stands, newly HandedOver.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid, or carried no usable subject claim.</response>
+    /// <response code="403">The caller is not a Project Manager.</response>
+    /// <response code="409">A precondition refused the transition: construction has not started or is not complete, the final payment is not settled, or the project is already handed over.</response>
+    [HttpPost("api/construction/projects/{projectId:guid}/handover")]
+    [ProducesResponseType(typeof(ConstructionPhaseResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> HandOver(Guid projectId, CancellationToken cancellationToken)
+    {
+        if (!TryGetCallerId(out var handedOverBy))
+        {
+            return Unauthorized();
+        }
+
+        var result = await _phases.HandOverAsync(projectId, handedOverBy, cancellationToken);
+
+        return result.Outcome is ConstructionTransitionOutcome.Succeeded
+            ? Ok(ConstructionPhaseResponse.From(result.Phase!))
+            : Refused(result.Outcome);
+    }
+
+    /// <summary>
     /// Where the project's build phase stands, so the PM's screen can show only the
     /// transition that is actually available next.
     /// </summary>
@@ -215,6 +252,20 @@ public class ConstructionPhaseController : ControllerBase
             ConstructionTransitionOutcome.AlreadyCompleted => (
                 "Construction already complete.",
                 "This project's build has already been marked complete."),
+
+            ConstructionTransitionOutcome.NotCompleted => (
+                "Construction is not complete.",
+                "Mark construction complete before handing the project over to the client."),
+
+            ConstructionTransitionOutcome.FinalPaymentNotSettled => (
+                "Final payment not settled.",
+                "This project's final payment has not been settled yet, so it cannot be "
+                + "handed over."),
+
+            ConstructionTransitionOutcome.AlreadyHandedOver => (
+                "Project already handed over.",
+                "This project has already been handed over to the client. Nothing follows "
+                + "that stage."),
 
             // Succeeded never reaches here, and a member added to the enum without a
             // sentence should fail loudly rather than answer with an empty problem

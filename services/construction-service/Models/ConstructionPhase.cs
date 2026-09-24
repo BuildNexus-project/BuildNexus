@@ -62,6 +62,18 @@ public class ConstructionPhase
     /// <summary>When the project was handed over to the Client; <c>null</c> until then.</summary>
     public DateTime? HandedOverAtUtc { get; init; }
 
+    /// <summary>
+    /// The Project Manager who handed the project over, or <c>null</c> when it has not
+    /// been handed over yet.
+    /// </summary>
+    /// <remarks>
+    /// Recorded here rather than on an event because handover raises none — so this is
+    /// the only record of who ended the project. Also <c>null</c> on a row handed over
+    /// before migration 008 added the column, which is a truer answer than a made-up
+    /// id.
+    /// </remarks>
+    public Guid? HandedOverByUserId { get; init; }
+
     /// <summary>Stamped on every transition, so a caller can see when the phase last moved.</summary>
     public required DateTime UpdatedAtUtc { get; init; }
 }

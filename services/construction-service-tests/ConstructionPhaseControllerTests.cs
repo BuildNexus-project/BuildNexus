@@ -28,6 +28,7 @@ public class ConstructionPhaseControllerTests
     private static readonly Guid CallerId = Guid.Parse("22222222-0000-4000-8000-000000000002");
     private static readonly DateTime StartedAt = new(2026, 3, 2, 10, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime CompletedAt = new(2026, 9, 14, 16, 45, 0, DateTimeKind.Utc);
+    private static readonly DateTime HandedOverAt = new(2026, 9, 20, 11, 0, 0, DateTimeKind.Utc);
 
     // ---------- Start ----------
 
@@ -183,6 +184,109 @@ public class ConstructionPhaseControllerTests
         Assert.Contains("Start construction", problem.Detail!, StringComparison.Ordinal);
     }
 
+    // ---------- HandOver ----------
+
+    [Fact]
+    public async Task HandOver_returns_200_with_the_terminal_phase()
+    {
+        var repository = new FakeConstructionPhaseRepository
+        {
+            NextHandOverResult = ConstructionTransitionResult.Succeeded(HandedOverPhase())
+        };
+        var controller = Controller(repository);
+
+        var result = await controller.HandOver(ProjectId, default);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var body = Assert.IsType<ConstructionPhaseResponse>(ok.Value);
+
+        Assert.Equal(ConstructionPhaseStatus.HandedOver, body.Status);
+        Assert.Equal(HandedOverAt, body.HandedOverAtUtc);
+        // Handover raises no event, so the response is where the actor surfaces.
+        Assert.Equal(CallerId, body.HandedOverByUserId);
+        // The whole span is still reported — the Client's summary needs all three dates.
+        Assert.Equal(StartedAt, body.StartedAtUtc);
+        Assert.Equal(CompletedAt, body.CompletedAtUtc);
+
+        var call = Assert.Single(repository.HandOverCalls);
+        Assert.Equal(ProjectId, call.ProjectId);
+        Assert.Equal(CallerId, call.ActingUserId);
+    }
+
+    [Theory]
+    [InlineData(ConstructionTransitionOutcome.NotStarted)]
+    [InlineData(ConstructionTransitionOutcome.NotCompleted)]
+    [InlineData(ConstructionTransitionOutcome.FinalPaymentNotSettled)]
+    [InlineData(ConstructionTransitionOutcome.AlreadyHandedOver)]
+    public async Task HandOver_returns_409_naming_the_precondition_that_refused_it(
+        ConstructionTransitionOutcome outcome)
+    {
+        var repository = new FakeConstructionPhaseRepository
+        {
+            NextHandOverResult = ConstructionTransitionResult.Rejected(outcome)
+        };
+        var controller = Controller(repository);
+
+        var problem = AssertConflict(await controller.HandOver(ProjectId, default));
+
+        Assert.Equal(outcome.ToString(), problem.Extensions["reason"]);
+        Assert.False(string.IsNullOrWhiteSpace(problem.Detail));
+    }
+
+    [Fact]
+    public async Task HandOver_explains_an_unsettled_payment_in_its_own_words()
+    {
+        // The refusal a PM is most likely to hit and least likely to guess the cause of,
+        // so its sentence has to name the payment rather than the build.
+        var repository = new FakeConstructionPhaseRepository
+        {
+            NextHandOverResult = ConstructionTransitionResult.Rejected(
+                ConstructionTransitionOutcome.FinalPaymentNotSettled)
+        };
+
+        var problem = AssertConflict(await Controller(repository).HandOver(ProjectId, default));
+
+        Assert.Equal("Final payment not settled.", problem.Title);
+        Assert.Contains("final payment", problem.Detail!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HandOver_distinguishes_an_unfinished_build_from_an_unpaid_one()
+    {
+        // Two 409s that must not read the same: one means "go and finish the build", the
+        // other "go and chase the invoice".
+        var notComplete = AssertConflict(await Controller(new FakeConstructionPhaseRepository
+        {
+            NextHandOverResult = ConstructionTransitionResult.Rejected(
+                ConstructionTransitionOutcome.NotCompleted)
+        }).HandOver(ProjectId, default));
+
+        var notPaid = AssertConflict(await Controller(new FakeConstructionPhaseRepository
+        {
+            NextHandOverResult = ConstructionTransitionResult.Rejected(
+                ConstructionTransitionOutcome.FinalPaymentNotSettled)
+        }).HandOver(ProjectId, default));
+
+        Assert.NotEqual(notComplete.Title, notPaid.Title);
+        Assert.NotEqual(notComplete.Detail, notPaid.Detail);
+    }
+
+    [Fact]
+    public async Task HandOver_refuses_a_token_with_no_usable_subject()
+    {
+        // The terminal move especially must not be recorded against nobody: handover
+        // raises no event, so this row is the only place the author is ever written.
+        var repository = new FakeConstructionPhaseRepository
+        {
+            NextHandOverResult = ConstructionTransitionResult.Succeeded(HandedOverPhase())
+        };
+
+        var result = await ControllerWithoutSubject(repository).HandOver(ProjectId, default);
+
+        Assert.IsType<UnauthorizedResult>(result);
+        Assert.Empty(repository.HandOverCalls);
+    }
+
     // ---------- Get ----------
 
     [Fact]
@@ -316,6 +420,17 @@ public class ConstructionPhaseControllerTests
         Status = ConstructionPhaseStatus.Started,
         StartedAtUtc = StartedAt,
         UpdatedAtUtc = StartedAt
+    };
+
+    private static ConstructionPhase HandedOverPhase() => new()
+    {
+        ProjectId = ProjectId,
+        Status = ConstructionPhaseStatus.HandedOver,
+        StartedAtUtc = StartedAt,
+        CompletedAtUtc = CompletedAt,
+        HandedOverAtUtc = HandedOverAt,
+        HandedOverByUserId = CallerId,
+        UpdatedAtUtc = HandedOverAt
     };
 
     private static ConstructionPhase CompletedPhase() => new()

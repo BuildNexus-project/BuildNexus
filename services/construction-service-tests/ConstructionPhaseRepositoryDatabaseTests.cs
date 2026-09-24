@@ -193,6 +193,163 @@ public class ConstructionPhaseRepositoryDatabaseTests
             TimeSpan.FromMilliseconds(1));
     }
 
+
+    // ---------------------------------------------------------- handover ----
+
+    [Fact]
+    public async Task Handover_moves_a_completed_and_paid_project_to_its_terminal_state()
+    {
+        var projectId = _fixture.ProjectId("d09");
+        await _fixture.PlantApprovedDesignAsync(projectId);
+        await CompleteEveryMilestoneAsync(projectId, "Foundation");
+        await _fixture.PlantSettledPaymentAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
+
+        var result = await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.Succeeded, result.Outcome);
+        Assert.NotNull(result.Phase);
+        Assert.Equal(ConstructionPhaseStatus.HandedOver, result.Phase.Status);
+        Assert.NotNull(result.Phase.HandedOverAtUtc);
+        // Handover raises no event, so this column is the only record of who ended the
+        // project.
+        Assert.Equal(ActingPm, result.Phase.HandedOverByUserId);
+        // The earlier stages are carried through, not overwritten — the summary the
+        // Client reads needs the whole span.
+        Assert.NotNull(result.Phase.CompletedAtUtc);
+
+        var stored = await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId);
+        Assert.NotNull(stored);
+        Assert.Equal(ConstructionPhaseStatus.HandedOver, stored.Status);
+        Assert.Equal(ActingPm, stored.HandedOverByUserId);
+        Assert.Equal(DateTimeKind.Utc, stored.HandedOverAtUtc!.Value.Kind);
+    }
+
+    [Fact]
+    public async Task Handover_is_refused_when_construction_was_never_started()
+    {
+        var projectId = _fixture.ProjectId("d10");
+        await _fixture.PlantApprovedDesignAsync(projectId);
+        await _fixture.PlantSettledPaymentAsync(projectId);
+
+        var result = await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.NotStarted, result.Outcome);
+        Assert.Null(await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId));
+    }
+
+    [Fact]
+    public async Task Handover_is_refused_while_the_build_is_still_running()
+    {
+        // Paid up front, but the build is not finished. AC-4 hands over a finished
+        // project, and "still running" is its own answer rather than being folded into
+        // "never started" — a different thing for the PM to be told.
+        var projectId = _fixture.ProjectId("d11");
+        await _fixture.PlantApprovedDesignAsync(projectId);
+        await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
+        await _fixture.PlantSettledPaymentAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+
+        var result = await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.NotCompleted, result.Outcome);
+
+        var stored = await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId);
+        Assert.Equal(ConstructionPhaseStatus.Started, stored!.Status);
+        Assert.Null(stored.HandedOverAtUtc);
+        Assert.Null(stored.HandedOverByUserId);
+    }
+
+    [Fact]
+    public async Task Handover_is_refused_when_the_final_payment_is_not_settled()
+    {
+        // The build is finished, but no settlement marker exists — which is also the
+        // state every project is in while the Payment Service is unbuilt. Refusing is
+        // the safe direction: a project held back can be handed over once the marker
+        // arrives, whereas one handed over unpaid cannot be un-handed.
+        var projectId = _fixture.ProjectId("d12");
+        await _fixture.PlantApprovedDesignAsync(projectId);
+        await CompleteEveryMilestoneAsync(projectId, "Foundation");
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
+
+        var result = await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.FinalPaymentNotSettled, result.Outcome);
+
+        // Still Completed, and nothing about handover was written.
+        var stored = await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId);
+        Assert.Equal(ConstructionPhaseStatus.Completed, stored!.Status);
+        Assert.Null(stored.HandedOverAtUtc);
+    }
+
+    [Fact]
+    public async Task Another_projects_settlement_does_not_let_this_one_be_handed_over()
+    {
+        // The gate must answer this project rather than "some settlement exists" — the
+        // mistake there would hand over every finished project the moment any one of
+        // them was paid for.
+        var unpaid = _fixture.ProjectId("d13");
+        await _fixture.PlantSettledPaymentAsync(_fixture.ProjectId("d14"));
+
+        await _fixture.PlantApprovedDesignAsync(unpaid);
+        await CompleteEveryMilestoneAsync(unpaid, "Foundation");
+        await _fixture.ConstructionPhaseRepository.StartAsync(unpaid, ActingPm);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(unpaid, ActingPm);
+
+        var result = await _fixture.ConstructionPhaseRepository.HandOverAsync(unpaid, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.FinalPaymentNotSettled, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Handover_is_refused_a_second_time_and_the_state_is_terminal()
+    {
+        var projectId = _fixture.ProjectId("d15");
+        await _fixture.PlantApprovedDesignAsync(projectId);
+        await CompleteEveryMilestoneAsync(projectId, "Foundation");
+        await _fixture.PlantSettledPaymentAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
+
+        var first = await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+        var second = await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.Succeeded, first.Outcome);
+        Assert.Equal(ConstructionTransitionOutcome.AlreadyHandedOver, second.Outcome);
+
+        // handed_over_at is not restamped by the refused attempt.
+        var stored = await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId);
+        Assert.Equal(
+            first.Phase!.HandedOverAtUtc!.Value,
+            stored!.HandedOverAtUtc!.Value,
+            TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public async Task Nothing_can_leave_the_handed_over_state()
+    {
+        // Terminal means terminal: the earlier transitions must refuse it too, or a
+        // finished-and-delivered project could be reopened by pressing complete again.
+        var projectId = _fixture.ProjectId("d16");
+        await _fixture.PlantApprovedDesignAsync(projectId);
+        await CompleteEveryMilestoneAsync(projectId, "Foundation");
+        await _fixture.PlantSettledPaymentAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
+        await _fixture.ConstructionPhaseRepository.HandOverAsync(projectId, ActingPm);
+
+        var restart = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        var recomplete = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
+
+        Assert.Equal(ConstructionTransitionOutcome.AlreadyStarted, restart.Outcome);
+        Assert.Equal(ConstructionTransitionOutcome.AlreadyCompleted, recomplete.Outcome);
+
+        var stored = await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId);
+        Assert.Equal(ConstructionPhaseStatus.HandedOver, stored!.Status);
+    }
+
     /// <summary>
     /// Plants the named milestones on the project and moves every one of them to
     /// <see cref="MilestoneStatus.Completed"/> — the state AC-2 requires before
