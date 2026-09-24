@@ -37,6 +37,7 @@ builder.Services.AddScoped<IMilestoneRepository, MilestoneRepository>();
 builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
 builder.Services.AddScoped<IConstructionPhaseRepository, ConstructionPhaseRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
+builder.Services.AddScoped<IPaymentSettlementRepository, PaymentSettlementRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.
@@ -65,6 +66,12 @@ builder.Services.AddHostedService<OutboxDispatcher>();
 // Reads design-events and creates a milestone-setup placeholder for each
 // approved design. Nothing on any request path waits on it.
 builder.Services.AddHostedService<DesignEventsConsumer>();
+
+// Reads payment-events and records which projects have had their final payment
+// settled, so US-14's handover gate can be answered locally. Nothing on any request
+// path waits on it — and note the Payment Service does not publish this yet, so
+// until it does the topic is empty and handover is refused for every project.
+builder.Services.AddHostedService<PaymentEventsConsumer>();
 
 // Reads project-events and records which Client owns each project, so the
 // Client-facing progress reads (US-13) can be scoped to the caller's own

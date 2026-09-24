@@ -80,6 +80,14 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public OutboxRepository OutboxRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.PaymentSettlementRepository"/> over the same
+    /// development database. Added for US-14: the settlement marker is what AC-4's
+    /// handover gate reads, and only the real engine can show that the primary key
+    /// absorbs a redelivered event rather than raising a duplicate-key error.
+    /// </summary>
+    public PaymentSettlementRepository PaymentSettlementRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -90,6 +98,17 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// <see cref="Data.MilestoneRepository.GetProgressForProjectAsync"/>
     /// check to answer "has the design been approved?".
     /// </summary>
+    /// <summary>
+    /// Plants a <c>payment_settlements</c> row for a project — the marker the
+    /// <c>FinalPaymentSettled</c> consumer would leave, and the row AC-4's handover
+    /// gate checks.
+    /// </summary>
+    public Task PlantSettledPaymentAsync(Guid projectId) =>
+        PaymentSettlementRepository.RecordSettlementIfAbsentAsync(
+            projectId,
+            sourceEventId: Guid.NewGuid(),
+            settledAtUtc: DateTime.UtcNow);
+
     public Task PlantApprovedDesignAsync(Guid projectId) =>
         Repository.CreatePlaceholderIfAbsentAsync(
             projectId,
@@ -117,6 +136,7 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
         ConstructionPhaseRepository = new ConstructionPhaseRepository(connectionFactory);
         OutboxRepository = new OutboxRepository(connectionFactory);
+        PaymentSettlementRepository = new PaymentSettlementRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -140,7 +160,8 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
                      // ON DELETE CASCADE, so deleting them explicitly first keeps
                      // this cleanup readable rather than relying on the cascade.
                      "construction_outbox_events", "construction_phases",
-                     "construction_milestones", "milestone_setups", "project_owners"
+                     "construction_milestones", "milestone_setups", "project_owners",
+                     "payment_settlements"
                  })
         {
             await using var command = connection.CreateCommand();
