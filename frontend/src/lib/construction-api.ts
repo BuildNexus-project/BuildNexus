@@ -1,4 +1,4 @@
-import type { ApiFetchOptions } from './api'
+import { ApiError, type ApiFetchOptions } from './api'
 
 /** The token-attaching fetch handed out by the auth context. */
 type AuthFetch = <T>(path: string, options?: Omit<ApiFetchOptions, 'token'>) => Promise<T>
@@ -190,4 +190,140 @@ export function createMilestonesFromTemplate(authFetch: AuthFetch, projectId: st
     `/api/construction/projects/${projectId}/milestones/from-template`,
     { method: 'POST' },
   )
+}
+/**
+ * The three states a project's build phase moves through once it has formally
+ * begun, exactly as the Construction Service spells them (US-14).
+ *
+ * There is no `NotStarted`: "construction has not started" is the *absence* of a
+ * phase, which {@link fetchConstructionPhase} reports as `null` rather than as a
+ * status. Giving it a name here would invite a phase object that claims the build
+ * started while saying it has not.
+ */
+export const CONSTRUCTION_PHASE_STATUSES = ['Started', 'Completed', 'HandedOver'] as const
+
+export type ConstructionPhaseStatus = (typeof CONSTRUCTION_PHASE_STATUSES)[number]
+
+/** Display names — `HandedOver` reads badly in a UI. */
+export const CONSTRUCTION_PHASE_STATUS_LABELS: Record<ConstructionPhaseStatus, string> = {
+  Started: 'In Construction',
+  Completed: 'Construction Complete',
+  HandedOver: 'Handed Over',
+}
+
+/**
+ * Where a project's build phase stands (US-14).
+ *
+ * The two nullable timestamps are how a caller tells the stages apart without
+ * reading `status` twice: a phase with a `completedAtUtc` and no `handedOverAtUtc`
+ * is a finished build awaiting handover. `startedAtUtc` is never null — the phase
+ * exists because construction started.
+ */
+export type ConstructionPhase = {
+  projectId: string
+  status: ConstructionPhaseStatus
+  /** ISO-8601, as the service serialises it. */
+  startedAtUtc: string
+  completedAtUtc: string | null
+  handedOverAtUtc: string | null
+  updatedAtUtc: string
+}
+
+/**
+ * The precondition that refused a transition, from the 409's `reason` extension
+ * (US-14 AC-3).
+ *
+ * The service sends one of these rather than only prose so a caller can act on
+ * which gate failed. The two "already" cases are the ones worth branching on: they
+ * mean the screen is looking at stale state and should re-read the phase, whereas
+ * the rest mean the Project Manager has something to do first.
+ */
+export const CONSTRUCTION_REFUSAL_REASONS = [
+  'DesignNotApproved',
+  'NoMilestonesDefined',
+  'AlreadyStarted',
+  'NotStarted',
+  'MilestonesIncomplete',
+  'AlreadyCompleted',
+] as const
+
+export type ConstructionRefusalReason = (typeof CONSTRUCTION_REFUSAL_REASONS)[number]
+
+/**
+ * Whether a failed transition failed because the screen was out of date rather
+ * than because the Project Manager has something left to do.
+ *
+ * `AlreadyStarted` and `AlreadyCompleted` both mean the transition the PM asked
+ * for had already happened — someone else did it, or this tab has been open a
+ * while. The right response is to re-read the phase and let the buttons settle,
+ * not to ask them to fix anything.
+ */
+export function isStaleStateRefusal(error: unknown): boolean {
+  if (!(error instanceof ApiError)) {
+    return false
+  }
+
+  return error.reason === 'AlreadyStarted' || error.reason === 'AlreadyCompleted'
+}
+
+/**
+ * Where the project's build phase stands, or `null` when construction has not
+ * been started.
+ *
+ * Project-Manager only. The service answers 404 for a project whose build has not
+ * begun; that is a real state rather than a failure — the screen reads it as
+ * "Start construction is the next step" — so it is translated to `null` here and
+ * the caller does not have to treat it as an error. Every other failure still
+ * throws {@link ApiError}.
+ */
+export async function fetchConstructionPhase(
+  authFetch: AuthFetch,
+  projectId: string,
+): Promise<ConstructionPhase | null> {
+  try {
+    return await authFetch<ConstructionPhase>(`/api/construction/projects/${projectId}/phase`)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null
+    }
+
+    throw error
+  }
+}
+
+/**
+ * Formally starts construction on a project (US-14 AC-1).
+ *
+ * Project-Manager only, and only for a project whose design has been approved and
+ * which has at least one milestone defined — both gates are checked by the service
+ * inside the transaction that writes. A refused transition comes back as
+ * {@link ApiError} with status 409, a `detail` written for the PM to read, and a
+ * `reason` naming the precondition: `DesignNotApproved`, `NoMilestonesDefined` or
+ * `AlreadyStarted`.
+ *
+ * On success the service publishes `ConstructionStarted`, which is what moves the
+ * project's own status to Construction. That happens asynchronously, so a caller
+ * that also shows the project's status should expect it to lag this reply.
+ */
+export function startConstruction(authFetch: AuthFetch, projectId: string) {
+  return authFetch<ConstructionPhase>(`/api/construction/projects/${projectId}/start`, {
+    method: 'POST',
+  })
+}
+
+/**
+ * Marks construction complete (US-14 AC-2).
+ *
+ * Project-Manager only, and only once construction has started *and* every
+ * milestone on the project is `Completed` — gated independently of
+ * {@link startConstruction}. A refused transition comes back as {@link ApiError}
+ * with status 409 and a `reason` of `NotStarted`, `MilestonesIncomplete` or
+ * `AlreadyCompleted`.
+ *
+ * On success the service publishes `ConstructionCompleted`.
+ */
+export function completeConstruction(authFetch: AuthFetch, projectId: string) {
+  return authFetch<ConstructionPhase>(`/api/construction/projects/${projectId}/complete`, {
+    method: 'POST',
+  })
 }
