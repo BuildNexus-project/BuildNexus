@@ -35,6 +35,7 @@ builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IMilestoneSetupRepository, MilestoneSetupRepository>();
 builder.Services.AddScoped<IMilestoneRepository, MilestoneRepository>();
 builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
+builder.Services.AddScoped<IConstructionPhaseRepository, ConstructionPhaseRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.

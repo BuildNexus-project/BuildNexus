@@ -62,6 +62,15 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public ProjectOwnerRepository ProjectOwnerRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.ConstructionPhaseRepository"/> over the same
+    /// development database. Added for US-14: the three transitions are gated by
+    /// SQL that reads other tables in the same transaction — the design-approval
+    /// marker, the milestone tally — and the start gate is enforced by a primary
+    /// key rather than by a check in C#. None of that can be shown against a stub.
+    /// </summary>
+    public ConstructionPhaseRepository ConstructionPhaseRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -97,6 +106,7 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         Repository = new MilestoneSetupRepository(connectionFactory);
         MilestoneRepository = new MilestoneRepository(connectionFactory);
         ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
+        ConstructionPhaseRepository = new ConstructionPhaseRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -110,11 +120,14 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         await using var connection = new MySqlConnection(ConnectionString);
         await connection.OpenAsync();
 
-        // All three tables use project_id from the same run-scoped namespace, so
-        // a LIKE on the run prefix reaches every row this run created. No FKs
+        // Every table uses project_id from the same run-scoped namespace, so a
+        // LIKE on the run prefix reaches every row this run created. No FKs
         // between them, so the order does not matter — this order is a
         // preference for tidiness, not a constraint.
-        foreach (var table in new[] { "construction_milestones", "milestone_setups", "project_owners" })
+        foreach (var table in new[]
+                 {
+                     "construction_phases", "construction_milestones", "milestone_setups", "project_owners"
+                 })
         {
             await using var command = connection.CreateCommand();
             command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";
