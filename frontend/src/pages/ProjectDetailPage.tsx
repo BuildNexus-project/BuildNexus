@@ -35,6 +35,7 @@ import {
   createMilestonesFromTemplate,
   fetchConstructionPhase,
   fetchProjectMilestones,
+  handOverConstruction,
   fetchProjectProgress,
   isStaleStateRefusal,
   MILESTONE_STATUS_LABELS,
@@ -710,7 +711,7 @@ function ConstructionPhaseSection({
   const [phase, setPhase] = useState<ConstructionPhase | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [transitioning, setTransitioning] = useState<'start' | 'complete' | null>(null)
+  const [transitioning, setTransitioning] = useState<'start' | 'complete' | 'handover' | null>(null)
   const [transitionError, setTransitionError] = useState<string | null>(null)
 
   // Same gate as the milestones section: before the design is approved there is no
@@ -771,7 +772,7 @@ function ConstructionPhaseSection({
    * somebody to correct a state that is already correct is worse than silence.
    */
   async function runTransition(
-    which: 'start' | 'complete',
+    which: 'start' | 'complete' | 'handover',
     action: () => Promise<ConstructionPhase>,
   ) {
     setTransitionError(null)
@@ -893,9 +894,23 @@ function ConstructionPhaseSection({
       )}
 
       {phase?.status === 'Completed' && (
-        <p className="text-muted-foreground text-sm">
-          The build is complete and this project is awaiting handover to the client.
-        </p>
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('handover', () => handOverConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'handover' ? 'Handing over…' : 'Hand over to client'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Needs the final payment settled. This is the last step — a handed-over project
+            cannot be reopened.
+          </span>
+        </div>
       )}
 
       {phase?.status === 'HandedOver' && (

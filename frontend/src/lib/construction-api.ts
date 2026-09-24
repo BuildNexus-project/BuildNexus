@@ -73,6 +73,28 @@ export type ProjectProgressSummary = {
   progressPercent: number
   /** Oldest first — the order the PM planned them in, which is the order the build runs in. */
   milestones: Milestone[]
+  /**
+   * Where the build phase stands, or `null` when construction has not been started
+   * (US-14 AC-4).
+   *
+   * Narrower than {@link ConstructionPhase}, which the Project Manager's own screen
+   * reads: there is no `handedOverByUserId` here. That is a staff account id, of no
+   * use to a Client and not theirs to see — the service omits it from this shape
+   * rather than the page choosing not to render it.
+   */
+  phase: ConstructionPhaseSummary | null
+}
+
+/**
+ * The build phase as a Client sees it — when their project started, finished and was
+ * handed over to them (US-14 AC-4).
+ */
+export type ConstructionPhaseSummary = {
+  status: ConstructionPhaseStatus
+  /** ISO-8601. Never null — the phase exists because construction started. */
+  startedAtUtc: string
+  completedAtUtc: string | null
+  handedOverAtUtc: string | null
 }
 
 /**
@@ -226,6 +248,12 @@ export type ConstructionPhase = {
   startedAtUtc: string
   completedAtUtc: string | null
   handedOverAtUtc: string | null
+  /**
+   * The Project Manager who handed the project over; `null` until then. Handover
+   * raises no event, so this is the only record of who ended the project — which is
+   * why it is on the staff-facing shape and not on {@link ConstructionPhaseSummary}.
+   */
+  handedOverByUserId: string | null
   updatedAtUtc: string
 }
 
@@ -324,6 +352,31 @@ export function startConstruction(authFetch: AuthFetch, projectId: string) {
  */
 export function completeConstruction(authFetch: AuthFetch, projectId: string) {
   return authFetch<ConstructionPhase>(`/api/construction/projects/${projectId}/complete`, {
+    method: 'POST',
+  })
+}
+
+/**
+ * Hands the finished project over to the Client, moving it to its terminal state
+ * (US-14 AC-4).
+ *
+ * Project-Manager only, and only once construction is marked complete *and* the
+ * project's final payment is recorded as settled — the two gates are checked
+ * independently by the service inside the transaction that writes. A refused
+ * transition comes back as {@link ApiError} with status 409 and a `reason` of
+ * `NotStarted`, `NotCompleted`, `FinalPaymentNotSettled` or `AlreadyHandedOver`.
+ *
+ * `FinalPaymentNotSettled` is the one to expect in practice for now: the Payment
+ * Service does not yet publish the settlement event this service listens for, so
+ * until it does every handover is refused that way. The service fails closed
+ * deliberately — a project held back can be handed over once the payment lands,
+ * whereas one handed over unpaid cannot be un-handed.
+ *
+ * Publishes no event: handover is this service's own terminal state, and the
+ * project already reached Completed on `ConstructionCompleted`.
+ */
+export function handOverConstruction(authFetch: AuthFetch, projectId: string) {
+  return authFetch<ConstructionPhase>(`/api/construction/projects/${projectId}/handover`, {
     method: 'POST',
   })
 }

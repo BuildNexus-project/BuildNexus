@@ -1477,13 +1477,15 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       await within(panel).findByRole('button', { name: 'Mark construction complete' }),
     )
 
-    // Complete is not terminal — handover follows, and the panel says so rather
-    // than offering a handover control this story has not built.
+    // Complete is not terminal — handover follows, so the panel moves straight on to
+    // offering that transition rather than declaring itself finished.
     expect(
-      await within(panel).findByText(
-        'The build is complete and this project is awaiting handover to the client.',
-      ),
+      await within(panel).findByRole('button', { name: 'Hand over to client' }),
     ).toBeInTheDocument()
+    // And the transition just made is no longer on offer.
+    expect(
+      within(panel).queryByRole('button', { name: 'Mark construction complete' }),
+    ).not.toBeInTheDocument()
 
     const posts = requests.filter(
       (request) =>
@@ -1593,5 +1595,91 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     expect(
       within(panel).queryByRole('button', { name: 'Mark construction complete' }),
     ).not.toBeInTheDocument()
+  })
+
+  it('offers Hand over to client once the build is complete', async () => {
+    renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+    )
+
+    const panel = await phasePanel()
+
+    expect(
+      await within(panel).findByRole('button', { name: 'Hand over to client' }),
+    ).toBeInTheDocument()
+    // The earlier transitions are gone — only the one that is legal next is offered.
+    expect(
+      within(panel).queryByRole('button', { name: 'Mark construction complete' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('handing over POSTs and moves the project to its terminal state', async () => {
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+      apiResponse(200, phaseRow({
+        status: 'HandedOver',
+        completedAtUtc: '2026-09-14T16:45:00',
+        handedOverAtUtc: '2026-09-20T11:00:00',
+      })),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Hand over to client' }))
+
+    // Terminal: the panel becomes read-only rather than offering anything further.
+    expect(
+      await within(panel).findByText(
+        'This project has been handed over to the client. Nothing follows this stage.',
+      ),
+    ).toBeInTheDocument()
+
+    const posts = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/handover`
+        && request.method === 'POST',
+    )
+    expect(posts).toHaveLength(1)
+  })
+
+  it('shows the service’s reason when the final payment is not settled', async () => {
+    // The refusal to expect in practice until the Payment Service publishes its
+    // settlement event. It has to read as "chase the invoice", not as a broken button.
+    renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+      apiResponse(409, {
+        title: 'Final payment not settled.',
+        detail: "This project's final payment has not been settled yet, so it cannot be handed over.",
+        reason: 'FinalPaymentNotSettled',
+        status: 409,
+      }),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Hand over to client' }))
+
+    expect(
+      await within(panel).findByText(
+        "This project's final payment has not been settled yet, so it cannot be handed over.",
+      ),
+    ).toBeInTheDocument()
+
+    // Nothing was handed over, so the button stays available to retry once paid.
+    expect(
+      within(panel).getByRole('button', { name: 'Hand over to client' }),
+    ).toBeInTheDocument()
   })
 })

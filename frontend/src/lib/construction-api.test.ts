@@ -4,6 +4,7 @@ import { ApiError, apiFetch } from './api'
 import {
   completeConstruction,
   fetchConstructionPhase,
+  handOverConstruction,
   isStaleStateRefusal,
   startConstruction,
   type ConstructionPhase,
@@ -30,6 +31,7 @@ const startedPhase: ConstructionPhase = {
   startedAtUtc: '2026-03-02T10:00:00Z',
   completedAtUtc: null,
   handedOverAtUtc: null,
+  handedOverByUserId: null,
   updatedAtUtc: '2026-03-02T10:00:00Z',
 }
 
@@ -173,6 +175,70 @@ describe('completeConstruction', () => {
     )) as ApiError
 
     expect(error.reason).toBe('NotStarted')
+  })
+})
+
+describe('handOverConstruction', () => {
+  const actingPm = '22222222-0000-4000-8000-000000000002'
+
+  it('posts to the handover endpoint and returns the terminal phase', async () => {
+    const requests = stubFetch(
+      apiResponse(200, {
+        ...startedPhase,
+        status: 'HandedOver',
+        completedAtUtc: '2026-09-14T16:45:00Z',
+        handedOverAtUtc: '2026-09-20T11:00:00Z',
+        handedOverByUserId: actingPm,
+      }),
+    )
+
+    const phase = await handOverConstruction(authFetch, projectId)
+
+    expect(phase.status).toBe('HandedOver')
+    expect(phase.handedOverAtUtc).toBe('2026-09-20T11:00:00Z')
+    // Handover raises no event, so the reply is where the actor surfaces.
+    expect(phase.handedOverByUserId).toBe(actingPm)
+    expect(requests[0].path).toBe(`/api/construction/projects/${projectId}/handover`)
+    expect(requests[0].method).toBe('POST')
+    expect(requests[0].body).toBeUndefined()
+  })
+
+  it('surfaces an unsettled final payment as its own reason', async () => {
+    // The refusal to expect in practice until the Payment Service ships the
+    // settlement event. It must read as "chase the invoice", not as a bug.
+    stubFetch(
+      apiResponse(409, {
+        title: 'Final payment not settled.',
+        detail: "This project's final payment has not been settled yet, so it cannot be handed over.",
+        reason: 'FinalPaymentNotSettled',
+      }),
+    )
+
+    const error = (await handOverConstruction(authFetch, projectId).catch(
+      (caught: unknown) => caught,
+    )) as ApiError
+
+    expect(error.status).toBe(409)
+    expect(error.reason).toBe('FinalPaymentNotSettled')
+    expect(error.detail).toContain('final payment')
+    // Something for the PM to chase, not a stale screen to re-read.
+    expect(isStaleStateRefusal(error)).toBe(false)
+  })
+
+  it('surfaces handing over a build that is not complete', async () => {
+    stubFetch(
+      apiResponse(409, {
+        title: 'Construction is not complete.',
+        detail: 'Mark construction complete before handing the project over to the client.',
+        reason: 'NotCompleted',
+      }),
+    )
+
+    const error = (await handOverConstruction(authFetch, projectId).catch(
+      (caught: unknown) => caught,
+    )) as ApiError
+
+    expect(error.reason).toBe('NotCompleted')
   })
 })
 
