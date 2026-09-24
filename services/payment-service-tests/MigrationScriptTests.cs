@@ -113,6 +113,21 @@ public class MigrationScriptTests
         Assert.Matches(@"(?i)CHECK\s*\(\s*estimated_total\s*>\s*0\s*\)", sql);
     }
 
+    [Fact]
+    public void Project_ownership_is_replicated_locally_rather_than_read_from_another_service()
+    {
+        // AC-1's Client view is gated on ownership, and the owning Client is a
+        // fact the Project Service holds. This service may not query that
+        // database, so the fact is replicated off project-events into a table of
+        // its own — one owner per project, keyed so a redelivered event is
+        // absorbed.
+        var sql = StripComments(ReadScript(Script("002_create_project_owners.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS project_owners", sql, StringComparison.Ordinal);
+        Assert.Contains("pk_project_owners PRIMARY KEY (project_id)", sql, StringComparison.Ordinal);
+        Assert.Contains("client_id", sql, StringComparison.Ordinal);
+    }
+
     private static string Script(string fileName) =>
         ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 

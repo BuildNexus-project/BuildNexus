@@ -44,6 +44,15 @@ public class PaymentDatabaseFixture : IAsyncLifetime
 
     public QuotationRepository QuotationRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.ProjectOwnerRepository"/> over the same
+    /// development database. The ownership check is what keeps one Client from
+    /// reading another's cost estimates, and its idempotency is enforced by a
+    /// primary key rather than by a check in C# — neither of which a stub could
+    /// show.
+    /// </summary>
+    public ProjectOwnerRepository ProjectOwnerRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -63,6 +72,7 @@ public class PaymentDatabaseFixture : IAsyncLifetime
 
         var connectionFactory = new MySqlConnectionFactory(configuration);
         QuotationRepository = new QuotationRepository(connectionFactory);
+        ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -76,7 +86,11 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         await using var connection = new MySqlConnection(ConnectionString);
         await connection.OpenAsync();
 
-        foreach (var table in new[] { "quotations" })
+        // Both tables key off project_id from the same run-scoped namespace, so a
+        // LIKE on the run prefix reaches every row this run created. No FKs
+        // between them, so the order is a preference for tidiness, not a
+        // constraint.
+        foreach (var table in new[] { "quotations", "project_owners" })
         {
             await using var command = connection.CreateCommand();
             command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";

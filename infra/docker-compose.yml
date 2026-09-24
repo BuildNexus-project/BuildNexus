@@ -410,11 +410,19 @@ services:
       Jwt__Issuer: ${Jwt__Issuer:?set Jwt__Issuer in infra/.env}
       Jwt__Audience: ${Jwt__Audience:?set Jwt__Audience in infra/.env}
       Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
+      # US-15. The broker, under the shared name every service that touches
+      # Kafka uses. The internal listener, since this runs on the compose
+      # network. This service consumes project-events; it publishes nothing.
+      Kafka__BootstrapServers: kafka:9092
     ports:
       - "5005:8080"
     depends_on:
       payment-db:
         condition: service_healthy
+      # Start order only. Kafka being down means ProjectCreated events pile up
+      # unconsumed until it is back — not that this service fails to boot.
+      kafka:
+        condition: service_started
 
   # The single entry point. The frontend talks only to this; the five services
   # behind it are reachable on the compose network by service name and never

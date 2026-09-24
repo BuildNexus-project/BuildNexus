@@ -2,6 +2,7 @@ using System.Text;
 using BuildNexus.PaymentService.Authorization;
 using BuildNexus.PaymentService.Configuration;
 using BuildNexus.PaymentService.Data;
+using BuildNexus.PaymentService.Messaging;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,21 @@ builder.Services.AddEndpointsApiExplorer();
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IQuotationRepository, QuotationRepository>();
+builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
+
+// Broker address, validated at startup: a consumer that cannot say where Kafka
+// is will read nothing, and the ownership rows the Client's quotation view is
+// gated on would never arrive.
+builder.Services.AddOptions<KafkaOptions>()
+    .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
+    .ValidateOnStart();
+
+// Reads project-events and records which Client owns each project, so the
+// Client-facing quotation read can be scoped to the caller's own projects.
+// Nothing on any request path waits on it.
+builder.Services.AddHostedService<ProjectEventsConsumer>();
 
 // JWT settings, validated at startup so a missing or weak signing key fails the
 // service immediately rather than turning every request into a 401 at runtime.

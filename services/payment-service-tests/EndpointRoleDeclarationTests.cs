@@ -70,6 +70,19 @@ public class EndpointRoleDeclarationTests
             RolesForActionOn<Controllers.QuotationsController>("List"));
     }
 
+    [Fact]
+    public void Viewing_your_own_projects_quotations_is_the_clients_alone()
+    {
+        // US-15 AC-1: the estimate is viewable by the Client. The role is only
+        // half the gate — the endpoint also refuses a Client who does not own the
+        // project, which ClientQuotationsControllerTests pins. Staff roles are
+        // outside it because they already have the richer view on
+        // QuotationsController.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.ClientQuotationsController>("List"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)
