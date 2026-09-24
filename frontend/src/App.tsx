@@ -10,6 +10,7 @@ import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { MyProjectCostsPage } from '@/pages/MyProjectCostsPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
@@ -88,6 +89,19 @@ export default function App() {
             <ProtectedRoute>
               <DesignDocumentsPage />
             </ProtectedRoute>
+          }
+        />
+        {/* Client-only, matching the Payment Service's own gate on the
+            ownership-scoped cost reads. Which project's costs a Client may see
+            is still the service's decision — it refuses one they do not own —
+            but the screen itself is meaningless to any other role, which has
+            the richer /projects/:id/costs view instead. */}
+        <Route
+          path="/my-costs"
+          element={
+            <RoleRoute allowedRoles={CLIENT_ROLES}>
+              <MyProjectCostsPage />
+            </RoleRoute>
           }
         />
         {/* Project-Manager and Admin, matching the Payment Service's own gate on
