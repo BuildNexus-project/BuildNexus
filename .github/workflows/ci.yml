@@ -39,7 +39,11 @@ concurrency:
 
 env:
   DOTNET_VERSION: '10.0.x'
-  NODE_VERSION: '22'
+  # The Node version lives in .nvmrc, not here: the setup-node steps below read
+  # that file, so a developer's `nvm use` and CI cannot drift apart. Node 22
+  # specifically — Node 25 ships an experimental Web Storage API that replaces
+  # jsdom's localStorage on the test global, and every frontend test then dies
+  # in src/test/setup.ts on `localStorage.clear is not a function`.
   # Cuts a first-run banner and a telemetry call from every dotnet invocation.
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
@@ -107,7 +111,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -367,7 +371,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
