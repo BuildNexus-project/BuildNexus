@@ -1,9 +1,11 @@
+using System.Security.Claims;
 using BuildNexus.ConstructionService.Contracts;
 using BuildNexus.ConstructionService.Controllers;
 using BuildNexus.ConstructionService.Data;
 using BuildNexus.ConstructionService.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace BuildNexus.ConstructionService.Tests;
 
@@ -22,6 +24,8 @@ namespace BuildNexus.ConstructionService.Tests;
 public class ConstructionPhaseControllerTests
 {
     private static readonly Guid ProjectId = Guid.Parse("aaaaaaaa-0000-4000-8000-000000000001");
+    /// <summary>The signed-in Project Manager making the transitions.</summary>
+    private static readonly Guid CallerId = Guid.Parse("22222222-0000-4000-8000-000000000002");
     private static readonly DateTime StartedAt = new(2026, 3, 2, 10, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime CompletedAt = new(2026, 9, 14, 16, 45, 0, DateTimeKind.Utc);
 
@@ -34,7 +38,7 @@ public class ConstructionPhaseControllerTests
         {
             NextStartResult = ConstructionTransitionResult.Succeeded(StartedPhase())
         };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var result = await controller.Start(ProjectId, default);
 
@@ -49,7 +53,10 @@ public class ConstructionPhaseControllerTests
         Assert.Null(body.CompletedAtUtc);
         Assert.Null(body.HandedOverAtUtc);
 
-        Assert.Equal(ProjectId, Assert.Single(repository.StartCalls));
+        var call = Assert.Single(repository.StartCalls);
+        Assert.Equal(ProjectId, call.ProjectId);
+        // The acting PM reaches the repository, so the event can name who decided.
+        Assert.Equal(CallerId, call.ActingUserId);
     }
 
     [Theory]
@@ -66,7 +73,7 @@ public class ConstructionPhaseControllerTests
         {
             NextStartResult = ConstructionTransitionResult.Rejected(outcome)
         };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var result = await controller.Start(ProjectId, default);
 
@@ -101,7 +108,7 @@ public class ConstructionPhaseControllerTests
             NextStartResult = ConstructionTransitionResult.Rejected(
                 ConstructionTransitionOutcome.NoMilestonesDefined)
         };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var result = await controller.Start(ProjectId, default);
 
@@ -117,7 +124,7 @@ public class ConstructionPhaseControllerTests
         {
             NextCompleteResult = ConstructionTransitionResult.Succeeded(CompletedPhase())
         };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var result = await controller.Complete(ProjectId, default);
 
@@ -132,7 +139,9 @@ public class ConstructionPhaseControllerTests
         // Complete is not terminal — handover still follows.
         Assert.Null(body.HandedOverAtUtc);
 
-        Assert.Equal(ProjectId, Assert.Single(repository.CompleteCalls));
+        var call = Assert.Single(repository.CompleteCalls);
+        Assert.Equal(ProjectId, call.ProjectId);
+        Assert.Equal(CallerId, call.ActingUserId);
     }
 
     [Theory]
@@ -146,7 +155,7 @@ public class ConstructionPhaseControllerTests
         {
             NextCompleteResult = ConstructionTransitionResult.Rejected(outcome)
         };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var result = await controller.Complete(ProjectId, default);
 
@@ -166,7 +175,7 @@ public class ConstructionPhaseControllerTests
             NextCompleteResult = ConstructionTransitionResult.Rejected(
                 ConstructionTransitionOutcome.NotStarted)
         };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var problem = AssertConflict(await controller.Complete(ProjectId, default));
 
@@ -180,7 +189,7 @@ public class ConstructionPhaseControllerTests
     public async Task Get_returns_200_with_the_phase()
     {
         var repository = new FakeConstructionPhaseRepository { NextPhase = CompletedPhase() };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var ok = Assert.IsType<OkObjectResult>(await controller.Get(ProjectId, default));
         var body = Assert.IsType<ConstructionPhaseResponse>(ok.Value);
@@ -195,7 +204,7 @@ public class ConstructionPhaseControllerTests
         // The normal answer for a project that has not begun its build, not an
         // error — the PM's screen reads it as "Start construction is next".
         var repository = new FakeConstructionPhaseRepository { NextPhase = null };
-        var controller = new ConstructionPhaseController(repository);
+        var controller = Controller(repository);
 
         var result = await controller.Get(ProjectId, default);
 
@@ -206,17 +215,89 @@ public class ConstructionPhaseControllerTests
         Assert.Equal("Construction has not started.", problem.Title);
     }
 
+    [Fact]
+    public async Task Start_refuses_a_token_with_no_usable_subject()
+    {
+        // The role claim would get them past [Authorize], but a transition with no
+        // author would leave the Project Service unable to say who moved the
+        // project — so it is refused rather than attributed to nobody.
+        var repository = new FakeConstructionPhaseRepository
+        {
+            NextStartResult = ConstructionTransitionResult.Succeeded(StartedPhase())
+        };
+
+        var result = await ControllerWithoutSubject(repository).Start(ProjectId, default);
+
+        Assert.IsType<UnauthorizedResult>(result);
+        // And nothing was attempted.
+        Assert.Empty(repository.StartCalls);
+    }
+
+    [Fact]
+    public async Task Complete_refuses_a_token_with_no_usable_subject()
+    {
+        var repository = new FakeConstructionPhaseRepository
+        {
+            NextCompleteResult = ConstructionTransitionResult.Succeeded(CompletedPhase())
+        };
+
+        var result = await ControllerWithoutSubject(repository).Complete(ProjectId, default);
+
+        Assert.IsType<UnauthorizedResult>(result);
+        Assert.Empty(repository.CompleteCalls);
+    }
+
     // ---------- helpers ----------
 
     private static async Task<ProblemDetails> RefusedStartProblem(ConstructionTransitionOutcome outcome)
     {
-        var controller = new ConstructionPhaseController(new FakeConstructionPhaseRepository
+        var controller = Controller(new FakeConstructionPhaseRepository
         {
             NextStartResult = ConstructionTransitionResult.Rejected(outcome)
         });
 
         return AssertConflict(await controller.Start(ProjectId, default));
     }
+
+    /// <summary>
+    /// The controller with a signed-in Project Manager on it — the claims a real
+    /// token carries, spelled the same way
+    /// <see cref="ConstructionProgressControllerTests"/> spells them.
+    /// </summary>
+    private static ConstructionPhaseController Controller(FakeConstructionPhaseRepository repository)
+    {
+        List<Claim> claims =
+        [
+            new(ClaimTypes.Role, "ProjectManager"),
+            new(JwtRegisteredClaimNames.Sub, CallerId.ToString())
+        ];
+
+        return new ConstructionPhaseController(repository)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"))
+                }
+            }
+        };
+    }
+
+    /// <summary>The controller with a token that carried no usable subject claim.</summary>
+    private static ConstructionPhaseController ControllerWithoutSubject(
+        FakeConstructionPhaseRepository repository) =>
+        new(repository)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(
+                        new ClaimsIdentity([new Claim(ClaimTypes.Role, "ProjectManager")], "TestAuth"))
+                }
+            }
+        };
 
     private static ProblemDetails AssertConflict(IActionResult result)
     {

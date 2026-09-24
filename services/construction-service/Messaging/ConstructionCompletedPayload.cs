@@ -27,13 +27,24 @@ public sealed class ConstructionCompletedPayload
     /// <summary>How many milestones the project had — all of them Completed, by AC-2.</summary>
     public required int MilestoneCount { get; init; }
 
-    public static ConstructionCompletedPayload From(ConstructionPhase phase, int milestoneCount) => new()
+    /// <summary>
+    /// The Project Manager who marked the build complete, from the <c>sub</c> claim
+    /// of their token. Carried for the same reason
+    /// <see cref="ConstructionStartedPayload.StartedBy"/> is.
+    /// </summary>
+    public required Guid CompletedBy { get; init; }
+
+    public static ConstructionCompletedPayload From(
+        ConstructionPhase phase,
+        int milestoneCount,
+        Guid completedBy) => new()
     {
         ProjectId = phase.ProjectId,
         StartedAt = EventTimestamp.AsUtc(phase.StartedAtUtc),
         // CompletedAtUtc is non-null on a phase this event is raised for: the
         // transition that raises it is the one that sets the column.
         CompletedAt = EventTimestamp.AsUtc(phase.CompletedAtUtc!.Value),
-        MilestoneCount = milestoneCount
+        MilestoneCount = milestoneCount,
+        CompletedBy = completedBy
     };
 }

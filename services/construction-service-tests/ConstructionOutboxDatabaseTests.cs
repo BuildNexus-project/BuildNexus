@@ -20,6 +20,9 @@ namespace BuildNexus.ConstructionService.Tests;
 [Collection(ConstructionDatabaseCollection.Name)]
 public class ConstructionOutboxDatabaseTests
 {
+    /// <summary>The Project Manager the transitions are attributed to.</summary>
+    private static readonly Guid ActingPm = Guid.Parse("22222222-0000-4000-8000-000000000002");
+
     private readonly ConstructionDatabaseFixture _fixture;
 
     public ConstructionOutboxDatabaseTests(ConstructionDatabaseFixture fixture)
@@ -35,7 +38,7 @@ public class ConstructionOutboxDatabaseTests
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Roof");
 
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         var events = await _fixture.OutboxRepository.ListForProjectAsync(projectId);
 
@@ -55,7 +58,7 @@ public class ConstructionOutboxDatabaseTests
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Roof");
 
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         var announced = Assert.Single(await _fixture.OutboxRepository.ListForProjectAsync(projectId));
 
@@ -80,6 +83,10 @@ public class ConstructionOutboxDatabaseTests
         Assert.Equal(projectId, payload.GetProperty("projectId").GetGuid());
         Assert.Equal(2, payload.GetProperty("milestoneCount").GetInt32());
         Assert.Equal(TimeSpan.Zero, payload.GetProperty("startedAt").GetDateTimeOffset().Offset);
+        // The deciding PM travels with the event: the Project Service records who
+        // caused the status change it makes in reaction, and this is the only place
+        // that fact is known.
+        Assert.Equal(ActingPm, payload.GetProperty("startedBy").GetGuid());
     }
 
     [Fact]
@@ -88,9 +95,9 @@ public class ConstructionOutboxDatabaseTests
         var projectId = _fixture.ProjectId("e03");
         await _fixture.PlantApprovedDesignAsync(projectId);
         await CompleteEveryMilestoneAsync(projectId, "Foundation", "Roof", "Finishing");
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
-        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         var events = await _fixture.OutboxRepository.ListForProjectAsync(projectId);
 
@@ -106,6 +113,7 @@ public class ConstructionOutboxDatabaseTests
 
         Assert.Equal(projectId, payload.GetProperty("projectId").GetGuid());
         Assert.Equal(3, payload.GetProperty("milestoneCount").GetInt32());
+        Assert.Equal(ActingPm, payload.GetProperty("completedBy").GetGuid());
         // Both ends of the build ride along, so a consumer that came online
         // mid-build still learns when it started.
         Assert.True(
@@ -124,7 +132,7 @@ public class ConstructionOutboxDatabaseTests
         var projectId = _fixture.ProjectId("e04");
         await _fixture.PlantApprovedDesignAsync(projectId);
 
-        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.NoMilestonesDefined, result.Outcome);
         Assert.Empty(await _fixture.OutboxRepository.ListForProjectAsync(projectId));
@@ -138,9 +146,9 @@ public class ConstructionOutboxDatabaseTests
         // One milestone left unfinished, so the complete is refused.
         await CompleteEveryMilestoneAsync(projectId, "Foundation");
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Roof");
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
-        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.MilestonesIncomplete, result.Outcome);
 
@@ -156,8 +164,8 @@ public class ConstructionOutboxDatabaseTests
         await _fixture.PlantApprovedDesignAsync(projectId);
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
 
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
-        var second = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        var second = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.AlreadyStarted, second.Outcome);
 
@@ -172,8 +180,8 @@ public class ConstructionOutboxDatabaseTests
         var projectId = _fixture.ProjectId("e07");
         await _fixture.PlantApprovedDesignAsync(projectId);
         await CompleteEveryMilestoneAsync(projectId, "Foundation");
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
-        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         // The dispatcher's own query. Other runs' rows may share the table, so this
         // asserts the relative order of this project's two events rather than the
@@ -193,7 +201,7 @@ public class ConstructionOutboxDatabaseTests
         var projectId = _fixture.ProjectId("e08");
         await _fixture.PlantApprovedDesignAsync(projectId);
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         var announced = Assert.Single(await _fixture.OutboxRepository.ListForProjectAsync(projectId));
 

@@ -95,8 +95,15 @@ public interface IConstructionPhaseRepository
     /// already started is refused by the <c>project_id</c> primary key rather
     /// than by a check that read before the other writer committed.
     /// </remarks>
+    /// <param name="startedBy">
+    /// The Project Manager making the decision, from their token's <c>sub</c>
+    /// claim. Not used by any gate — it rides onto the <c>ConstructionStarted</c>
+    /// event so the Project Service can attribute the status change it makes in
+    /// reaction.
+    /// </param>
     Task<ConstructionTransitionResult> StartAsync(
         Guid projectId,
+        Guid startedBy,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -109,8 +116,14 @@ public interface IConstructionPhaseRepository
     /// <c>construction_milestones</c> — US-12 owns those statuses and this story
     /// only reads them.
     /// </remarks>
+    /// <param name="completedBy">
+    /// The Project Manager making the decision, carried onto the
+    /// <c>ConstructionCompleted</c> event for the same reason
+    /// <see cref="StartAsync"/>'s actor is.
+    /// </param>
     Task<ConstructionTransitionResult> CompleteAsync(
         Guid projectId,
+        Guid completedBy,
         CancellationToken cancellationToken = default);
 
     /// <summary>

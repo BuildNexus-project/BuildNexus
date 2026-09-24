@@ -18,10 +18,10 @@ namespace BuildNexus.ConstructionService.Tests;
 public sealed class FakeConstructionPhaseRepository : IConstructionPhaseRepository
 {
     /// <summary>One entry per <see cref="StartAsync"/> call, in order.</summary>
-    public List<Guid> StartCalls { get; } = [];
+    public List<TransitionCall> StartCalls { get; } = [];
 
     /// <summary>One entry per <see cref="CompleteAsync"/> call, in order.</summary>
-    public List<Guid> CompleteCalls { get; } = [];
+    public List<TransitionCall> CompleteCalls { get; } = [];
 
     /// <summary>One entry per <see cref="GetForProjectAsync"/> call, in order.</summary>
     public List<Guid> GetCalls { get; } = [];
@@ -39,17 +39,19 @@ public sealed class FakeConstructionPhaseRepository : IConstructionPhaseReposito
 
     public Task<ConstructionTransitionResult> StartAsync(
         Guid projectId,
+        Guid startedBy,
         CancellationToken cancellationToken = default)
     {
-        StartCalls.Add(projectId);
+        StartCalls.Add(new TransitionCall(projectId, startedBy));
         return Task.FromResult(NextStartResult);
     }
 
     public Task<ConstructionTransitionResult> CompleteAsync(
         Guid projectId,
+        Guid completedBy,
         CancellationToken cancellationToken = default)
     {
-        CompleteCalls.Add(projectId);
+        CompleteCalls.Add(new TransitionCall(projectId, completedBy));
         return Task.FromResult(NextCompleteResult);
     }
 
@@ -60,4 +62,7 @@ public sealed class FakeConstructionPhaseRepository : IConstructionPhaseReposito
         GetCalls.Add(projectId);
         return Task.FromResult(NextPhase);
     }
+
+    /// <summary>One transition attempt: the project, and who asked for it.</summary>
+    public readonly record struct TransitionCall(Guid ProjectId, Guid ActingUserId);
 }

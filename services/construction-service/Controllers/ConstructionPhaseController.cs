@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using BuildNexus.ConstructionService.Authorization;
 using BuildNexus.ConstructionService.Contracts;
 using BuildNexus.ConstructionService.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace BuildNexus.ConstructionService.Controllers;
 
@@ -45,7 +47,7 @@ public class ConstructionPhaseController : ControllerBase
     /// transition enqueues nothing.
     /// </remarks>
     /// <response code="200">The phase as it now stands, newly Started.</response>
-    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid, or carried no usable subject claim.</response>
     /// <response code="403">The caller is not a Project Manager.</response>
     /// <response code="409">A precondition refused the transition: the design is not approved, no milestones are defined, or construction has already started.</response>
     [HttpPost("api/construction/projects/{projectId:guid}/start")]
@@ -55,7 +57,15 @@ public class ConstructionPhaseController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Start(Guid projectId, CancellationToken cancellationToken)
     {
-        var result = await _phases.StartAsync(projectId, cancellationToken);
+        if (!TryGetCallerId(out var startedBy))
+        {
+            // The role claim got them this far, but a transition with no author
+            // would leave the Project Service's audit trail unable to say who
+            // moved the project.
+            return Unauthorized();
+        }
+
+        var result = await _phases.StartAsync(projectId, startedBy, cancellationToken);
 
         return result.Outcome is ConstructionTransitionOutcome.Succeeded
             ? Ok(ConstructionPhaseResponse.From(result.Phase!))
@@ -72,7 +82,7 @@ public class ConstructionPhaseController : ControllerBase
     /// <c>ConstructionCompleted</c> event is enqueued in the same transaction.
     /// </remarks>
     /// <response code="200">The phase as it now stands, newly Completed.</response>
-    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid, or carried no usable subject claim.</response>
     /// <response code="403">The caller is not a Project Manager.</response>
     /// <response code="409">A precondition refused the transition: construction has not started, a milestone is unfinished, or it is already complete.</response>
     [HttpPost("api/construction/projects/{projectId:guid}/complete")]
@@ -82,7 +92,12 @@ public class ConstructionPhaseController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Complete(Guid projectId, CancellationToken cancellationToken)
     {
-        var result = await _phases.CompleteAsync(projectId, cancellationToken);
+        if (!TryGetCallerId(out var completedBy))
+        {
+            return Unauthorized();
+        }
+
+        var result = await _phases.CompleteAsync(projectId, completedBy, cancellationToken);
 
         return result.Outcome is ConstructionTransitionOutcome.Succeeded
             ? Ok(ConstructionPhaseResponse.From(result.Phase!))
@@ -122,6 +137,13 @@ public class ConstructionPhaseController : ControllerBase
 
         return Ok(ConstructionPhaseResponse.From(phase));
     }
+
+    /// <summary>
+    /// The caller's own id, from the token's <c>sub</c> claim — spelled the same way
+    /// <see cref="ConstructionProgressController"/> reads it.
+    /// </summary>
+    private bool TryGetCallerId(out Guid userId) =>
+        Guid.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out userId);
 
     /// <summary>
     /// Turns a refused transition into its HTTP answer (AC-3).

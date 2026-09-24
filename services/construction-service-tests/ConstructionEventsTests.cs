@@ -15,13 +15,15 @@ public class ConstructionEventsTests
 {
     private static readonly Guid ProjectId = Guid.Parse("11111111-2222-4333-8444-555555555555");
 
+    private static readonly Guid ActingPm = Guid.Parse("22222222-0000-4000-8000-000000000002");
+
     private static readonly DateTime StartedAt = new(2026, 3, 1, 9, 30, 0, DateTimeKind.Utc);
     private static readonly DateTime CompletedAt = new(2026, 9, 14, 16, 45, 0, DateTimeKind.Utc);
 
     [Fact]
     public void Started_raises_ConstructionStarted_about_the_project()
     {
-        var outboxEvent = ConstructionEvents.Started(StartedPhase(), milestoneCount: 7);
+        var outboxEvent = ConstructionEvents.Started(StartedPhase(), milestoneCount: 7, ActingPm);
 
         Assert.Equal(ConstructionEventTypes.ConstructionStarted, outboxEvent.EventType);
         Assert.Equal(ProjectId, outboxEvent.ProjectId);
@@ -33,11 +35,27 @@ public class ConstructionEventsTests
     }
 
     [Fact]
+    public void Started_names_the_Project_Manager_who_decided()
+    {
+        // The only place this fact is known. The Project Service records who caused
+        // each status change, so without it the move it makes in reaction would have
+        // to either invent an author or record none.
+        using var document = JsonDocument.Parse(
+            ConstructionEvents.Started(StartedPhase(), milestoneCount: 7, ActingPm).Envelope);
+
+        var payload = document.RootElement.GetProperty("payload");
+
+        Assert.Equal(ActingPm, payload.GetProperty("startedBy").GetGuid());
+        Assert.Equal(ProjectId, payload.GetProperty("projectId").GetGuid());
+        Assert.Equal(7, payload.GetProperty("milestoneCount").GetInt32());
+    }
+
+    [Fact]
     public void The_row_and_its_envelope_share_one_event_id()
     {
         // This is what lets a message on the topic be traced back to the row that
         // produced it — and what lets a consumer recognise a redelivery.
-        var outboxEvent = ConstructionEvents.Started(StartedPhase(), milestoneCount: 1);
+        var outboxEvent = ConstructionEvents.Started(StartedPhase(), milestoneCount: 1, ActingPm);
 
         using var document = JsonDocument.Parse(outboxEvent.Envelope);
 
@@ -54,14 +72,14 @@ public class ConstructionEventsTests
         var phase = StartedPhase();
 
         Assert.NotEqual(
-            ConstructionEvents.Started(phase, 1).Id,
-            ConstructionEvents.Started(phase, 1).Id);
+            ConstructionEvents.Started(phase, 1, ActingPm).Id,
+            ConstructionEvents.Started(phase, 1, ActingPm).Id);
     }
 
     [Fact]
     public void Completed_raises_ConstructionCompleted_stamped_at_the_completion()
     {
-        var outboxEvent = ConstructionEvents.Completed(CompletedPhase(), milestoneCount: 7);
+        var outboxEvent = ConstructionEvents.Completed(CompletedPhase(), milestoneCount: 7, ActingPm);
 
         Assert.Equal(ConstructionEventTypes.ConstructionCompleted, outboxEvent.EventType);
         // Taken off the phase rather than the clock, so the event's occurredAt and
@@ -73,6 +91,7 @@ public class ConstructionEventsTests
 
         Assert.Equal(ProjectId, payload.GetProperty("projectId").GetGuid());
         Assert.Equal(7, payload.GetProperty("milestoneCount").GetInt32());
+        Assert.Equal(ActingPm, payload.GetProperty("completedBy").GetGuid());
         Assert.Equal(StartedAt, payload.GetProperty("startedAt").GetDateTimeOffset().UtcDateTime);
         Assert.Equal(CompletedAt, payload.GetProperty("completedAt").GetDateTimeOffset().UtcDateTime);
     }
@@ -82,7 +101,7 @@ public class ConstructionEventsTests
     {
         // The envelope is a contract with the other services. An extra property is
         // as much a change as a missing one, so the whole set is asserted.
-        var outboxEvent = ConstructionEvents.Started(StartedPhase(), milestoneCount: 1);
+        var outboxEvent = ConstructionEvents.Started(StartedPhase(), milestoneCount: 1, ActingPm);
 
         using var document = JsonDocument.Parse(outboxEvent.Envelope);
 
@@ -105,7 +124,7 @@ public class ConstructionEventsTests
             UpdatedAtUtc = DateTime.SpecifyKind(StartedAt, DateTimeKind.Unspecified)
         };
 
-        using var document = JsonDocument.Parse(ConstructionEvents.Started(phase, 1).Envelope);
+        using var document = JsonDocument.Parse(ConstructionEvents.Started(phase, 1, ActingPm).Envelope);
 
         Assert.Equal(
             TimeSpan.Zero,

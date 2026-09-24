@@ -27,10 +27,27 @@ public sealed class ConstructionStartedPayload
     /// <summary>How many milestones the project had defined when it started.</summary>
     public required int MilestoneCount { get; init; }
 
-    public static ConstructionStartedPayload From(ConstructionPhase phase, int milestoneCount) => new()
+    /// <summary>
+    /// The Project Manager who started the build, from the <c>sub</c> claim of
+    /// their token.
+    /// </summary>
+    /// <remarks>
+    /// Carried because the Project Service records who caused each status change,
+    /// and a move it makes in reaction to this event would otherwise have no author
+    /// — leaving its audit trail to either invent one or say nothing. The real
+    /// person is known here, at the moment of the decision, so it travels with the
+    /// event rather than being reconstructed later.
+    /// </remarks>
+    public required Guid StartedBy { get; init; }
+
+    public static ConstructionStartedPayload From(
+        ConstructionPhase phase,
+        int milestoneCount,
+        Guid startedBy) => new()
     {
         ProjectId = phase.ProjectId,
         StartedAt = EventTimestamp.AsUtc(phase.StartedAtUtc),
-        MilestoneCount = milestoneCount
+        MilestoneCount = milestoneCount,
+        StartedBy = startedBy
     };
 }

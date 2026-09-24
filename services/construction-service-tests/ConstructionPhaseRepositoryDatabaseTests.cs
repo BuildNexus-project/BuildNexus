@@ -19,6 +19,13 @@ namespace BuildNexus.ConstructionService.Tests;
 [Collection(ConstructionDatabaseCollection.Name)]
 public class ConstructionPhaseRepositoryDatabaseTests
 {
+    /// <summary>
+    /// The Project Manager standing in for the caller. Not read by any gate — it
+    /// travels onto the event so the Project Service can attribute the status
+    /// change it makes in reaction — so one value serves every test here.
+    /// </summary>
+    private static readonly Guid ActingPm = Guid.Parse("22222222-0000-4000-8000-000000000002");
+
     private readonly ConstructionDatabaseFixture _fixture;
 
     public ConstructionPhaseRepositoryDatabaseTests(ConstructionDatabaseFixture fixture)
@@ -35,7 +42,7 @@ public class ConstructionPhaseRepositoryDatabaseTests
         await _fixture.PlantApprovedDesignAsync(projectId);
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
 
-        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.Succeeded, result.Outcome);
         Assert.NotNull(result.Phase);
@@ -57,7 +64,7 @@ public class ConstructionPhaseRepositoryDatabaseTests
         // consumed, so as far as this service knows its design is not signed off.
         var projectId = _fixture.ProjectId("d02");
 
-        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.DesignNotApproved, result.Outcome);
         Assert.Null(result.Phase);
@@ -73,7 +80,7 @@ public class ConstructionPhaseRepositoryDatabaseTests
         var projectId = _fixture.ProjectId("d03");
         await _fixture.PlantApprovedDesignAsync(projectId);
 
-        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.NoMilestonesDefined, result.Outcome);
         Assert.Null(await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId));
@@ -86,8 +93,8 @@ public class ConstructionPhaseRepositoryDatabaseTests
         await _fixture.PlantApprovedDesignAsync(projectId);
         await _fixture.MilestoneRepository.CreateAsync(projectId, "Foundation");
 
-        var first = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
-        var second = await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        var first = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
+        var second = await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.Succeeded, first.Outcome);
         Assert.Equal(ConstructionTransitionOutcome.AlreadyStarted, second.Outcome);
@@ -107,9 +114,9 @@ public class ConstructionPhaseRepositoryDatabaseTests
         var projectId = _fixture.ProjectId("d05");
         await _fixture.PlantApprovedDesignAsync(projectId);
         await CompleteEveryMilestoneAsync(projectId, "Foundation", "Roof");
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
-        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.Succeeded, result.Outcome);
         Assert.NotNull(result.Phase);
@@ -133,7 +140,7 @@ public class ConstructionPhaseRepositoryDatabaseTests
         await _fixture.PlantApprovedDesignAsync(projectId);
         await CompleteEveryMilestoneAsync(projectId, "Foundation");
 
-        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.NotStarted, result.Outcome);
         Assert.Null(await _fixture.ConstructionPhaseRepository.GetForProjectAsync(projectId));
@@ -151,9 +158,9 @@ public class ConstructionPhaseRepositoryDatabaseTests
         var pending = await _fixture.MilestoneRepository.CreateAsync(projectId, "Roof");
         await _fixture.MilestoneRepository.UpdateStatusAsync(pending!.Id, MilestoneStatus.InProgress);
 
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
-        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        var result = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.MilestonesIncomplete, result.Outcome);
 
@@ -170,10 +177,10 @@ public class ConstructionPhaseRepositoryDatabaseTests
         var projectId = _fixture.ProjectId("d08");
         await _fixture.PlantApprovedDesignAsync(projectId);
         await CompleteEveryMilestoneAsync(projectId, "Foundation");
-        await _fixture.ConstructionPhaseRepository.StartAsync(projectId);
+        await _fixture.ConstructionPhaseRepository.StartAsync(projectId, ActingPm);
 
-        var first = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
-        var second = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId);
+        var first = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
+        var second = await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
         Assert.Equal(ConstructionTransitionOutcome.Succeeded, first.Outcome);
         Assert.Equal(ConstructionTransitionOutcome.AlreadyCompleted, second.Outcome);

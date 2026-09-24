@@ -34,6 +34,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
 
     public async Task<ConstructionTransitionResult> StartAsync(
         Guid projectId,
+        Guid startedBy,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await _connectionFactory.OpenConnectionAsync();
@@ -107,7 +108,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         await OutboxRepository.InsertAsync(
             connection,
             transaction,
-            ConstructionEvents.Started(phase, milestoneCount),
+            ConstructionEvents.Started(phase, milestoneCount, startedBy),
             cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
@@ -116,6 +117,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
 
     public async Task<ConstructionTransitionResult> CompleteAsync(
         Guid projectId,
+        Guid completedBy,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await _connectionFactory.OpenConnectionAsync();
@@ -196,7 +198,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         await OutboxRepository.InsertAsync(
             connection,
             transaction,
-            ConstructionEvents.Completed(completedPhase, total),
+            ConstructionEvents.Completed(completedPhase, total, completedBy),
             cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);

@@ -24,19 +24,19 @@ namespace BuildNexus.ConstructionService.Messaging;
 public static class ConstructionEvents
 {
     /// <summary>A Project Manager has formally started the build (AC-1).</summary>
-    public static OutboxEvent Started(ConstructionPhase phase, int milestoneCount) =>
+    public static OutboxEvent Started(ConstructionPhase phase, int milestoneCount, Guid startedBy) =>
         Raise(
             ConstructionEventTypes.ConstructionStarted,
             phase.ProjectId,
-            ConstructionStartedPayload.From(phase, milestoneCount),
+            ConstructionStartedPayload.From(phase, milestoneCount, startedBy),
             phase.StartedAtUtc);
 
     /// <summary>Every milestone is done and the build is marked complete (AC-2).</summary>
-    public static OutboxEvent Completed(ConstructionPhase phase, int milestoneCount) =>
+    public static OutboxEvent Completed(ConstructionPhase phase, int milestoneCount, Guid completedBy) =>
         Raise(
             ConstructionEventTypes.ConstructionCompleted,
             phase.ProjectId,
-            ConstructionCompletedPayload.From(phase, milestoneCount),
+            ConstructionCompletedPayload.From(phase, milestoneCount, completedBy),
             // The moment the transition happened, not "now" — they are the same
             // instant here, and taking it off the phase keeps the event's
             // occurredAt and the row's completed_at from ever disagreeing.
