@@ -47,6 +47,12 @@ export function HomePage() {
               into a screen the service is going to refuse. The guard on the
               route, and the endpoint behind it, decide the real answer. */}
           {CLIENT_ROLES.includes(user.role) && (
+            <Button render={<Link to="/progress" />} variant="outline" className="w-full">
+              Construction progress
+            </Button>
+          )}
+
+          {CLIENT_ROLES.includes(user.role) && (
             <Button render={<Link to="/projects/new" />} variant="outline" className="w-full">
               Start a new project
             </Button>

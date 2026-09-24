@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
+import { ConstructionProgressPage } from '@/pages/ConstructionProgressPage'
 import { DesignApprovalReportPage } from '@/pages/DesignApprovalReportPage'
 import { DesignDocumentsPage } from '@/pages/DesignDocumentsPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
@@ -86,6 +87,19 @@ export default function App() {
             <ProtectedRoute>
               <DesignDocumentsPage />
             </ProtectedRoute>
+          }
+        />
+        {/* Client-only, matching the Construction Service's own gate on the
+            progress read. Which project's build a Client may watch is still the
+            service's decision — it refuses one they do not own — but the screen
+            itself is meaningless to any other role, which has the Project
+            Manager's richer milestone view instead. */}
+        <Route
+          path="/progress"
+          element={
+            <RoleRoute allowedRoles={CLIENT_ROLES}>
+              <ConstructionProgressPage />
+            </RoleRoute>
           }
         />
         <Route
