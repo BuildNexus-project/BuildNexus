@@ -71,6 +71,15 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public ConstructionPhaseRepository ConstructionPhaseRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.OutboxRepository"/> over the same development
+    /// database. Added for US-14: a transition's event is enqueued inside the
+    /// transition's own transaction, so the only honest way to assert that it was
+    /// announced — and that a refused transition announced nothing — is to read the
+    /// outbox table back after the fact.
+    /// </summary>
+    public OutboxRepository OutboxRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -107,6 +116,7 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         MilestoneRepository = new MilestoneRepository(connectionFactory);
         ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
         ConstructionPhaseRepository = new ConstructionPhaseRepository(connectionFactory);
+        OutboxRepository = new OutboxRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -126,7 +136,11 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         // preference for tidiness, not a constraint.
         foreach (var table in new[]
                  {
-                     "construction_phases", "construction_milestones", "milestone_setups", "project_owners"
+                     // The outbox leads: its rows point at construction_phases with
+                     // ON DELETE CASCADE, so deleting them explicitly first keeps
+                     // this cleanup readable rather than relying on the cascade.
+                     "construction_outbox_events", "construction_phases",
+                     "construction_milestones", "milestone_setups", "project_owners"
                  })
         {
             await using var command = connection.CreateCommand();

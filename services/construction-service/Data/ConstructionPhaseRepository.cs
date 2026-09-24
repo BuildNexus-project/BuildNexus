@@ -1,4 +1,5 @@
 using System.Data.Common;
+using BuildNexus.ConstructionService.Messaging;
 using BuildNexus.ConstructionService.Models;
 using MySqlConnector;
 
@@ -51,7 +52,9 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         // AC-1's second precondition, checked on its own: "milestones defined".
         // A project can have an approved design and no plan at all, and starting
         // a build with nothing to track is the case AC-3 asks to be refused.
-        if (await CountMilestonesAsync(connection, transaction, projectId, cancellationToken) == 0)
+        var milestoneCount = await CountMilestonesAsync(connection, transaction, projectId, cancellationToken);
+
+        if (milestoneCount == 0)
         {
             return ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.NoMilestonesDefined);
         }
@@ -96,6 +99,16 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
             await transaction.RollbackAsync(cancellationToken);
             return ConstructionTransitionResult.Rejected(ConstructionTransitionOutcome.AlreadyStarted);
         }
+
+        // AC-1's event, enqueued in the same transaction as the phase row it
+        // announces: the two commit together or not at all, so there is no outcome
+        // in which the build is started and nobody is ever told. Getting it onto
+        // construction-events is OutboxDispatcher's job from here.
+        await OutboxRepository.InsertAsync(
+            connection,
+            transaction,
+            ConstructionEvents.Started(phase, milestoneCount),
+            cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
         return ConstructionTransitionResult.Succeeded(phase);
@@ -164,12 +177,10 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
             }
         }
 
-        await transaction.CommitAsync(cancellationToken);
-
         // Built from the row this transaction already read plus the two values it
         // just wrote, rather than a second SELECT: the UPDATE ran under the row
         // lock, so nothing else can have changed the rest of the row in between.
-        return ConstructionTransitionResult.Succeeded(new ConstructionPhase
+        var completedPhase = new ConstructionPhase
         {
             ProjectId = existing.ProjectId,
             Status = ConstructionPhaseStatus.Completed,
@@ -177,7 +188,20 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
             CompletedAtUtc = now,
             HandedOverAtUtc = existing.HandedOverAtUtc,
             UpdatedAtUtc = now
-        });
+        };
+
+        // AC-2's event, enqueued in the same transaction as the UPDATE above. The
+        // milestone tally that satisfied the gate rides along on the payload rather
+        // than being counted again at dispatch, where it could have moved.
+        await OutboxRepository.InsertAsync(
+            connection,
+            transaction,
+            ConstructionEvents.Completed(completedPhase, total),
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return ConstructionTransitionResult.Succeeded(completedPhase);
     }
 
     public async Task<ConstructionPhase?> GetForProjectAsync(

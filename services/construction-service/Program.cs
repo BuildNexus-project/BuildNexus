@@ -36,6 +36,7 @@ builder.Services.AddScoped<IMilestoneSetupRepository, MilestoneSetupRepository>(
 builder.Services.AddScoped<IMilestoneRepository, MilestoneRepository>();
 builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
 builder.Services.AddScoped<IConstructionPhaseRepository, ConstructionPhaseRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.
@@ -43,7 +44,23 @@ builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
+    .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
     .ValidateOnStart();
+
+// How fast the outbox drains. Both settings have working defaults, so there is
+// nothing to validate on start — an outbox nobody configured should still drain.
+builder.Services.AddOptions<OutboxOptions>()
+    .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName));
+
+// The producer is a singleton: librdkafka's producer is thread-safe, holds its own
+// background threads and connection pool, and building one per request would be
+// expensive and would lose whatever is still in the buffer on dispose.
+builder.Services.AddSingleton<IConstructionEventPublisher, KafkaConstructionEventPublisher>();
+
+// Drains construction_outbox_events onto construction-events. The only thing that
+// publishes — a transition enqueues, this sends, so a transition can succeed while
+// the broker is down.
+builder.Services.AddHostedService<OutboxDispatcher>();
 
 // Reads design-events and creates a milestone-setup placeholder for each
 // approved design. Nothing on any request path waits on it.
