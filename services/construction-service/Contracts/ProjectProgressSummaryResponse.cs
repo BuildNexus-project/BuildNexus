@@ -42,14 +42,68 @@ public class ProjectProgressSummaryResponse
     /// </summary>
     public IReadOnlyList<MilestoneResponse> Milestones { get; set; } = [];
 
+    /// <summary>
+    /// Where the build phase stands, or <c>null</c> when construction has not been
+    /// started (US-14 AC-4's "summary viewable by the Client").
+    /// </summary>
+    /// <remarks>
+    /// Added to this response rather than given an endpoint of its own: the Client
+    /// already has one screen that polls this, and the handover is the headline of the
+    /// same story the milestones tell — "100% of milestones done" and "handed over on
+    /// the 20th" belong in one answer, not two that can disagree.
+    /// <para>
+    /// <c>null</c> is the normal state for a project whose design is approved but whose
+    /// build has not begun, not an error.
+    /// </para>
+    /// </remarks>
+    public ConstructionPhaseSummary? Phase { get; set; }
+
     public static ProjectProgressSummaryResponse From(
         ProjectProgress progress,
-        IReadOnlyList<Milestone> milestones) => new()
+        IReadOnlyList<Milestone> milestones,
+        ConstructionPhase? phase) => new()
     {
         ProjectId = progress.ProjectId,
         TotalMilestones = progress.TotalMilestones,
         CompletedMilestones = progress.CompletedMilestones,
         ProgressPercent = progress.ProgressPercent,
-        Milestones = milestones.Select(MilestoneResponse.From).ToList()
+        Milestones = milestones.Select(MilestoneResponse.From).ToList(),
+        Phase = phase is null ? null : ConstructionPhaseSummary.From(phase)
+    };
+}
+
+/// <summary>
+/// The build phase as a Client sees it — when their project started, finished, and was
+/// handed over to them (US-14 AC-4).
+/// </summary>
+/// <remarks>
+/// Deliberately narrower than <see cref="ConstructionPhaseResponse"/>, which the
+/// Project Manager's own screen reads. The difference is
+/// <c>handedOverByUserId</c>: that is a staff account id, of no use to a Client and not
+/// theirs to see. A Client is told their project was handed over and when, not which
+/// employee pressed the button.
+/// </remarks>
+public class ConstructionPhaseSummary
+{
+    /// <summary>
+    /// Serialised as its name (<c>"Started"</c>, <c>"Completed"</c>,
+    /// <c>"HandedOver"</c>) by the converter registered in <c>Program.cs</c>.
+    /// </summary>
+    public ConstructionPhaseStatus Status { get; set; }
+
+    public DateTime StartedAtUtc { get; set; }
+
+    /// <summary><c>null</c> until the build is marked complete.</summary>
+    public DateTime? CompletedAtUtc { get; set; }
+
+    /// <summary><c>null</c> until the project is handed over.</summary>
+    public DateTime? HandedOverAtUtc { get; set; }
+
+    public static ConstructionPhaseSummary From(ConstructionPhase phase) => new()
+    {
+        Status = phase.Status,
+        StartedAtUtc = phase.StartedAtUtc,
+        CompletedAtUtc = phase.CompletedAtUtc,
+        HandedOverAtUtc = phase.HandedOverAtUtc
     };
 }
