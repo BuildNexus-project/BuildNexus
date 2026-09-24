@@ -31,25 +31,30 @@ public class ConstructionProgressController : ControllerBase
 {
     private readonly IMilestoneRepository _milestones;
     private readonly IProjectOwnerRepository _owners;
+    private readonly IConstructionPhaseRepository _phases;
 
     public ConstructionProgressController(
         IMilestoneRepository milestones,
-        IProjectOwnerRepository owners)
+        IProjectOwnerRepository owners,
+        IConstructionPhaseRepository phases)
     {
         _milestones = milestones;
         _owners = owners;
+        _phases = phases;
     }
 
     /// <summary>
     /// How the Client's project is advancing: every milestone with its current
-    /// status, and the overall completion percentage (AC-1).
+    /// status, the overall completion percentage (US-13 AC-1), and where the build
+    /// phase stands — including, once it gets there, that the project has been handed
+    /// over to them (US-14 AC-4).
     /// </summary>
     /// <remarks>
     /// Answers from a fresh read every time — no caching, no stored rollup — so
     /// a caller that re-reads after a status change sees the change (AC-2). The
     /// dashboard is what decides how often to re-read.
     /// </remarks>
-    /// <response code="200">The milestones and the rollup. A project with none defined yet is a real answer: an empty list at zero percent.</response>
+    /// <response code="200">The milestones, the rollup, and the build phase. A project with no milestones defined yet is a real answer: an empty list at zero percent. So is a null phase, for a project whose build has not started.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid, or carried no usable subject claim.</response>
     /// <response code="403">The caller is not a Client, or the project is not theirs.</response>
     /// <response code="404">The project's design has not yet been approved, so it has no construction plan to report on.</response>
@@ -103,7 +108,13 @@ public class ConstructionProgressController : ControllerBase
         // visible milestones do not account for.
         var milestones = await _milestones.ListForProjectAsync(projectId, cancellationToken);
 
-        return Ok(ProjectProgressSummaryResponse.From(progress, milestones));
+        // Read last, and never a reason to fail the response: a null phase is the
+        // normal state for a project whose build has not begun, and the milestones and
+        // rollup above are worth showing either way. AC-4's handover is the same read —
+        // once the phase says HandedOver, the Client's own screen is where they see it.
+        var phase = await _phases.GetForProjectAsync(projectId, cancellationToken);
+
+        return Ok(ProjectProgressSummaryResponse.From(progress, milestones, phase));
     }
 
     private bool TryGetCallerId(out Guid userId) =>

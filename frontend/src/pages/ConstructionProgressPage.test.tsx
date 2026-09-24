@@ -54,13 +54,34 @@ function milestone(name: string, status: string, id = crypto.randomUUID()) {
   }
 }
 
-function summary(completed: number, percent: number, milestones: ReturnType<typeof milestone>[]) {
+function summary(
+  completed: number,
+  percent: number,
+  milestones: ReturnType<typeof milestone>[],
+  phase: ReturnType<typeof buildPhase> | null = null,
+) {
   return {
     projectId: BUILDING_ID,
     totalMilestones: milestones.length,
     completedMilestones: completed,
     progressPercent: percent,
     milestones,
+    phase,
+  }
+}
+
+/**
+ * The build phase as the Client's summary carries it (US-14 AC-4). Deliberately has
+ * no `handedOverByUserId`: the service leaves that staff id off this shape, and the
+ * fixture mirrors the real payload rather than a superset of it.
+ */
+function buildPhase(overrides: Record<string, unknown> = {}) {
+  return {
+    status: 'Started',
+    startedAtUtc: '2026-08-05T09:00:00Z',
+    completedAtUtc: null,
+    handedOverAtUtc: null,
+    ...overrides,
   }
 }
 
@@ -259,5 +280,86 @@ describe('ConstructionProgressPage', () => {
     // The milestone and its percentage are still there beside the error.
     expect(within(card).getByText('100.00%')).toBeInTheDocument()
     expect(within(card).getByText('Foundation')).toBeInTheDocument()
+  })
+
+  // ----------------------------------------- the build phase (US-14 AC-4) --
+
+  it('tells the Client their project has been handed over, and when', async () => {
+    // AC-4: the terminal state comes with a summary the Client can see. A finished
+    // project should read as delivered, not be inferred from a bar at 100%.
+    renderPage(
+      apiResponse(200, projects()),
+      apiResponse(
+        200,
+        summary(1, 100, [milestone('Foundation', 'Completed', MILESTONE_ID)], buildPhase({
+          status: 'HandedOver',
+          completedAtUtc: '2026-09-14T16:45:00Z',
+          handedOverAtUtc: '2026-09-20T11:00:00Z',
+        })),
+      ),
+    )
+
+    const card = await screen.findByTestId(`progress-${BUILDING_ID}`)
+    const phase = await within(card).findByTestId('build-phase')
+
+    expect(within(phase).getByText('Handed Over')).toBeInTheDocument()
+    expect(within(phase).getByText(/Handed over to you on/i)).toBeInTheDocument()
+    // The whole span, so it reads as a history rather than a status.
+    expect(within(phase).getByText(/Construction started/i)).toBeInTheDocument()
+    expect(within(phase).getByText(/completed/i)).toBeInTheDocument()
+  })
+
+  it('shows a running build quietly, with no handover claim', async () => {
+    // A build under way must not read as delivered — the milestones are the story at
+    // this point, not the phase.
+    renderPage(
+      apiResponse(200, projects()),
+      apiResponse(
+        200,
+        summary(0, 0, [milestone('Foundation', 'InProgress', MILESTONE_ID)], buildPhase()),
+      ),
+    )
+
+    const card = await screen.findByTestId(`progress-${BUILDING_ID}`)
+    const phase = await within(card).findByTestId('build-phase')
+
+    expect(within(phase).getByText('In Construction')).toBeInTheDocument()
+    expect(within(phase).queryByText(/Handed over to you/i)).not.toBeInTheDocument()
+  })
+
+  it('shows no phase block at all before construction starts', async () => {
+    // A project whose design is approved but whose build has not begun. The service
+    // sends a null phase, which is a real state rather than something to render.
+    renderPage(
+      apiResponse(200, projects()),
+      apiResponse(200, summary(0, 0, [milestone('Foundation', 'NotStarted', MILESTONE_ID)], null)),
+    )
+
+    const card = await screen.findByTestId(`progress-${BUILDING_ID}`)
+    await within(card).findByText('Foundation')
+
+    expect(within(card).queryByTestId('build-phase')).not.toBeInTheDocument()
+  })
+
+  it('never names the staff member who handed the project over', async () => {
+    // The service omits the id from this shape, so the page has nothing to leak. This
+    // pins that the page does not start sourcing it from somewhere else.
+    renderPage(
+      apiResponse(200, projects()),
+      apiResponse(
+        200,
+        summary(1, 100, [milestone('Foundation', 'Completed', MILESTONE_ID)], buildPhase({
+          status: 'HandedOver',
+          completedAtUtc: '2026-09-14T16:45:00Z',
+          handedOverAtUtc: '2026-09-20T11:00:00Z',
+        })),
+      ),
+    )
+
+    const phase = await within(
+      await screen.findByTestId(`progress-${BUILDING_ID}`),
+    ).findByTestId('build-phase')
+
+    expect(within(phase).queryByText(/handed over by/i)).not.toBeInTheDocument()
   })
 })

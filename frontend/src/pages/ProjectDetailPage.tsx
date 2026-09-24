@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useParams } from 'react-router-dom'
@@ -29,13 +29,20 @@ import { Textarea } from '@/components/ui/textarea'
 import { ApiError, apiErrorMessage } from '@/lib/api'
 import { fetchAllUsers, type AdminUserSummary } from '@/lib/auth-api'
 import {
+  completeConstruction,
+  CONSTRUCTION_PHASE_STATUS_LABELS,
   createMilestone,
   createMilestonesFromTemplate,
+  fetchConstructionPhase,
   fetchProjectMilestones,
+  handOverConstruction,
   fetchProjectProgress,
+  isStaleStateRefusal,
   MILESTONE_STATUS_LABELS,
   MILESTONE_STATUSES,
+  startConstruction,
   updateMilestoneStatus,
+  type ConstructionPhase,
   type Milestone,
   type MilestoneStatus,
   type ProjectProgress,
@@ -671,6 +678,286 @@ function MilestonesSection({
 }
 
 /**
+ * A project's build phase, and the one transition the Project Manager can make
+ * next (US-14).
+ *
+ * Three gated transitions, and the whole point of this panel is that only the one
+ * that is actually available is offered: a build that has not started shows Start,
+ * one under way shows Mark complete, and a finished one shows where it stands.
+ *
+ * The preconditions themselves are deliberately not re-checked here. The service
+ * checks each one inside the transaction that writes and refuses anything out of
+ * order (AC-3) with a sentence written for the PM to read — "Define at least one
+ * construction milestone before starting the build" — which this panel renders
+ * verbatim. Mirroring those checks in the browser would mean a second copy of the
+ * rules that can disagree with the real one, and it would need the milestone
+ * rollup that {@link MilestonesSection} already loads: a second GET of the same
+ * data, and two numbers on one screen that can drift apart.
+ *
+ * Rendered only for a Project Manager, like {@link MilestonesSection}: every
+ * endpoint behind it is PM-only.
+ */
+function ConstructionPhaseSection({
+  projectId,
+  projectStatus,
+}: {
+  projectId: string
+  projectStatus: ProjectStatus
+}) {
+  const { authFetch } = useAuth()
+
+  // null means "construction has not started" — a real state, not missing data —
+  // so loading is tracked separately rather than inferred from the phase.
+  const [phase, setPhase] = useState<ConstructionPhase | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [transitioning, setTransitioning] = useState<'start' | 'complete' | 'handover' | null>(null)
+  const [transitionError, setTransitionError] = useState<string | null>(null)
+
+  // Same gate as the milestones section: before the design is approved there is no
+  // construction plan for the Construction Service to know about, so asking would
+  // only produce an error the PM cannot act on.
+  const canHavePhase =
+    projectStatus === 'DesignApproved' ||
+    projectStatus === 'Construction' ||
+    projectStatus === 'Completed'
+
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
+      setLoadError(null)
+
+      try {
+        const loaded = await fetchConstructionPhase(authFetch, projectId)
+
+        if (!isCancelled()) {
+          setPhase(loaded)
+        }
+      } catch (error) {
+        if (!isCancelled()) {
+          setLoadError(apiErrorMessage(error, 'Could not load this project’s build phase.'))
+        }
+      } finally {
+        if (!isCancelled()) {
+          setLoading(false)
+        }
+      }
+    },
+    [authFetch, projectId],
+  )
+
+  useEffect(() => {
+    if (!canHavePhase) {
+      // No setLoading here: the !canHavePhase branch renders before the loading
+      // one, so the flag is never read in this state — and setting state
+      // synchronously in an effect only costs an extra render.
+      return
+    }
+
+    let cancelled = false
+    void load(() => cancelled)
+
+    return () => {
+      cancelled = true
+    }
+  }, [canHavePhase, load])
+
+  /**
+   * Runs one transition and folds the answer back into the panel.
+   *
+   * A refusal the PM can act on — no milestones defined, a milestone unfinished —
+   * is shown as an error beside the button, in the service's own words. A refusal
+   * that only means this screen is out of date (the transition had already
+   * happened, in another tab or by another PM) is not: there is nothing for them
+   * to fix, so the phase is re-read and the buttons settle on their own. Telling
+   * somebody to correct a state that is already correct is worse than silence.
+   */
+  async function runTransition(
+    which: 'start' | 'complete' | 'handover',
+    action: () => Promise<ConstructionPhase>,
+  ) {
+    setTransitionError(null)
+    setTransitioning(which)
+
+    try {
+      setPhase(await action())
+    } catch (error) {
+      if (isStaleStateRefusal(error)) {
+        await load(() => false)
+      } else {
+        setTransitionError(
+          apiErrorMessage(error, 'Could not update the build phase. Please try again.'),
+        )
+      }
+    } finally {
+      setTransitioning(null)
+    }
+  }
+
+  if (!canHavePhase) {
+    return (
+      <PhasePanel>
+        <p className="text-muted-foreground text-sm">
+          Construction can be started once this project’s design has been approved.
+        </p>
+      </PhasePanel>
+    )
+  }
+
+  if (loading) {
+    return (
+      <PhasePanel>
+        <p className="text-muted-foreground text-sm">Loading build phase…</p>
+      </PhasePanel>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <PhasePanel>
+        <p role="alert" className="text-destructive text-sm">
+          {loadError}
+        </p>
+      </PhasePanel>
+    )
+  }
+
+  return (
+    <PhasePanel
+      status={
+        phase === null ? (
+          <Badge variant="outline">Not started</Badge>
+        ) : (
+          <Badge>{CONSTRUCTION_PHASE_STATUS_LABELS[phase.status]}</Badge>
+        )
+      }
+    >
+      {phase !== null && (
+        <dl className="text-muted-foreground grid gap-1 text-xs">
+          <div className="flex gap-2">
+            <dt>Started</dt>
+            <dd className="text-foreground">{formatMoment(phase.startedAtUtc)}</dd>
+          </div>
+          {phase.completedAtUtc !== null && (
+            <div className="flex gap-2">
+              <dt>Completed</dt>
+              <dd className="text-foreground">{formatMoment(phase.completedAtUtc)}</dd>
+            </div>
+          )}
+          {phase.handedOverAtUtc !== null && (
+            <div className="flex gap-2">
+              <dt>Handed over</dt>
+              <dd className="text-foreground">{formatMoment(phase.handedOverAtUtc)}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      {/* Exactly one action is offered, chosen by where the phase stands — a
+          transition the service would refuse is never on screen at all. */}
+      {phase === null && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('start', () => startConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'start' ? 'Starting…' : 'Start construction'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Needs an approved design and at least one milestone. Moves the project to
+            Construction.
+          </span>
+        </div>
+      )}
+
+      {phase?.status === 'Started' && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('complete', () => completeConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'complete' ? 'Completing…' : 'Mark construction complete'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Every milestone must be Completed first.
+          </span>
+        </div>
+      )}
+
+      {phase?.status === 'Completed' && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('handover', () => handOverConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'handover' ? 'Handing over…' : 'Hand over to client'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Needs the final payment settled. This is the last step — a handed-over project
+            cannot be reopened.
+          </span>
+        </div>
+      )}
+
+      {phase?.status === 'HandedOver' && (
+        <p className="text-muted-foreground text-sm">
+          This project has been handed over to the client. Nothing follows this stage.
+        </p>
+      )}
+
+      {transitionError && (
+        <p role="alert" className="text-destructive text-sm">
+          {transitionError}
+        </p>
+      )}
+    </PhasePanel>
+  )
+}
+
+/**
+ * The panel chrome every state of {@link ConstructionPhaseSection} shares — the
+ * heading, its `aria-labelledby` wiring and the test hook — so each early return
+ * does not repeat them and cannot drift out of step.
+ */
+function PhasePanel({
+  status,
+  children,
+}: {
+  status?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section
+      aria-labelledby="construction-phase-heading"
+      data-testid="construction-phase-panel"
+      className="flex flex-col gap-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="construction-phase-heading" className="text-sm font-medium">
+          Build phase
+        </h2>
+        {status}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+/**
  * One project in full, with its status history, and the controls to move it
  * along (US-06).
  *
@@ -1235,6 +1522,8 @@ export function ProjectDetailPage() {
 
           {isProjectManager && (
             <>
+              <Separator />
+              <ConstructionPhaseSection projectId={project.id} projectStatus={project.status} />
               <Separator />
               <MilestonesSection projectId={project.id} projectStatus={project.status} />
             </>

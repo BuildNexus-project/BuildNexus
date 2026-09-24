@@ -954,6 +954,35 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     }
   }
 
+  /**
+   * The Construction Service's answer to the phase read for a project whose build
+   * has not been started: a 404, which the client translates to null (US-14).
+   *
+   * Every PM render now makes this call — ConstructionPhaseSection mounts above the
+   * milestones section and loads first — so it is spelled out in each sequence
+   * rather than left to fall through to whatever response came last.
+   */
+  function phaseNotStarted() {
+    return apiResponse(404, {
+      title: 'Construction has not started.',
+      detail: "This project's build has not been started yet.",
+      status: 404,
+    })
+  }
+
+  /** A construction phase as the service returns it once the build is under way. */
+  function phaseRow(overrides: Record<string, unknown> = {}) {
+    return {
+      projectId: PROJECT_ID,
+      status: 'Started',
+      startedAtUtc: '2026-08-20T09:00:00',
+      completedAtUtc: null,
+      handedOverAtUtc: null,
+      updatedAtUtc: '2026-08-20T09:00:00',
+      ...overrides,
+    }
+  }
+
   /** A ProjectProgress rollup as the Construction Service returns it. */
   function progressRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -1026,6 +1055,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     renderPage(
       asProjectManager,
       apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
       apiResponse(200, [milestone({ status: 'Completed' }), milestone({
         id: 'a1000000-0000-4000-8000-000000000002',
         name: 'Roof on',
@@ -1050,6 +1080,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     const requests = renderPage(
       asProjectManager,
       apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
       apiResponse(200, [milestone()]),
       apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
       // PATCH reply — the milestone moved to InProgress.
@@ -1089,6 +1120,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     const requests = renderPage(
       asProjectManager,
       apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
       apiResponse(200, []),
       apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
       // POST reply: the created milestone.
@@ -1140,6 +1172,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     renderPage(
       asProjectManager,
       apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
       apiResponse(200, [milestone()]),
       apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
       // POST reply: 409 with problem details detail explaining the clash.
@@ -1183,6 +1216,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     const requests = renderPage(
       asProjectManager,
       apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
       // First attempt: milestones list is fine, progress 404s (race).
       apiResponse(200, []),
       apiResponse(404, {
@@ -1245,6 +1279,7 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     const requests = renderPage(
       asProjectManager,
       apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
       apiResponse(200, []),
       apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
       // POST reply: the full template set the service returns after applying.
@@ -1297,5 +1332,354 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     expect(
       within(panel).queryByRole('button', { name: 'Create from template' }),
     ).not.toBeInTheDocument()
+  })
+
+  // ------------------------------------------------- build phase (US-14) ----
+
+  /**
+   * The Build phase panel, queried by its test id for the same reason the
+   * milestones panel is: a stable seam JSDOM's accessibility-tree inference
+   * cannot miss, while real screen readers still get the heading via
+   * aria-labelledby.
+   */
+  async function phasePanel(): Promise<HTMLElement> {
+    return await screen.findByTestId('construction-phase-panel')
+  }
+
+  it('the build phase panel is not rendered for a Client', async () => {
+    // Start and Complete are Project-Manager transitions; the service would
+    // refuse a Client. Not offering them beats offering what cannot be used.
+    renderPage(asOwningClient, apiResponse(200, designApprovedProject()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByRole('heading', { name: 'Build phase' })).not.toBeInTheDocument()
+  })
+
+  it('gates the build phase panel behind design approval', async () => {
+    // Before approval there is no construction plan for the service to know
+    // about, so the panel explains itself rather than firing a doomed request.
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Designing' })),
+    )
+
+    const panel = await phasePanel()
+
+    expect(
+      within(panel).getByText(
+        'Construction can be started once this project’s design has been approved.',
+      ),
+    ).toBeInTheDocument()
+    expect(requests.some((request) => request.path.includes('/api/construction/'))).toBe(false)
+  })
+
+  it('offers only Start construction for a project whose build has not begun', async () => {
+    // The service's 404 is translated to "no phase", which is a real state — so
+    // the panel shows Not started and the single transition that is legal next.
+    renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
+      apiResponse(200, [milestone()]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+    )
+
+    const panel = await phasePanel()
+
+    expect(await within(panel).findByText('Not started')).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: 'Start construction' })).toBeInTheDocument()
+    // The later transitions are not offered out of order (AC-3) — the UI does not
+    // present a move the service would refuse.
+    expect(
+      within(panel).queryByRole('button', { name: 'Mark construction complete' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('starting construction POSTs to the start endpoint and shows the running build', async () => {
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
+      apiResponse(200, [milestone()]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+      // The start reply — the phase now exists and is Started.
+      apiResponse(200, phaseRow()),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Start construction' }))
+
+    // The panel moves on to the next available transition without a reload: the
+    // POST reply carries the new phase, so nothing has to be re-read.
+    expect(
+      await within(panel).findByRole('button', { name: 'Mark construction complete' }),
+    ).toBeInTheDocument()
+
+    const posts = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/start`
+        && request.method === 'POST',
+    )
+    expect(posts).toHaveLength(1)
+    // The project is in the URL and the service decides the rest.
+    expect(posts[0].body).toBeUndefined()
+  })
+
+  it('shows the service’s reason verbatim when starting is refused (AC-3)', async () => {
+    renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
+      apiResponse(200, []),
+      apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
+      // The service refuses: an approved design, but no milestones to build.
+      apiResponse(409, {
+        title: 'No milestones defined.',
+        detail: 'Define at least one construction milestone before starting the build.',
+        reason: 'NoMilestonesDefined',
+        status: 409,
+      }),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Start construction' }))
+
+    // The sentence the service wrote, not a flattened "something went wrong" —
+    // it is the one that tells the PM what to do next.
+    expect(
+      await within(panel).findByText(
+        'Define at least one construction milestone before starting the build.',
+      ),
+    ).toBeInTheDocument()
+
+    // And the panel stays where it was: nothing was started.
+    expect(within(panel).getByRole('button', { name: 'Start construction' })).toBeInTheDocument()
+  })
+
+  it('completing construction POSTs and moves the project to awaiting handover', async () => {
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      // The build is already under way.
+      apiResponse(200, phaseRow()),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+      // The complete reply.
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(
+      await within(panel).findByRole('button', { name: 'Mark construction complete' }),
+    )
+
+    // Complete is not terminal — handover follows, so the panel moves straight on to
+    // offering that transition rather than declaring itself finished.
+    expect(
+      await within(panel).findByRole('button', { name: 'Hand over to client' }),
+    ).toBeInTheDocument()
+    // And the transition just made is no longer on offer.
+    expect(
+      within(panel).queryByRole('button', { name: 'Mark construction complete' }),
+    ).not.toBeInTheDocument()
+
+    const posts = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/complete`
+        && request.method === 'POST',
+    )
+    expect(posts).toHaveLength(1)
+  })
+
+  it('shows the service’s reason when completing is refused for an unfinished milestone', async () => {
+    renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow()),
+      apiResponse(200, [milestone({ status: 'InProgress' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+      apiResponse(409, {
+        title: 'Milestones are not all complete.',
+        detail: 'Every milestone must be marked Completed before construction can be completed.',
+        reason: 'MilestonesIncomplete',
+        status: 409,
+      }),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(
+      await within(panel).findByRole('button', { name: 'Mark construction complete' }),
+    )
+
+    expect(
+      await within(panel).findByText(
+        'Every milestone must be marked Completed before construction can be completed.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('re-reads the phase instead of scolding the PM when the build was already started', async () => {
+    // The stale-screen case: another PM started the build, or this tab has been
+    // open a while. There is nothing for this PM to fix, so the panel quietly
+    // catches up rather than showing them an error about a state that is correct.
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, designApprovedProject()),
+      phaseNotStarted(),
+      apiResponse(200, [milestone()]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+      // The start is refused because it already happened.
+      apiResponse(409, {
+        title: 'Construction already started.',
+        detail: "This project's build has already been started.",
+        reason: 'AlreadyStarted',
+        status: 409,
+      }),
+      // The re-read that follows finds the phase somebody else created.
+      apiResponse(200, phaseRow()),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Start construction' }))
+
+    // The panel settles on the real state, showing the next available transition.
+    expect(
+      await within(panel).findByRole('button', { name: 'Mark construction complete' }),
+    ).toBeInTheDocument()
+
+    // And no error was shown — the PM did nothing wrong.
+    expect(
+      within(panel).queryByText("This project's build has already been started."),
+    ).not.toBeInTheDocument()
+
+    // The phase was read twice: once on mount, once to recover.
+    const phaseGets = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/phase`
+        && (request.method === undefined || request.method === 'GET'),
+    )
+    expect(phaseGets).toHaveLength(2)
+  })
+
+  it('offers no transition at all once the project has been handed over', async () => {
+    // Terminal: nothing follows handover, so the panel is read-only.
+    renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Completed', allowedNextStatuses: [] })),
+      apiResponse(200, phaseRow({
+        status: 'HandedOver',
+        completedAtUtc: '2026-09-14T16:45:00',
+        handedOverAtUtc: '2026-09-20T11:00:00',
+      })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+    )
+
+    const panel = await phasePanel()
+
+    expect(
+      await within(panel).findByText(
+        'This project has been handed over to the client. Nothing follows this stage.',
+      ),
+    ).toBeInTheDocument()
+
+    expect(
+      within(panel).queryByRole('button', { name: 'Start construction' }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(panel).queryByRole('button', { name: 'Mark construction complete' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('offers Hand over to client once the build is complete', async () => {
+    renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+    )
+
+    const panel = await phasePanel()
+
+    expect(
+      await within(panel).findByRole('button', { name: 'Hand over to client' }),
+    ).toBeInTheDocument()
+    // The earlier transitions are gone — only the one that is legal next is offered.
+    expect(
+      within(panel).queryByRole('button', { name: 'Mark construction complete' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('handing over POSTs and moves the project to its terminal state', async () => {
+    const requests = renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+      apiResponse(200, phaseRow({
+        status: 'HandedOver',
+        completedAtUtc: '2026-09-14T16:45:00',
+        handedOverAtUtc: '2026-09-20T11:00:00',
+      })),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Hand over to client' }))
+
+    // Terminal: the panel becomes read-only rather than offering anything further.
+    expect(
+      await within(panel).findByText(
+        'This project has been handed over to the client. Nothing follows this stage.',
+      ),
+    ).toBeInTheDocument()
+
+    const posts = requests.filter(
+      (request) =>
+        request.path === `/api/construction/projects/${PROJECT_ID}/handover`
+        && request.method === 'POST',
+    )
+    expect(posts).toHaveLength(1)
+  })
+
+  it('shows the service’s reason when the final payment is not settled', async () => {
+    // The refusal to expect in practice until the Payment Service publishes its
+    // settlement event. It has to read as "chase the invoice", not as a broken button.
+    renderPage(
+      asProjectManager,
+      apiResponse(200, projectDetail({ status: 'Construction', allowedNextStatuses: ['Completed'] })),
+      apiResponse(200, phaseRow({ status: 'Completed', completedAtUtc: '2026-09-14T16:45:00' })),
+      apiResponse(200, [milestone({ status: 'Completed' })]),
+      apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 1, progressPercent: 100 })),
+      apiResponse(409, {
+        title: 'Final payment not settled.',
+        detail: "This project's final payment has not been settled yet, so it cannot be handed over.",
+        reason: 'FinalPaymentNotSettled',
+        status: 409,
+      }),
+    )
+
+    const panel = await phasePanel()
+
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Hand over to client' }))
+
+    expect(
+      await within(panel).findByText(
+        "This project's final payment has not been settled yet, so it cannot be handed over.",
+      ),
+    ).toBeInTheDocument()
+
+    // Nothing was handed over, so the button stays available to retry once paid.
+    expect(
+      within(panel).getByRole('button', { name: 'Hand over to client' }),
+    ).toBeInTheDocument()
   })
 })

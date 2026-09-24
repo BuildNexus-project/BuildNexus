@@ -62,6 +62,32 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public ProjectOwnerRepository ProjectOwnerRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.ConstructionPhaseRepository"/> over the same
+    /// development database. Added for US-14: the three transitions are gated by
+    /// SQL that reads other tables in the same transaction — the design-approval
+    /// marker, the milestone tally — and the start gate is enforced by a primary
+    /// key rather than by a check in C#. None of that can be shown against a stub.
+    /// </summary>
+    public ConstructionPhaseRepository ConstructionPhaseRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.OutboxRepository"/> over the same development
+    /// database. Added for US-14: a transition's event is enqueued inside the
+    /// transition's own transaction, so the only honest way to assert that it was
+    /// announced — and that a refused transition announced nothing — is to read the
+    /// outbox table back after the fact.
+    /// </summary>
+    public OutboxRepository OutboxRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.PaymentSettlementRepository"/> over the same
+    /// development database. Added for US-14: the settlement marker is what AC-4's
+    /// handover gate reads, and only the real engine can show that the primary key
+    /// absorbs a redelivered event rather than raising a duplicate-key error.
+    /// </summary>
+    public PaymentSettlementRepository PaymentSettlementRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -72,6 +98,17 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// <see cref="Data.MilestoneRepository.GetProgressForProjectAsync"/>
     /// check to answer "has the design been approved?".
     /// </summary>
+    /// <summary>
+    /// Plants a <c>payment_settlements</c> row for a project — the marker the
+    /// <c>FinalPaymentSettled</c> consumer would leave, and the row AC-4's handover
+    /// gate checks.
+    /// </summary>
+    public Task PlantSettledPaymentAsync(Guid projectId) =>
+        PaymentSettlementRepository.RecordSettlementIfAbsentAsync(
+            projectId,
+            sourceEventId: Guid.NewGuid(),
+            settledAtUtc: DateTime.UtcNow);
+
     public Task PlantApprovedDesignAsync(Guid projectId) =>
         Repository.CreatePlaceholderIfAbsentAsync(
             projectId,
@@ -97,6 +134,9 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         Repository = new MilestoneSetupRepository(connectionFactory);
         MilestoneRepository = new MilestoneRepository(connectionFactory);
         ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
+        ConstructionPhaseRepository = new ConstructionPhaseRepository(connectionFactory);
+        OutboxRepository = new OutboxRepository(connectionFactory);
+        PaymentSettlementRepository = new PaymentSettlementRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -110,11 +150,19 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         await using var connection = new MySqlConnection(ConnectionString);
         await connection.OpenAsync();
 
-        // All three tables use project_id from the same run-scoped namespace, so
-        // a LIKE on the run prefix reaches every row this run created. No FKs
+        // Every table uses project_id from the same run-scoped namespace, so a
+        // LIKE on the run prefix reaches every row this run created. No FKs
         // between them, so the order does not matter — this order is a
         // preference for tidiness, not a constraint.
-        foreach (var table in new[] { "construction_milestones", "milestone_setups", "project_owners" })
+        foreach (var table in new[]
+                 {
+                     // The outbox leads: its rows point at construction_phases with
+                     // ON DELETE CASCADE, so deleting them explicitly first keeps
+                     // this cleanup readable rather than relying on the cascade.
+                     "construction_outbox_events", "construction_phases",
+                     "construction_milestones", "milestone_setups", "project_owners",
+                     "payment_settlements"
+                 })
         {
             await using var command = connection.CreateCommand();
             command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";

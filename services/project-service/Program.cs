@@ -30,6 +30,12 @@ builder.Services.AddSingleton<IProjectEventPublisher, KafkaProjectEventPublisher
 // afterwards. Nothing on the request path waits for the broker.
 builder.Services.AddHostedService<OutboxDispatcher>();
 
+// Reads construction-events and moves a project through the build half of its
+// lifecycle (US-14). The Construction Service owns the build phase and announces
+// it; the project's own status lives here, so this service reacts. Nothing on any
+// request path waits on it.
+builder.Services.AddHostedService<ConstructionEventsConsumer>();
+
 // The User Service, asked over HTTP — with the Admin's own token — what role an
 // account holds before it is assigned to a project. Its address is validated at
 // startup for the same reason the JWT settings are: a service that cannot reach
@@ -73,6 +79,9 @@ builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    // A consumer that cannot say which group it reads under would either replay the
+    // whole topic on every restart or share offsets with an unrelated reader.
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
     // The broker security settings are optional — none of them is set locally —
     // but half of them is a mistake that would otherwise only show up as every
     // publish failing to connect. See KafkaOptions.HasConsistentSaslSettings.

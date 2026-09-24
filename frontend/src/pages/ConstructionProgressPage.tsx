@@ -6,8 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ApiError, apiErrorMessage } from '@/lib/api'
 import {
+  CONSTRUCTION_PHASE_STATUS_LABELS,
   fetchProjectProgressSummary,
   MILESTONE_STATUS_LABELS,
+  type ConstructionPhaseSummary,
   type MilestoneStatus,
   type ProjectProgressSummary,
 } from '@/lib/construction-api'
@@ -64,6 +66,49 @@ function formatTime(iso: string): string {
  * One project's build: the overall rollup as a percentage and a bar, and every
  * milestone with where it stands (US-13 AC-1).
  */
+/**
+ * Where the Client's build stands, and — once it gets there — that the project has
+ * been handed over to them (US-14 AC-4).
+ *
+ * Rendered above the milestone rollup because it is the headline: a client whose
+ * project is finished and delivered should read that first, not infer it from a bar
+ * at 100%. A build merely under way says so quietly and lets the milestones speak.
+ *
+ * Only the dates the service sends are shown. There is deliberately no "handed over
+ * by" line — the Client's summary does not carry a staff id, and this page could not
+ * render one if it wanted to.
+ */
+function BuildPhaseSummary({ phase }: { phase: ConstructionPhaseSummary }) {
+  const handedOver = phase.status === 'HandedOver'
+
+  return (
+    <div
+      data-testid="build-phase"
+      className={
+        handedOver
+          ? 'flex flex-col gap-1 rounded-md border p-3'
+          : 'flex flex-col gap-1 text-muted-foreground text-xs'
+      }
+    >
+      <span className="flex flex-wrap items-center gap-2">
+        <Badge variant={handedOver ? 'default' : 'secondary'}>
+          {CONSTRUCTION_PHASE_STATUS_LABELS[phase.status]}
+        </Badge>
+        {handedOver && phase.handedOverAtUtc && (
+          <span className="text-sm font-medium">
+            Handed over to you on {formatTime(phase.handedOverAtUtc)}
+          </span>
+        )}
+      </span>
+
+      <span className="text-muted-foreground text-xs">
+        Construction started {formatTime(phase.startedAtUtc)}
+        {phase.completedAtUtc && ` · completed ${formatTime(phase.completedAtUtc)}`}
+      </span>
+    </div>
+  )
+}
+
 function ProjectProgressCard({ entry }: { entry: ProjectProgressEntry }) {
   const { project, summary, error } = entry
 
@@ -92,6 +137,8 @@ function ProjectProgressCard({ entry }: { entry: ProjectProgressEntry }) {
             manager has set them out.
           </p>
         )}
+
+        {summary?.phase && <BuildPhaseSummary phase={summary.phase} />}
 
         {summary && (
           <>

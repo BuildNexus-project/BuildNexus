@@ -28,6 +28,7 @@ public class ConstructionProgressControllerTests
 
     private readonly FakeMilestoneRepository _milestones = new();
     private readonly FakeProjectOwnerRepository _owners = new();
+    private readonly FakeConstructionPhaseRepository _phases = new();
 
     [Fact]
     public async Task Returns_the_milestones_and_the_rollup_for_the_owning_client()
@@ -186,6 +187,103 @@ public class ConstructionProgressControllerTests
     /// The controller with a signed-in Client on it. <paramref name="callerId"/>
     /// of <c>null</c> stands for a token that carried no usable <c>sub</c>.
     /// </summary>
+    // -------------------------------- the build phase (US-14 AC-4) --------
+
+    [Fact]
+    public async Task The_summary_reports_a_handed_over_project_to_its_client()
+    {
+        // AC-4: the terminal state comes with a summary the Client can see. This is
+        // where they learn their project is finished and theirs.
+        GiveOwnership();
+        _milestones.NextProgress = Progress(total: 2, completed: 2, percent: 100m);
+        _phases.NextPhase = new ConstructionPhase
+        {
+            ProjectId = ProjectId,
+            Status = ConstructionPhaseStatus.HandedOver,
+            StartedAtUtc = Now,
+            CompletedAtUtc = Now.AddMonths(6),
+            HandedOverAtUtc = Now.AddMonths(7),
+            HandedOverByUserId = Guid.NewGuid(),
+            UpdatedAtUtc = Now.AddMonths(7)
+        };
+
+        var body = await SummaryFor(ClientId);
+
+        Assert.NotNull(body.Phase);
+        Assert.Equal(ConstructionPhaseStatus.HandedOver, body.Phase.Status);
+        // The whole span, so the summary reads as a history rather than a status.
+        Assert.Equal(Now, body.Phase.StartedAtUtc);
+        Assert.Equal(Now.AddMonths(6), body.Phase.CompletedAtUtc);
+        Assert.Equal(Now.AddMonths(7), body.Phase.HandedOverAtUtc);
+    }
+
+    [Fact]
+    public async Task The_clients_summary_does_not_name_the_staff_member_who_handed_over()
+    {
+        // handedOverByUserId is a staff account id: of no use to a Client and not theirs
+        // to see. They are told their project was handed over and when, not which
+        // employee pressed the button — so the property is absent from this shape
+        // entirely rather than merely left unread.
+        GiveOwnership();
+        _milestones.NextProgress = Progress(total: 1, completed: 1, percent: 100m);
+        _phases.NextPhase = new ConstructionPhase
+        {
+            ProjectId = ProjectId,
+            Status = ConstructionPhaseStatus.HandedOver,
+            StartedAtUtc = Now,
+            CompletedAtUtc = Now.AddMonths(6),
+            HandedOverAtUtc = Now.AddMonths(7),
+            HandedOverByUserId = Guid.NewGuid(),
+            UpdatedAtUtc = Now.AddMonths(7)
+        };
+
+        var body = await SummaryFor(ClientId);
+
+        Assert.Null(
+            typeof(ConstructionPhaseSummary).GetProperty("HandedOverByUserId"));
+        Assert.DoesNotContain(
+            "handedOverBy",
+            System.Text.Json.JsonSerializer.Serialize(body.Phase),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_build_that_has_not_started_reports_a_null_phase_rather_than_failing()
+    {
+        // The normal state for a project whose design was only just approved. The
+        // milestones and rollup are still worth showing, so a missing phase must not
+        // take the response down with it.
+        GiveOwnership();
+        _milestones.NextProgress = Progress(total: 0, completed: 0, percent: 0m);
+        _phases.NextPhase = null;
+
+        var body = await SummaryFor(ClientId);
+
+        Assert.Null(body.Phase);
+        Assert.Equal(0, body.TotalMilestones);
+    }
+
+    [Fact]
+    public async Task The_phase_is_not_read_for_a_project_that_is_not_the_callers()
+    {
+        // The ownership gate runs before anything is read, so a Client guessing ids
+        // learns nothing about another project's build — not even whether it started.
+        _owners.Owners[ProjectId] = SomeoneElse;
+
+        var result = await Controller(ClientId).GetSummary(ProjectId, default);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsAssignableFrom<ObjectResult>(result).StatusCode);
+        Assert.Empty(_phases.GetCalls);
+    }
+
+    /// <summary>The summary body for a caller, for the cases that assert on its shape.</summary>
+    private async Task<ProjectProgressSummaryResponse> SummaryFor(Guid callerId)
+    {
+        var result = await Controller(callerId).GetSummary(ProjectId, default);
+
+        return Assert.IsType<ProjectProgressSummaryResponse>(Assert.IsType<OkObjectResult>(result).Value);
+    }
+
     private ConstructionProgressController Controller(Guid? callerId)
     {
         var claims = new List<Claim> { new(ClaimTypes.Role, "Client") };
@@ -195,7 +293,7 @@ public class ConstructionProgressControllerTests
             claims.Add(new Claim(JwtRegisteredClaimNames.Sub, callerId.Value.ToString()));
         }
 
-        return new ConstructionProgressController(_milestones, _owners)
+        return new ConstructionProgressController(_milestones, _owners, _phases)
         {
             ControllerContext = new ControllerContext
             {

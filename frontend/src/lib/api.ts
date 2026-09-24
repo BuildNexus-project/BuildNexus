@@ -11,10 +11,27 @@ export class ApiError extends Error {
   readonly title?: string
   readonly detail?: string
   readonly fieldErrors: Record<string, string[]>
+  /**
+   * A machine-readable reason, from the problem details' `reason` extension,
+   * when the service sent one.
+   *
+   * Most refusals need nothing but `detail` on screen. This is for the few where
+   * the caller has to *act* differently depending on which precondition failed —
+   * the Construction Service's build transitions (US-14), where an "already
+   * started" means the screen is stale and should re-read, while a "no milestones
+   * defined" means the user has something to do. Branching on `detail` would mean
+   * matching on English prose, which breaks the moment the wording is improved.
+   */
+  readonly reason?: string
 
   constructor(
     status: number,
-    options: { title?: string; detail?: string; fieldErrors?: Record<string, string[]> } = {},
+    options: {
+      title?: string
+      detail?: string
+      fieldErrors?: Record<string, string[]>
+      reason?: string
+    } = {},
   ) {
     super(options.detail ?? options.title ?? `Request failed with status ${status}.`)
     this.name = 'ApiError'
@@ -22,6 +39,7 @@ export class ApiError extends Error {
     this.title = options.title
     this.detail = options.detail
     this.fieldErrors = options.fieldErrors ?? {}
+    this.reason = options.reason
   }
 }
 
@@ -46,6 +64,8 @@ type ProblemDetails = {
   title?: string
   detail?: string
   errors?: Record<string, string[]>
+  /** An optional extension some services add to name the precondition that refused. */
+  reason?: unknown
 }
 
 export type ApiFetchOptions = RequestInit & {
@@ -84,6 +104,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
       title: problem.title,
       detail: problem.detail,
       fieldErrors: problem.errors,
+      // Only a string is carried through: `reason` is an open extension slot, and
+      // a caller comparing it against known values should never have to guard
+      // against a number or an object arriving in it.
+      reason: typeof problem.reason === 'string' ? problem.reason : undefined,
     })
   }
 

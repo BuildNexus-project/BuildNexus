@@ -82,6 +82,28 @@ public class EndpointRoleDeclarationTests
     }
 
     [Fact]
+    public void Moving_a_project_through_its_build_phase_is_the_project_managers_alone()
+    {
+        // US-14: starting construction and marking it complete are the Project
+        // Manager's formal decisions, and the phase read exists so their screen can
+        // show which one is available next. No other role transitions a build — a
+        // Client watches theirs through ConstructionProgressController, which reads
+        // and never writes.
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("Start"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("Complete"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("HandOver"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("Get"));
+    }
+
+    [Fact]
     public void Watching_a_projects_construction_progress_is_the_clients_alone()
     {
         // US-13: the story is framed around the Client watching their own
