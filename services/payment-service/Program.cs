@@ -48,6 +48,10 @@ builder.Services.AddOptions<KafkaOptions>()
 // Nothing on any request path waits on it.
 builder.Services.AddHostedService<ProjectEventsConsumer>();
 
+// Reads construction-events and raises a project's invoice when its build
+// starts (AC-2's automatic path). Nothing on any request path waits on it.
+builder.Services.AddHostedService<ConstructionEventsConsumer>();
+
 // JWT settings, validated at startup so a missing or weak signing key fails the
 // service immediately rather than turning every request into a 401 at runtime.
 // This service validates tokens and never signs one, so there is no lifetime

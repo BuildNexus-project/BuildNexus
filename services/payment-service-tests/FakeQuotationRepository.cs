@@ -43,6 +43,14 @@ public class FakeQuotationRepository : IQuotationRepository
         return Task.FromResult(quotation);
     }
 
+    public Task<Quotation?> GetCurrentForProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(_quotations
+            .Where(quotation => quotation.ProjectId == projectId)
+            .OrderByDescending(quotation => quotation.CreatedAtUtc)
+            .FirstOrDefault());
+
     public Task<IReadOnlyList<Quotation>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)

@@ -10,7 +10,7 @@ namespace BuildNexus.PaymentService.Data;
 public class InvoiceRepository : IInvoiceRepository
 {
     private const string SelectColumns =
-        "id, project_id, amount, status, created_by, created_at, paid_at";
+        "id, project_id, amount, status, created_by, source_event_id, created_at, paid_at";
 
     private readonly IDbConnectionFactory _connectionFactory;
 
@@ -34,13 +34,15 @@ public class InvoiceRepository : IInvoiceRepository
             // create one already settled.
             Status = InvoiceStatus.Pending,
             CreatedBy = createdBy,
+            // Raised by a person, so there is no causing event.
+            SourceEventId = null,
             CreatedAtUtc = DateTime.UtcNow,
             PaidAtUtc = null
         };
 
         const string sql = $@"
             INSERT INTO invoices ({SelectColumns})
-            VALUES (@id, @projectId, @amount, @status, @createdBy, @createdAt, @paidAt);";
+            VALUES (@id, @projectId, @amount, @status, @createdBy, @sourceEventId, @createdAt, @paidAt);";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
@@ -52,12 +54,58 @@ public class InvoiceRepository : IInvoiceRepository
         // constraint allows.
         AddParameter(command, "@status", invoice.Status.ToString());
         AddParameter(command, "@createdBy", invoice.CreatedBy);
+        AddParameter(command, "@sourceEventId", DBNull.Value);
         AddParameter(command, "@createdAt", invoice.CreatedAtUtc);
         AddParameter(command, "@paidAt", DBNull.Value);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         return invoice;
+    }
+
+    public async Task<Invoice?> CreateFromEventIfAbsentAsync(
+        Guid projectId,
+        decimal amount,
+        Guid raisedBy,
+        Guid sourceEventId,
+        CancellationToken cancellationToken = default)
+    {
+        var invoice = new Invoice
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = projectId,
+            Amount = amount,
+            Status = InvoiceStatus.Pending,
+            CreatedBy = raisedBy,
+            SourceEventId = sourceEventId,
+            CreatedAtUtc = DateTime.UtcNow,
+            PaidAtUtc = null
+        };
+
+        // INSERT IGNORE against uq_invoices_source_event: the one thing this can
+        // silently skip is an event that has already raised an invoice — exactly
+        // the idempotency a redelivered ConstructionStarted needs. It cannot
+        // absorb anything else, because every other column of a fresh row is
+        // either new or unconstrained.
+        const string sql = $@"
+            INSERT IGNORE INTO invoices ({SelectColumns})
+            VALUES (@id, @projectId, @amount, @status, @createdBy, @sourceEventId, @createdAt, @paidAt);";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@id", invoice.Id);
+        AddParameter(command, "@projectId", invoice.ProjectId);
+        AddParameter(command, "@amount", invoice.Amount);
+        AddParameter(command, "@status", invoice.Status.ToString());
+        AddParameter(command, "@createdBy", invoice.CreatedBy);
+        AddParameter(command, "@sourceEventId", invoice.SourceEventId!.Value);
+        AddParameter(command, "@createdAt", invoice.CreatedAtUtc);
+        AddParameter(command, "@paidAt", DBNull.Value);
+
+        // Zero rows means the event had already raised one. Null says so, rather
+        // than returning an invoice this call did not create.
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1 ? invoice : null;
     }
 
     public async Task<IReadOnlyList<Invoice>> ListForProjectAsync(
@@ -98,6 +146,7 @@ public class InvoiceRepository : IInvoiceRepository
     private static Invoice Map(DbDataReader reader)
     {
         var paidAt = reader.GetOrdinal("paid_at");
+        var sourceEventId = reader.GetOrdinal("source_event_id");
 
         return new Invoice
         {
@@ -110,6 +159,7 @@ public class InvoiceRepository : IInvoiceRepository
             // with no int-to-name mapping to keep in sync.
             Status = Enum.Parse<InvoiceStatus>(reader.GetString(reader.GetOrdinal("status"))),
             CreatedBy = reader.GetGuid(reader.GetOrdinal("created_by")),
+            SourceEventId = reader.IsDBNull(sourceEventId) ? null : reader.GetGuid(sourceEventId),
             // MySQL's DATETIME carries no timezone, so MySqlConnector reads it back
             // as DateTimeKind.Unspecified and System.Text.Json would then serialize
             // it without a Z — which the browser reads as local time, dating the

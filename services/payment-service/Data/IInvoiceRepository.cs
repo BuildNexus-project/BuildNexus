@@ -33,6 +33,24 @@ public interface IInvoiceRepository
     /// An empty list means the project has not been billed yet, which is a normal
     /// state rather than an error.
     /// </remarks>
+    /// <summary>
+    /// Raises an invoice caused by an event, unless that event has already
+    /// raised one. Returns <c>null</c> when it had.
+    /// </summary>
+    /// <remarks>
+    /// The idempotent half of AC-2's automatic path. Kafka delivers at least
+    /// once, so a redelivered <c>ConstructionStarted</c> must be absorbed — and
+    /// billing a client twice is not a defect worth risking on a check in C#
+    /// that two consumer instances could both pass at once, so the guard is the
+    /// <c>uq_invoices_source_event</c> unique index.
+    /// </remarks>
+    Task<Invoice?> CreateFromEventIfAbsentAsync(
+        Guid projectId,
+        decimal amount,
+        Guid raisedBy,
+        Guid sourceEventId,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<Invoice>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default);

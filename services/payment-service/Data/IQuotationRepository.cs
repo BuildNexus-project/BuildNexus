@@ -38,4 +38,18 @@ public interface IQuotationRepository
     Task<IReadOnlyList<Quotation>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The project's current estimate — the most recently generated quotation —
+    /// or <c>null</c> if it has never been quoted.
+    /// </summary>
+    /// <remarks>
+    /// What the automatic invoice path bills against. A dedicated query rather
+    /// than the first element of <see cref="ListForProjectAsync"/>: the consumer
+    /// wants one row, and reading a project's whole quotation history to discard
+    /// all but the newest grows with every re-quote.
+    /// </remarks>
+    Task<Quotation?> GetCurrentForProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default);
 }

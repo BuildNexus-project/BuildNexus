@@ -47,6 +47,14 @@ public class Invoice
     /// </summary>
     public required Guid CreatedBy { get; init; }
 
+    /// <summary>
+    /// The <c>eventId</c> of the event that caused this invoice, or <c>null</c>
+    /// for one a person raised by hand. What makes the automatic path idempotent:
+    /// a redelivered event lands on the same value and is refused by the unique
+    /// index rather than billing the project twice.
+    /// </summary>
+    public Guid? SourceEventId { get; init; }
+
     public required DateTime CreatedAtUtc { get; init; }
 
     /// <summary>

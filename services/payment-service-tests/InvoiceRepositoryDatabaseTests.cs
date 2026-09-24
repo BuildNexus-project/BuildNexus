@@ -133,6 +133,71 @@ public class InvoiceRepositoryDatabaseTests
     }
 
     [Fact]
+    public async Task An_event_raises_at_most_one_invoice()
+    {
+        // The guard against billing a client twice, against the real unique index
+        // rather than a check in C# that two consumer instances could both pass.
+        var projectId = _fixture.ProjectId("c10");
+        var eventId = Guid.NewGuid();
+
+        var first = await _fixture.InvoiceRepository.CreateFromEventIfAbsentAsync(
+            projectId, 400_000m, Guid.NewGuid(), eventId);
+        var second = await _fixture.InvoiceRepository.CreateFromEventIfAbsentAsync(
+            projectId, 400_000m, Guid.NewGuid(), eventId);
+
+        Assert.NotNull(first);
+        // Null, not a throw: a redelivery must be absorbed, not wedge the
+        // consumer's partition on a message it can never get past.
+        Assert.Null(second);
+        Assert.Single(await _fixture.InvoiceRepository.ListForProjectAsync(projectId));
+    }
+
+    [Fact]
+    public async Task Two_different_events_each_raise_their_own_invoice()
+    {
+        // The index binds one invoice per causing event, not one per project.
+        var projectId = _fixture.ProjectId("c11");
+
+        Assert.NotNull(await _fixture.InvoiceRepository.CreateFromEventIfAbsentAsync(
+            projectId, 100m, Guid.NewGuid(), Guid.NewGuid()));
+        Assert.NotNull(await _fixture.InvoiceRepository.CreateFromEventIfAbsentAsync(
+            projectId, 200m, Guid.NewGuid(), Guid.NewGuid()));
+
+        Assert.Equal(2, (await _fixture.InvoiceRepository.ListForProjectAsync(projectId)).Count);
+    }
+
+    [Fact]
+    public async Task Manual_invoices_are_not_constrained_by_the_source_event_index()
+    {
+        // MySQL permits repeated NULLs in a unique index, which is what lets a
+        // Project Manager raise as many manual invoices against a project as the
+        // job needs while automatic ones stay one-per-event.
+        var projectId = _fixture.ProjectId("c12");
+
+        await _fixture.InvoiceRepository.CreateAsync(projectId, 100m, Guid.NewGuid());
+        await _fixture.InvoiceRepository.CreateAsync(projectId, 200m, Guid.NewGuid());
+
+        var invoices = await _fixture.InvoiceRepository.ListForProjectAsync(projectId);
+
+        Assert.Equal(2, invoices.Count);
+        Assert.All(invoices, invoice => Assert.Null(invoice.SourceEventId));
+    }
+
+    [Fact]
+    public async Task An_automatic_invoice_remembers_the_event_that_caused_it()
+    {
+        var projectId = _fixture.ProjectId("c13");
+        var eventId = Guid.NewGuid();
+
+        await _fixture.InvoiceRepository.CreateFromEventIfAbsentAsync(
+            projectId, 100m, Guid.NewGuid(), eventId);
+
+        var stored = Assert.Single(await _fixture.InvoiceRepository.ListForProjectAsync(projectId));
+
+        Assert.Equal(eventId, stored.SourceEventId);
+    }
+
+    [Fact]
     public async Task A_stored_timestamp_reads_back_as_UTC()
     {
         var projectId = _fixture.ProjectId("c09");

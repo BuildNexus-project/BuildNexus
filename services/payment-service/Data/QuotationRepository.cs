@@ -86,6 +86,29 @@ public class QuotationRepository : IQuotationRepository
         return rows;
     }
 
+    public async Task<Quotation?> GetCurrentForProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        // Same ordering as the listing, so "the current estimate" means the same
+        // thing to the consumer as it does to the first row on a screen.
+        const string sql = $@"
+            SELECT {SelectColumns}
+            FROM quotations
+            WHERE project_id = @projectId
+            ORDER BY created_at DESC, id
+            LIMIT 1;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@projectId", projectId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
+    }
+
     private static void AddParameter(DbCommand command, string name, object value)
     {
         var parameter = command.CreateParameter();

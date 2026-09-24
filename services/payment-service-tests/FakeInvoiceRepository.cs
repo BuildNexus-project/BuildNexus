@@ -44,6 +44,52 @@ public class FakeInvoiceRepository : IInvoiceRepository
         return Task.FromResult(invoice);
     }
 
+    /// <summary>The source event ids this fake has already billed, mirroring the unique index.</summary>
+    private readonly HashSet<Guid> _billedEvents = [];
+
+    /// <summary>Set to make the next event-sourced write throw, standing in for a database that is down.</summary>
+    public Exception? NextWriteThrows { get; set; }
+
+    public Task<Invoice?> CreateFromEventIfAbsentAsync(
+        Guid projectId,
+        decimal amount,
+        Guid raisedBy,
+        Guid sourceEventId,
+        CancellationToken cancellationToken = default)
+    {
+        if (NextWriteThrows is not null)
+        {
+            var toThrow = NextWriteThrows;
+            NextWriteThrows = null;
+            throw toThrow;
+        }
+
+        // Mirrors INSERT IGNORE against uq_invoices_source_event: an event that
+        // has already billed is absorbed rather than billing again.
+        if (!_billedEvents.Add(sourceEventId))
+        {
+            return Task.FromResult<Invoice?>(null);
+        }
+
+        Created.Add((projectId, amount, raisedBy));
+
+        var invoice = new Invoice
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = projectId,
+            Amount = amount,
+            Status = InvoiceStatus.Pending,
+            CreatedBy = raisedBy,
+            SourceEventId = sourceEventId,
+            CreatedAtUtc = DateTime.UtcNow.AddMilliseconds(_invoices.Count),
+            PaidAtUtc = null
+        };
+
+        _invoices.Add(invoice);
+
+        return Task.FromResult<Invoice?>(invoice);
+    }
+
     public Task<IReadOnlyList<Invoice>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)
