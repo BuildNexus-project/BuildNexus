@@ -11,6 +11,13 @@ const TOKEN_STORAGE_KEY = 'buildnexus.accessToken'
 const CLIENT_ID = '6f9619ff-8b86-d011-b42d-00cf4fc964ff'
 const BUILDING_ID = 'b2d4f6a8-1c3e-4d5f-8a9b-0c1d2e3f4a5b'
 const PENDING_ID = 'c3e5a7b9-2d4f-4e6a-9b0c-1d2e3f4a5b6c'
+/**
+ * A fixed milestone id, for the tests that read the same milestone across two
+ * refreshes. `milestone()` defaults its id to `crypto.randomUUID()`, so the
+ * parameter is inferred as a UUID-shaped template literal — a placeholder like
+ * `'fixed-id'` does not type-check against it.
+ */
+const MILESTONE_ID = 'd4f6a8b0-3e5f-4a7b-9c0d-1e2f3a4b5c6d'
 
 /** One project that has reached construction, and one that has not. */
 function projects() {
@@ -213,9 +220,9 @@ describe('ConstructionProgressPage', () => {
     // — no button was pressed and nothing was remounted.
     renderPage(
       apiResponse(200, projects()),
-      apiResponse(200, summary(0, 0, [milestone('Foundation', 'NotStarted', 'fixed-id')])),
+      apiResponse(200, summary(0, 0, [milestone('Foundation', 'NotStarted', MILESTONE_ID)])),
       apiResponse(200, projects()),
-      apiResponse(200, summary(1, 100, [milestone('Foundation', 'Completed', 'fixed-id')])),
+      apiResponse(200, summary(1, 100, [milestone('Foundation', 'Completed', MILESTONE_ID)])),
     )
 
     const card = await screen.findByTestId(`progress-${BUILDING_ID}`)
@@ -238,7 +245,7 @@ describe('ConstructionProgressPage', () => {
     // would be worse than showing what was last known.
     renderPage(
       apiResponse(200, projects()),
-      apiResponse(200, summary(1, 100, [milestone('Foundation', 'Completed', 'fixed-id')])),
+      apiResponse(200, summary(1, 100, [milestone('Foundation', 'Completed', MILESTONE_ID)])),
       apiResponse(503, { title: 'Service unavailable.' }),
     )
 
