@@ -15,6 +15,7 @@ builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
+builder.Services.AddScoped<IQuotationRepository, QuotationRepository>();
 
 // JWT settings, validated at startup so a missing or weak signing key fails the
 // service immediately rather than turning every request into a 401 at runtime.

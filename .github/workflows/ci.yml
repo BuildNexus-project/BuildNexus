@@ -180,14 +180,14 @@ jobs:
       CONSTRUCTION_DB_PASSWORD: buildnexus-dev
 
       # --- Why the Payment Service database credentials are here (US-15) ----
-      # No payment-db container is started in this job: every class in
-      # services/payment-service-tests reads the built assembly rather than a
-      # database — MigrationScriptTests inspects embedded resources. But compose
-      # interpolates the WHOLE file before it starts anything, so the
-      # `${PAYMENT_DB_*:?...}` variables on the payment-db and payment-service
-      # blocks must be set or `docker compose up user-db ...` fails to parse.
-      # Same published development values as the blocks above, and they are here
-      # ready for the first test that does need the container.
+      # This job now starts payment-db: QuotationRepositoryDatabaseTests runs the
+      # real migrations and the real ADO.NET against it on localhost:3311 — its
+      # own container, its own port, since one schema per service means one
+      # container per service. Compose also needs these to interpolate the
+      # `${PAYMENT_DB_*:?...}` on the payment-db and payment-service blocks before
+      # it starts anything at all. Same published development values as the blocks
+      # above, and the same reason they are literals: a fixed connection string is
+      # compiled into the test assembly and these must match it exactly.
       PAYMENT_DB_ROOT_PASSWORD: buildnexus-root-dev
       PAYMENT_DB_USER: buildnexus
       PAYMENT_DB_PASSWORD: buildnexus-dev
@@ -261,18 +261,19 @@ jobs:
       # consumer suite drives HandleAsync over a fake repository and the
       # controller and role-declaration suites need nothing running.
 
-      # services/payment-service-tests: nothing here needs a container yet —
-      # MigrationScriptTests reads the embedded .sql resources out of the built
-      # assembly. payment-db is defined in compose and its credentials are set
-      # above, so the first database-backed test only has to add it to the list
-      # below.
+      # services/payment-service-tests: QuotationRepositoryDatabaseTests runs the
+      # real migrations and the real ADO.NET against payment-db on localhost:3311
+      # — its own container, its own port. What it covers only the real engine can
+      # answer: that DECIMAL(15,2) returns the exact figure that went in, and that
+      # the CHECK constraint refuses a non-positive total. MigrationScriptTests
+      # alongside it reads the built assembly and needs nothing running.
       #
       # --wait holds until every container reports healthy, not merely started,
       # which the healthchecks defined on them make meaningful: MySQL accepts
       # connections some seconds after the process starts, and without this the
       # first test would race it.
       - name: Start the service databases
-        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db construction-db
+        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db construction-db payment-db
 
       # No Kafka container for any of these, still. OutboxDispatcherTests does
       # cover the dispatcher that publishes to the broker, but over a fake
