@@ -165,7 +165,7 @@ describe('completeConstruction', () => {
     stubFetch(
       apiResponse(409, {
         title: 'Construction has not started.',
-        detail: 'Start construction before marking it complete.',
+        detail: 'Start construction on this project first.',
         reason: 'NotStarted',
       }),
     )

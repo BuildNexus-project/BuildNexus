@@ -241,9 +241,13 @@ public class ConstructionPhaseController : ControllerBase
                 "Construction already started.",
                 "This project's build has already been started."),
 
+            // Worded for any transition that needs a running build, not just complete:
+            // handover reaches this outcome too, and telling a PM to "mark it complete"
+            // when they asked to hand over sends them somewhere they cannot go yet.
+            // Found by driving the real endpoints — both refusals share this message.
             ConstructionTransitionOutcome.NotStarted => (
                 "Construction has not started.",
-                "Start construction before marking it complete."),
+                "Start construction on this project first."),
 
             ConstructionTransitionOutcome.MilestonesIncomplete => (
                 "Milestones are not all complete.",
