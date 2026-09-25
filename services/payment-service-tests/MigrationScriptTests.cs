@@ -159,6 +159,44 @@ public class MigrationScriptTests
             + string.Join(", ", missing));
     }
 
+    [Fact]
+    public void A_payment_records_its_invoice_its_amount_and_its_payer()
+    {
+        // US-16: the rows an invoice's outstanding amount is derived from.
+        var sql = StripComments(ReadScript(Script("005_create_payments.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS payments", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?i)amount\s+DECIMAL\(15,\s*2\)", sql);
+        Assert.DoesNotMatch(@"(?i)amount\s+(FLOAT|DOUBLE|REAL)", sql);
+
+        foreach (var column in (string[])["invoice_id", "paid_by", "recorded_at"])
+        {
+            Assert.Contains(column, sql, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void A_payment_cannot_be_zero_or_negative()
+    {
+        // A negative payment would raise the outstanding amount rather than
+        // reduce it — a refund dressed as a payment, which US-16 does not have.
+        var sql = StripComments(ReadScript(Script("005_create_payments.sql")));
+
+        Assert.Contains("ck_payments_amount_positive", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?i)CHECK\s*\(\s*amount\s*>\s*0\s*\)", sql);
+    }
+
+    [Fact]
+    public void A_payment_belongs_to_an_invoice_in_this_services_own_schema()
+    {
+        // The one direction a foreign key may point: within this service. The
+        // guard above already refuses a REFERENCES into another service's tables.
+        var sql = StripComments(ReadScript(Script("005_create_payments.sql")));
+
+        Assert.Contains("fk_payments_invoice", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?is)REFERENCES\s+invoices\s*\(\s*id\s*\)", sql);
+    }
+
     private static string Script(string fileName) =>
         ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 
