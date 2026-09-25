@@ -70,6 +70,15 @@ public class PaymentDatabaseFixture : IAsyncLifetime
     /// </summary>
     public PaymentRepository PaymentRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.OutboxRepository"/> over the same development
+    /// database. Added for US-16: a payment's event is enqueued inside the
+    /// payment's own transaction, so the only honest way to assert that AC-3 was
+    /// satisfied — and that a refused payment announced nothing — is to read the
+    /// outbox table back after the fact.
+    /// </summary>
+    public OutboxRepository OutboxRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -92,6 +101,7 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
         InvoiceRepository = new InvoiceRepository(connectionFactory);
         PaymentRepository = new PaymentRepository(connectionFactory);
+        OutboxRepository = new OutboxRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -110,9 +120,9 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         // between them, so the order is a preference for tidiness, not a
         // constraint.
         //
-        // payments is deliberately absent: it has no project_id of its own, and
-        // its FK to invoices is ON DELETE CASCADE, so deleting this run's invoices
-        // takes its payments with them.
+        // payments and payment_outbox_events are deliberately absent: neither has a
+        // project_id of its own to match on, and both hold an FK to invoices that
+        // is ON DELETE CASCADE — so deleting this run's invoices takes them too.
         foreach (var table in new[] { "quotations", "invoices", "project_owners" })
         {
             await using var command = connection.CreateCommand();

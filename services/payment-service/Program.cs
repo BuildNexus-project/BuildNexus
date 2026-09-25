@@ -34,6 +34,7 @@ builder.Services.AddScoped<IQuotationRepository, QuotationRepository>();
 builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and the ownership rows the Client's quotation view is

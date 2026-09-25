@@ -197,6 +197,39 @@ public class MigrationScriptTests
         Assert.Matches(@"(?is)REFERENCES\s+invoices\s*\(\s*id\s*\)", sql);
     }
 
+    [Fact]
+    public void Every_event_type_the_service_can_publish_is_allowed_by_the_outbox_schema()
+    {
+        // Written over PaymentEventTypes rather than over today's names: an event
+        // type added in a later story without a matching migration would only
+        // surface as a ck_payment_outbox_events_type violation the first time it
+        // was raised.
+        var sql = string.Concat(ScriptNames().Select(ReadScript));
+
+        var missing = Messaging.PaymentEventTypes.All
+            .Where(eventType => !sql.Contains($"'{eventType}'", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "These event types exist in PaymentEventTypes but no migration allows them in the database: "
+            + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_outbox_keys_an_event_to_its_project_and_its_invoice()
+    {
+        // The project is the Kafka message key; the invoice is what makes an event
+        // traceable without parsing the envelope.
+        var sql = StripComments(ReadScript(Script("006_create_payment_outbox.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS payment_outbox_events", sql, StringComparison.Ordinal);
+        Assert.Contains("project_id", sql, StringComparison.Ordinal);
+        Assert.Contains("fk_payment_outbox_events_invoice", sql, StringComparison.Ordinal);
+        // One row per published event, so a retry cannot duplicate one.
+        Assert.Contains("uq_payment_outbox_events_id", sql, StringComparison.Ordinal);
+    }
+
     private static string Script(string fileName) =>
         ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 

@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using BuildNexus.PaymentService.Messaging;
 using BuildNexus.PaymentService.Models;
 
 namespace BuildNexus.PaymentService.Data;
@@ -86,6 +87,17 @@ public class PaymentRepository : IPaymentRepository
             status = InvoiceStatus.Paid;
         }
 
+        // AC-3, written inside the same transaction as the payment. The event and
+        // the money it announces commit together or not at all — a publish made
+        // after the commit could be lost and leave a payment nobody was told
+        // about, and one made before it could announce a payment that rolled back.
+        // Sending it is OutboxDispatcher's job, not this path's.
+        await OutboxRepository.InsertAsync(
+            connection,
+            transaction,
+            PaymentEvents.Received(payment, invoice.Value.ProjectId, status),
+            cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
         return PaymentRecordingResult.Recorded(payment, remaining, status);
@@ -130,14 +142,14 @@ public class PaymentRepository : IPaymentRepository
     /// the second waits for the first to commit and then reads the balance the
     /// first left behind.
     /// </remarks>
-    private static async Task<(decimal Amount, InvoiceStatus Status)?> LockInvoiceAsync(
+    private static async Task<(decimal Amount, InvoiceStatus Status, Guid ProjectId)?> LockInvoiceAsync(
         DbConnection connection,
         DbTransaction transaction,
         Guid invoiceId,
         CancellationToken cancellationToken)
     {
         const string sql = @"
-            SELECT amount, status
+            SELECT amount, status, project_id
             FROM invoices
             WHERE id = @invoiceId
             FOR UPDATE;";
@@ -156,7 +168,8 @@ public class PaymentRepository : IPaymentRepository
 
         return (
             reader.GetDecimal(reader.GetOrdinal("amount")),
-            Enum.Parse<InvoiceStatus>(reader.GetString(reader.GetOrdinal("status"))));
+            Enum.Parse<InvoiceStatus>(reader.GetString(reader.GetOrdinal("status"))),
+            reader.GetGuid(reader.GetOrdinal("project_id")));
     }
 
     /// <summary>What has already been paid against the invoice.</summary>
