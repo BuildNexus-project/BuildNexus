@@ -37,6 +37,21 @@ public sealed class PaymentEventsConsumer : BackgroundService
 
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// The group this consumer reads under: the configured id with the topic appended.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately <em>not</em> the bare <c>Kafka:ConsumerGroupId</c> that
+    /// <see cref="DesignEventsConsumer"/> uses, for the reason
+    /// <see cref="ProjectEventsConsumer"/> spells out: every member of a Kafka consumer
+    /// group is expected to subscribe to the same topics, and two members of one group
+    /// subscribing to different ones make each rebalance revoke the other's partitions
+    /// — the two take turns being assigned nothing. Sharing the design consumer's group
+    /// would have stalled both design approvals and payment settlements intermittently,
+    /// which is the kind of fault that looks like "Kafka is flaky" rather than a bug.
+    /// </remarks>
+    private string GroupId => $"{_options.ConsumerGroupId}-payment-events";
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly KafkaOptions _options;
     private readonly ILogger<PaymentEventsConsumer> _logger;
@@ -60,7 +75,7 @@ public sealed class PaymentEventsConsumer : BackgroundService
         var config = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,
-            GroupId = _options.ConsumerGroupId,
+            GroupId = GroupId,
             // Commit explicitly, only after a message is handled — so a crash
             // mid-handling re-delivers rather than skips.
             EnableAutoCommit = false,
@@ -76,7 +91,7 @@ public sealed class PaymentEventsConsumer : BackgroundService
 
         _logger.LogInformation(
             "Consuming {Topic} as group {GroupId} from {BootstrapServers}.",
-            Topic, _options.ConsumerGroupId, _options.BootstrapServers);
+            Topic, GroupId, _options.BootstrapServers);
 
         try
         {

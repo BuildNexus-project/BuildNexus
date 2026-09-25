@@ -50,6 +50,19 @@ public sealed class ConstructionEventsConsumer : BackgroundService
 
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// The group this consumer reads under: the configured id with the topic appended.
+    /// </summary>
+    /// <remarks>
+    /// Suffixed rather than bare even though this is currently the only consumer in this
+    /// service. Every member of a Kafka consumer group is expected to subscribe to the
+    /// same topics, so the moment a second consumer here used the bare id the two would
+    /// revoke each other's partitions on every rebalance and take turns being assigned
+    /// nothing. Naming the group per topic from the start means that trap is never set —
+    /// and it costs nothing now, while no offsets are committed under it anywhere.
+    /// </remarks>
+    private string GroupId => $"{_options.ConsumerGroupId}-construction-events";
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly KafkaOptions _options;
     private readonly ILogger<ConstructionEventsConsumer> _logger;
@@ -73,7 +86,7 @@ public sealed class ConstructionEventsConsumer : BackgroundService
         var config = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,
-            GroupId = _options.ConsumerGroupId,
+            GroupId = GroupId,
             // Commit explicitly, only after a message is handled — so a crash
             // mid-handling re-delivers rather than skips.
             EnableAutoCommit = false,
@@ -87,7 +100,7 @@ public sealed class ConstructionEventsConsumer : BackgroundService
 
         _logger.LogInformation(
             "Consuming {Topic} as group {GroupId} from {BootstrapServers}.",
-            Topic, _options.ConsumerGroupId, _options.BootstrapServers);
+            Topic, GroupId, _options.BootstrapServers);
 
         try
         {
