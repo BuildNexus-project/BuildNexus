@@ -107,6 +107,19 @@ public class EndpointRoleDeclarationTests
             RolesForActionOn<Controllers.ClientInvoicesController>("List"));
     }
 
+    [Fact]
+    public void Recording_a_payment_is_the_clients_alone()
+    {
+        // US-16: the story is framed around the Client paying down their own
+        // balance. Staff raise the invoice (US-15) and do not pay it on the
+        // customer's behalf. The role is only half the gate — the endpoint also
+        // refuses a Client whose project the invoice is not on, which
+        // ClientPaymentsControllerTests pins.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.ClientPaymentsController>("Record"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)
