@@ -1,8 +1,8 @@
 namespace BuildNexus.PaymentService.Configuration;
 
 /// <summary>
-/// Settings for the Kafka consumers, bound from the <c>Kafka</c> configuration
-/// section.
+/// Settings for the Kafka consumers and the producer, bound from the
+/// <c>Kafka</c> configuration section.
 /// </summary>
 public class KafkaOptions
 {
@@ -27,4 +27,17 @@ public class KafkaOptions
     /// service reads two topics.
     /// </remarks>
     public string ConsumerGroupId { get; set; } = "payment-service";
+
+    /// <summary>
+    /// How long a publish may spend trying to reach the broker before it is
+    /// given up on, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Added with US-16, the first story in which this service publishes rather
+    /// than only consuming. Deliberately far below librdkafka's own five-minute
+    /// default, for the same reason the Project, Design and Construction Services
+    /// set it: the dispatcher sends one event at a time, so an unreachable broker
+    /// should not hold up the whole queue for five minutes per event.
+    /// </remarks>
+    public int MessageTimeoutMs { get; set; } = 5000;
 }
