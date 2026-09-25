@@ -10,14 +10,16 @@ import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { MyProjectCostsPage } from '@/pages/MyProjectCostsPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
 
 export default function App() {
   return (
@@ -87,6 +89,31 @@ export default function App() {
             <ProtectedRoute>
               <DesignDocumentsPage />
             </ProtectedRoute>
+          }
+        />
+        {/* Client-only, matching the Payment Service's own gate on the
+            ownership-scoped cost reads. Which project's costs a Client may see
+            is still the service's decision — it refuses one they do not own —
+            but the screen itself is meaningless to any other role, which has
+            the richer /projects/:id/costs view instead. */}
+        <Route
+          path="/my-costs"
+          element={
+            <RoleRoute allowedRoles={CLIENT_ROLES}>
+              <MyProjectCostsPage />
+            </RoleRoute>
+          }
+        />
+        {/* Project-Manager and Admin, matching the Payment Service's own gate on
+            generating a quotation and raising an invoice. An Architect designs
+            rather than prices, and a Client is told the figure rather than
+            setting it — they see their own costs through /my-costs instead. */}
+        <Route
+          path="/projects/:projectId/costs"
+          element={
+            <RoleRoute allowedRoles={COST_MANAGEMENT_ROLES}>
+              <ProjectCostsPage />
+            </RoleRoute>
           }
         />
         {/* Client-only, matching the Construction Service's own gate on the
