@@ -79,6 +79,15 @@ public class PaymentDatabaseFixture : IAsyncLifetime
     /// </summary>
     public OutboxRepository OutboxRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.PaymentHistoryRepository"/> over the same
+    /// development database. Added for US-17: the history is two queries joined
+    /// in memory and a balance summed from what MySQL returns, so the thing worth
+    /// asserting — that the figures agree with the rows US-15 and US-16 actually
+    /// wrote — needs the real engine.
+    /// </summary>
+    public PaymentHistoryRepository PaymentHistoryRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -102,6 +111,7 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         InvoiceRepository = new InvoiceRepository(connectionFactory);
         PaymentRepository = new PaymentRepository(connectionFactory);
         OutboxRepository = new OutboxRepository(connectionFactory);
+        PaymentHistoryRepository = new PaymentHistoryRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
