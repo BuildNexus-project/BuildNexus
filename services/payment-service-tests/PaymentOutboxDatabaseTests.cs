@@ -13,6 +13,7 @@ namespace BuildNexus.PaymentService.Tests;
 /// back afterwards is the only honest way to show the two commit together — a
 /// stub could show the call was made, not that it committed with the money.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(PaymentDatabaseCollection.Name)]
 public class PaymentOutboxDatabaseTests
 {

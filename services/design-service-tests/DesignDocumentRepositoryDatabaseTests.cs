@@ -12,6 +12,7 @@ namespace BuildNexus.DesignService.Tests;
 /// <remarks>
 /// Needs <c>design-db</c> running — see <see cref="DesignDatabaseFixture"/>.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(DesignDatabaseCollection.Name)]
 public class DesignDocumentRepositoryDatabaseTests
 {

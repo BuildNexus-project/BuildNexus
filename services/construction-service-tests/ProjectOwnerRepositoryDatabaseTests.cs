@@ -13,6 +13,7 @@ namespace BuildNexus.ConstructionService.Tests;
 /// (project, client) pair rather than the project alone.
 /// <para>Needs <c>construction-db</c> running — see <see cref="ConstructionDatabaseFixture"/>.</para>
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(ConstructionDatabaseCollection.Name)]
 public class ProjectOwnerRepositoryDatabaseTests
 {
