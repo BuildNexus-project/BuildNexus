@@ -46,4 +46,37 @@ public static class PaymentEvents
             OccurredAt = payment.RecordedAtUtc
         };
     }
+
+    /// <summary>
+    /// A project owes nothing further — its build is complete and every invoice
+    /// against it is settled. The Construction Service's cue that handover is
+    /// permitted (US-14 AC-4).
+    /// </summary>
+    /// <remarks>
+    /// Project-level rather than invoice-level, so the outbox row names no
+    /// invoice: the trigger may be construction completing on an already-paid
+    /// project, in which case no invoice caused it.
+    /// </remarks>
+    public static OutboxEvent FinalSettled(Guid projectId, DateTime settledAtUtc)
+    {
+        var envelope = EventEnvelope<FinalPaymentSettledPayload>.Create(
+            PaymentEventTypes.FinalPaymentSettled,
+            new FinalPaymentSettledPayload
+            {
+                ProjectId = projectId,
+                SettledAt = EventTimestamp.AsUtc(settledAtUtc)
+            },
+            EventTimestamp.AsUtc(settledAtUtc));
+
+        return new OutboxEvent
+        {
+            Id = envelope.EventId,
+            ProjectId = projectId,
+            // No invoice: the project, not any one bill, is what settled.
+            InvoiceId = null,
+            EventType = PaymentEventTypes.FinalPaymentSettled,
+            Envelope = envelope.ToJson(),
+            OccurredAt = settledAtUtc
+        };
+    }
 }

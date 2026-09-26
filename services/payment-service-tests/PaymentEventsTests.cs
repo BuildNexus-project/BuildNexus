@@ -119,11 +119,14 @@ public class PaymentEventsTests
     }
 
     [Fact]
-    public void Only_the_event_type_the_story_names_is_publishable()
+    public void Only_the_event_types_this_service_has_agreed_to_are_publishable()
     {
         // The database's own CHECK constraint is held to this same list, so an
         // invented event type fails at the write rather than on somebody's topic.
-        Assert.Equal(["PaymentReceived"], PaymentEventTypes.All);
+        // Both of these are consumed by another service: PaymentReceived by
+        // nobody yet, FinalPaymentSettled by the Construction Service's handover
+        // gate — which is why adding to this list is never a local decision.
+        Assert.Equal(["PaymentReceived", "FinalPaymentSettled"], PaymentEventTypes.All);
     }
 
     private static Payment Payment(decimal amount) => new()

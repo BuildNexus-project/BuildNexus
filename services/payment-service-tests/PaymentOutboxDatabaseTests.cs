@@ -133,7 +133,8 @@ public class PaymentOutboxDatabaseTests
         // Asserted by going around the repository, since the repository cannot
         // produce another type — which is the point: the constraint is what stops
         // anything else that reaches this table, so an invented event fails at the
-        // write rather than on somebody else's topic.
+        // write rather than on somebody else's topic. PaymentRefunded is the
+        // invented one here: plausible, and agreed by nobody.
         var (invoiceId, projectId) = await InvoiceFor("e08", 100m);
 
         await using var connection = new MySqlConnection(PaymentDatabaseFixture.ConnectionString);
@@ -143,7 +144,7 @@ public class PaymentOutboxDatabaseTests
             INSERT INTO payment_outbox_events
                 (id, project_id, invoice_id, event_type, envelope, occurred_at)
             VALUES
-                (@id, @projectId, @invoiceId, 'FinalPaymentSettled', '{}', UTC_TIMESTAMP(6));";
+                (@id, @projectId, @invoiceId, 'PaymentRefunded', '{}', UTC_TIMESTAMP(6));";
         command.Parameters.AddWithValue("@id", Guid.NewGuid());
         command.Parameters.AddWithValue("@projectId", projectId);
         command.Parameters.AddWithValue("@invoiceId", invoiceId);

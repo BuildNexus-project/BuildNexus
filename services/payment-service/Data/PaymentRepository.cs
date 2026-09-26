@@ -98,6 +98,19 @@ public class PaymentRepository : IPaymentRepository
             PaymentEvents.Received(payment, invoice.Value.ProjectId, status),
             cancellationToken);
 
+        // And if that payment left the project owing nothing at all — on a build
+        // that is already complete — it was the final one. Announced here, in the
+        // same transaction as the money, so the Construction Service's handover
+        // gate opens on its own rather than waiting for someone to put a message
+        // on the topic by hand. A project still owing something, or still being
+        // built, announces nothing and this is a no-op.
+        await FinalSettlementAnnouncer.TryAnnounceAsync(
+            connection,
+            transaction,
+            invoice.Value.ProjectId,
+            payment.RecordedAtUtc,
+            cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
         return PaymentRecordingResult.Recorded(payment, remaining, status);
