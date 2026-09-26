@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, apiFetch } from './api'
 import {
+  fetchMyProjectPaymentHistory,
   paymentRefusal,
   recordPayment,
   fetchMyProjectInvoices,
@@ -272,5 +273,75 @@ describe('paymentRefusal', () => {
       reason: 'ExceedsOutstanding',
       outstandingAmount: 250.5,
     })
+  })
+})
+
+describe('fetchMyProjectPaymentHistory', () => {
+  it('uses the ownership-scoped history route', async () => {
+    const requests = stubFetch(
+      apiResponse(200, {
+        projectId,
+        invoices: [],
+        totalInvoiced: 0,
+        totalPaid: 0,
+        outstandingBalance: 0,
+      }),
+    )
+
+    await fetchMyProjectPaymentHistory(authFetch, projectId)
+
+    expect(requests[0].path).toBe(`/api/payments/my-projects/${projectId}/history`)
+    expect(requests[0].method).toBeUndefined()
+  })
+
+  it('carries the invoices, their payments and the balance in one answer', async () => {
+    // AC-2 needs the balance on the same view as the history, so one request
+    // returns both and they cannot disagree.
+    stubFetch(
+      apiResponse(200, {
+        projectId,
+        invoices: [
+          {
+            invoice,
+            payments: [
+              {
+                id: '66666666-2222-4333-8444-555555555555',
+                invoiceId: invoice.id,
+                amount: 100,
+                paidBy: '33333333-2222-4333-8444-555555555555',
+                recordedAtUtc: '2026-09-25T10:00:00Z',
+              },
+            ],
+            amountPaid: 100,
+            outstandingAmount: 150_000.75,
+          },
+        ],
+        totalInvoiced: 250_000.75,
+        totalPaid: 100,
+        outstandingBalance: 150_000.75,
+      }),
+    )
+
+    const history = await fetchMyProjectPaymentHistory(authFetch, projectId)
+
+    expect(history.invoices).toHaveLength(1)
+    expect(history.invoices[0].payments[0].amount).toBe(100)
+    expect(history.outstandingBalance).toBe(150_000.75)
+  })
+
+  it("surfaces another client's project as a 403", async () => {
+    stubFetch(
+      apiResponse(403, {
+        title: 'Not your project.',
+        detail: 'You can only view the payment history for your own projects.',
+      }),
+    )
+
+    const error = await fetchMyProjectPaymentHistory(authFetch, projectId).catch(
+      (caught: unknown) => caught,
+    )
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(403)
   })
 })

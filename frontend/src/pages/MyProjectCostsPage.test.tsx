@@ -58,6 +58,50 @@ function invoice(projectId: string, amount: number, status: 'Pending' | 'Paid' =
   }
 }
 
+/**
+ * The payment-history answer the page now reads (US-17): the invoices with
+ * their payments, and the balance derived from them the way the service does.
+ */
+function history(...entries: Array<ReturnType<typeof invoice> | ReturnType<typeof paid>>) {
+  const invoices = entries.map((entry) => ('invoice' in entry ? entry : withPayments(entry)))
+
+  return {
+    projectId: VILLA_ID,
+    invoices,
+    totalInvoiced: invoices.reduce((total, entry) => total + entry.invoice.amount, 0),
+    totalPaid: invoices.reduce((total, entry) => total + entry.amountPaid, 0),
+    outstandingBalance: invoices.reduce((total, entry) => total + entry.outstandingAmount, 0),
+  }
+}
+
+/** An invoice with nothing paid against it. */
+function withPayments(one: ReturnType<typeof invoice>) {
+  return {
+    invoice: one,
+    payments: [],
+    amountPaid: 0,
+    outstandingAmount: one.status === 'Paid' ? 0 : one.amount,
+  }
+}
+
+/** An invoice with payments against it, for the history assertions. */
+function paid(one: ReturnType<typeof invoice>, ...amounts: number[]) {
+  const amountPaid = amounts.reduce((total, amount) => total + amount, 0)
+
+  return {
+    invoice: one,
+    payments: amounts.map((amount, index) => ({
+      id: crypto.randomUUID(),
+      invoiceId: one.id,
+      amount,
+      paidBy: CLIENT_ID,
+      recordedAtUtc: `2026-08-0${index + 5}T09:00:00Z`,
+    })),
+    amountPaid,
+    outstandingAmount: one.amount - amountPaid,
+  }
+}
+
 function signInAs(role: Role) {
   const claims = {
     sub: CLIENT_ID,
@@ -115,9 +159,9 @@ describe('reading the Client&apos;s costs', () => {
     const requests = renderPage(
       apiResponse(200, projects()),
       apiResponse(200, []),
+      apiResponse(200, history()),
       apiResponse(200, []),
-      apiResponse(200, []),
-      apiResponse(200, []),
+      apiResponse(200, history()),
     )
 
     await waitFor(() => expect(requests.length).toBeGreaterThan(1))
@@ -134,9 +178,9 @@ describe('reading the Client&apos;s costs', () => {
     const requests = renderPage(
       apiResponse(200, projects()),
       apiResponse(200, []),
+      apiResponse(200, history()),
       apiResponse(200, []),
-      apiResponse(200, []),
-      apiResponse(200, []),
+      apiResponse(200, history()),
     )
 
     await waitFor(() => expect(requests).toHaveLength(5))
@@ -174,7 +218,7 @@ describe('reading the Client&apos;s costs', () => {
   })
 
   it('tells a Client with no quotation that one is coming, rather than showing nothing', async () => {
-    renderPage(apiResponse(200, [projects()[0]]), apiResponse(200, []), apiResponse(200, []))
+    renderPage(apiResponse(200, [projects()[0]]), apiResponse(200, []), apiResponse(200, history()))
 
     expect(await screen.findByText(/Not quoted yet/)).toBeInTheDocument()
   })
@@ -183,7 +227,7 @@ describe('reading the Client&apos;s costs', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, [quotation(VILLA_ID, 1_000_000)]),
-      apiResponse(200, [invoice(VILLA_ID, 250_000), invoice(VILLA_ID, 100_000, 'Paid')]),
+      apiResponse(200, history(invoice(VILLA_ID, 250_000), invoice(VILLA_ID, 100_000, 'Paid'))),
     )
 
     const card = await villaCard()
@@ -197,7 +241,7 @@ describe('reading the Client&apos;s costs', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, [quotation(VILLA_ID, 1_000_000)]),
-      apiResponse(200, []),
+      apiResponse(200, history()),
     )
 
     expect(await screen.findByText(/Nothing has been billed/)).toBeInTheDocument()
@@ -248,7 +292,7 @@ describe('paying an invoice', () => {
     const requests = renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, [quotation(VILLA_ID, 1_000_000)]),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
       // the payment
       apiResponse(201, {
         payment: {
@@ -264,7 +308,7 @@ describe('paying an invoice', () => {
       // the re-read
       apiResponse(200, [projects()[0]]),
       apiResponse(200, [quotation(VILLA_ID, 1_000_000)]),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
     )
 
     await screen.findByText(/Pending/)
@@ -286,7 +330,7 @@ describe('paying an invoice', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000, 'Paid')]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000, 'Paid'))),
     )
 
     expect(await screen.findByText('Paid')).toBeInTheDocument()
@@ -297,7 +341,7 @@ describe('paying an invoice', () => {
     const requests = renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
     )
 
     await screen.findByText('Pending')
@@ -315,7 +359,7 @@ describe('paying an invoice', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
       apiResponse(409, {
         title: 'Payment exceeds the outstanding amount.',
         detail: 'This invoice has 600.00 outstanding. Enter that amount or less.',
@@ -339,7 +383,7 @@ describe('paying an invoice', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
       apiResponse(409, {
         title: 'Payment exceeds the outstanding amount.',
         detail: 'This invoice has 600.00 outstanding.',
@@ -362,7 +406,7 @@ describe('paying an invoice', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
       apiResponse(201, {
         payment: {
           id: crypto.randomUUID(),
@@ -376,7 +420,7 @@ describe('paying an invoice', () => {
       }),
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000, 'Paid')]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000, 'Paid'))),
     )
 
     await screen.findByText('Pending')
@@ -392,7 +436,7 @@ describe('paying an invoice', () => {
     renderPage(
       apiResponse(200, [projects()[0]]),
       apiResponse(200, []),
-      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
       apiResponse(403, {
         title: 'Not your invoice.',
         detail: 'You can only record payments against invoices on your own projects.',
@@ -409,5 +453,159 @@ describe('paying an invoice', () => {
         'You can only record payments against invoices on your own projects.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+describe('the payment history and outstanding balance (US-17)', () => {
+  it('reads the history endpoint rather than the plain invoice list', async () => {
+    // AC-2 wants the balance on the same view as the history, so the page asks
+    // for both in one request instead of composing them itself.
+    const requests = renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history()),
+    )
+
+    await waitFor(() => expect(requests).toHaveLength(3))
+
+    expect(requests.map((request) => request.path)).toContain(
+      `/api/payments/my-projects/${VILLA_ID}/history`,
+    )
+  })
+
+  it('shows the outstanding balance the service reported', async () => {
+    // AC-2. Not recomputed on the page — the service's figure is the one the
+    // pay endpoint enforces, and a second opinion could disagree with it.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 1_000), 400), invoice(VILLA_ID, 500))),
+    )
+
+    const card = await villaCard()
+
+    // 1000 + 500 billed, 400 paid, so 1100 owed.
+    expect(within(card).getByLabelText(/Outstanding balance/)).toHaveTextContent('1,100.00')
+  })
+
+  it('lists every invoice with its status, most recent first', async () => {
+    // AC-1. The order is the service's answer and the page renders it as given.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(invoice(VILLA_ID, 900), invoice(VILLA_ID, 100, 'Paid'))),
+    )
+
+    const card = await villaCard()
+    const amounts = within(card)
+      .getAllByText(/^LKR/)
+      .map((node) => node.textContent)
+
+    expect(amounts.join(' ')).toMatch(/900\.00[\s\S]*100\.00/)
+    expect(within(card).getByText('Pending')).toBeInTheDocument()
+    expect(within(card).getByText('Paid')).toBeInTheDocument()
+  })
+
+  it('shows each payment made against its own invoice', async () => {
+    // AC-1's "linked payments".
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 1_000), 250, 150))),
+    )
+
+    const card = await villaCard()
+
+    expect(within(card).getByText(/Paid LKR\s?250\.00/)).toBeInTheDocument()
+    expect(within(card).getByText(/Paid LKR\s?150\.00/)).toBeInTheDocument()
+  })
+
+  it('says how much of a part-paid invoice is still owed', async () => {
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 1_000), 400))),
+    )
+
+    const card = await villaCard()
+
+    expect(within(card).getByText(/600\.00 still owed/)).toBeInTheDocument()
+  })
+
+  it('offers no pay form once an invoice has nothing outstanding', async () => {
+    // Driven by the remaining amount rather than the status label, so an
+    // invoice whose payments cover it cannot still show a pay box.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 500, 'Paid'), 500))),
+    )
+
+    await screen.findByText('Paid')
+
+    expect(screen.queryByRole('button', { name: 'Pay' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the payment history visible on a settled invoice', async () => {
+    // The Client still wants to see what they paid after it is settled.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 500, 'Paid'), 500))),
+    )
+
+    const card = await villaCard()
+
+    expect(within(card).getByText(/Paid LKR\s?500\.00/)).toBeInTheDocument()
+  })
+
+  it('shows a zero balance on a fully settled project', async () => {
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 500, 'Paid'), 500))),
+    )
+
+    const card = await villaCard()
+
+    expect(within(card).getByLabelText(/Outstanding balance/)).toHaveTextContent('0.00')
+  })
+
+  it('updates the balance immediately after a payment is recorded', async () => {
+    // AC-2's "updates immediately": recording a payment re-reads the history,
+    // so the balance moves without the Client refreshing anything.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(invoice(VILLA_ID, 1_000))),
+      // the payment
+      apiResponse(201, {
+        payment: {
+          id: crypto.randomUUID(),
+          invoiceId: VILLA_ID,
+          amount: 400,
+          paidBy: CLIENT_ID,
+          recordedAtUtc: '2026-09-25T10:00:00Z',
+        },
+        outstandingAmount: 600,
+        invoiceStatus: 'Pending',
+      }),
+      // the re-read the payment triggers
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, history(paid(invoice(VILLA_ID, 1_000), 400))),
+    )
+
+    const before = await villaCard()
+    expect(within(before).getByLabelText(/Outstanding balance/)).toHaveTextContent('1,000.00')
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '400')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+
+    await waitFor(async () => {
+      expect(within(await villaCard()).getByLabelText(/Outstanding balance/)).toHaveTextContent(
+        '600.00',
+      )
+    })
   })
 })

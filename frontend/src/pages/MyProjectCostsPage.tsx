@@ -10,12 +10,14 @@ import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { apiErrorMessage } from '@/lib/api'
 import {
-  fetchMyProjectInvoices,
+  fetchMyProjectPaymentHistory,
   fetchMyProjectQuotations,
   paymentRefusal,
   recordPayment,
   type Invoice,
   type InvoiceStatus,
+  type InvoiceWithPayments,
+  type ProjectPaymentHistory,
   type Quotation,
 } from '@/lib/payment-api'
 import { recordPaymentSchema, type RecordPaymentValues } from '@/lib/payment-schemas'
@@ -57,13 +59,22 @@ type ProjectCostEntry = {
   project: ProjectSummary
   /** Newest first, so the first entry is the project's current estimate. */
   quotations: Quotation[]
-  invoices: Invoice[]
+  /**
+   * The invoices with their payments and the balance still owed (US-17).
+   *
+   * One read rather than a separate invoice list and balance call: AC-2 puts
+   * the balance on the same view as the history, and fetching them apart would
+   * let a payment land between the two and show a balance that disagrees with
+   * the invoices under it.
+   */
+  history: ProjectPaymentHistory | null
   error: string | null
 }
 
 /**
- * The Client's cost view (US-15): what each of their projects was quoted, and
- * what has been billed against it.
+ * The Client's cost view: what each of their projects was quoted (US-15), what
+ * has been billed against it, every payment made, and what is still owed
+ * (US-17).
  *
  * Client-only, matching the Payment Service's own gate — and the service
  * additionally refuses a project the caller does not own, so a Client cannot
@@ -96,17 +107,17 @@ export function MyProjectCostsPage() {
       const loaded = await Promise.all(
         projects.map(async (project): Promise<ProjectCostEntry> => {
           try {
-            const [quotations, invoices] = await Promise.all([
+            const [quotations, history] = await Promise.all([
               fetchMyProjectQuotations(authFetch, project.id),
-              fetchMyProjectInvoices(authFetch, project.id),
+              fetchMyProjectPaymentHistory(authFetch, project.id),
             ])
 
-            return { project, quotations, invoices, error: null }
+            return { project, quotations, history, error: null }
           } catch (error) {
             return {
               project,
               quotations: [],
-              invoices: [],
+              history: null,
               error: apiErrorMessage(error, 'Could not load the costs for this project.'),
             }
           }
@@ -172,12 +183,15 @@ function ProjectCostCard({
   entry: ProjectCostEntry
   onPaid: () => Promise<void>
 }) {
-  const { project, quotations, invoices, error } = entry
+  const { project, quotations, history, error } = entry
 
   // The service returns quotations newest first, so the front of the list is
   // the figure that counts.
   const currentQuotation = quotations.at(0) ?? null
-  const invoicedTotal = invoices.reduce((total, invoice) => total + invoice.amount, 0)
+  // Every figure below is the service's own — nothing is recomputed here, so
+  // the screen cannot disagree with the balance the pay endpoint enforces.
+  const invoices = history?.invoices ?? []
+  const invoicedTotal = history?.totalInvoiced ?? 0
 
   return (
     <Card>
@@ -222,35 +236,36 @@ function ProjectCostCard({
                 <span className="font-semibold tabular-nums">{formatMoney(invoicedTotal)}</span>
               </div>
 
+              {/* AC-2's outstanding balance, on the same view as the history it
+                  is derived from. Given the most weight on the card: it is the
+                  one number a Client opens this page to find. */}
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-muted-foreground text-xs">Outstanding balance</span>
+                <span
+                  className="text-2xl font-semibold tabular-nums"
+                  aria-label={`Outstanding balance for ${project.name}`}
+                >
+                  {formatMoney(history?.outstandingBalance ?? 0)}
+                </span>
+              </div>
+
+              {history && history.totalPaid > 0 ? (
+                <p className="text-muted-foreground text-xs">
+                  {formatMoney(history.totalPaid)} paid of {formatMoney(history.totalInvoiced)}
+                </p>
+              ) : null}
+
               {invoices.length === 0 ? (
                 <p className="text-muted-foreground text-sm">
                   Nothing has been billed for this project yet.
                 </p>
               ) : (
                 <ul className="flex flex-col gap-3">
-                  {invoices.map((invoice) => (
-                    <li key={invoice.id} className="border-b pb-3 last:border-b-0 last:pb-0">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-sm font-medium tabular-nums">
-                          {formatMoney(invoice.amount)}
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <span className="text-muted-foreground text-xs">
-                            {formatDate(invoice.createdAtUtc)}
-                          </span>
-                          <Badge variant={INVOICE_BADGE_VARIANT[invoice.status]}>
-                            {invoice.status}
-                          </Badge>
-                        </span>
-                      </div>
-
-                      {/* Only a Pending invoice can be paid. A settled one keeps
-                          its badge and loses the form — there is nothing left to
-                          pay, and the service would refuse it anyway. */}
-                      {invoice.status === 'Pending' ? (
-                        <PayInvoiceForm invoice={invoice} onPaid={onPaid} />
-                      ) : null}
-                    </li>
+                  {/* Most recent first — the order the service returns them in
+                      (US-17 AC-1). Not re-sorted here: the ordering is the
+                      service's answer, and a second opinion could disagree. */}
+                  {invoices.map((entry) => (
+                    <InvoiceHistoryItem key={entry.invoice.id} entry={entry} onPaid={onPaid} />
                   ))}
                 </ul>
               )}
@@ -259,6 +274,60 @@ function ProjectCostCard({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * One invoice in the history: what it was for, where it stands, what has been
+ * paid against it, and — while anything is still owed — the means to pay it
+ * (US-17 AC-1).
+ */
+function InvoiceHistoryItem({
+  entry,
+  onPaid,
+}: {
+  entry: InvoiceWithPayments
+  onPaid: () => Promise<void>
+}) {
+  const { invoice, payments, amountPaid, outstandingAmount } = entry
+
+  return (
+    <li className="border-b pb-3 last:border-b-0 last:pb-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium tabular-nums">{formatMoney(invoice.amount)}</span>
+        <span className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">{formatDate(invoice.createdAtUtc)}</span>
+          <Badge variant={INVOICE_BADGE_VARIANT[invoice.status]}>{invoice.status}</Badge>
+        </span>
+      </div>
+
+      {/* What is still owed on this invoice specifically — the figure the pay
+          form below will accept, so the two cannot disagree. */}
+      {outstandingAmount > 0 && amountPaid > 0 ? (
+        <p className="text-muted-foreground mt-1 text-xs">
+          {formatMoney(amountPaid)} paid · {formatMoney(outstandingAmount)} still owed
+        </p>
+      ) : null}
+
+      {payments.length > 0 ? (
+        <ul className="mt-2 flex flex-col gap-1 border-l pl-3">
+          {payments.map((payment) => (
+            <li
+              key={payment.id}
+              className="text-muted-foreground flex flex-wrap items-baseline justify-between gap-2 text-xs"
+            >
+              <span className="tabular-nums">Paid {formatMoney(payment.amount)}</span>
+              <span>{formatDate(payment.recordedAtUtc)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {/* Only an invoice with something still owed can be paid. A settled one
+          keeps its badge and its payment history and loses the form — there is
+          nothing left to pay, and the service would refuse it anyway. */}
+      {outstandingAmount > 0 ? <PayInvoiceForm invoice={invoice} onPaid={onPaid} /> : null}
+    </li>
   )
 }
 
