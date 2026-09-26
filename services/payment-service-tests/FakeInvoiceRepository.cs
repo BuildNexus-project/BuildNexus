@@ -90,6 +90,15 @@ public class FakeInvoiceRepository : IInvoiceRepository
         return Task.FromResult<Invoice?>(invoice);
     }
 
+    /// <summary>
+    /// Plants an invoice directly, for tests about reading or paying one rather
+    /// than raising it.
+    /// </summary>
+    public void Seed(params Invoice[] invoices) => _invoices.AddRange(invoices);
+
+    public Task<Invoice?> GetAsync(Guid invoiceId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_invoices.SingleOrDefault(invoice => invoice.Id == invoiceId));
+
     public Task<IReadOnlyList<Invoice>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)

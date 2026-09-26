@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, apiFetch } from './api'
 import {
+  paymentRefusal,
+  recordPayment,
   fetchMyProjectInvoices,
   fetchMyProjectQuotations,
   fetchProjectInvoices,
@@ -152,5 +154,123 @@ describe("the Client's own cost reads", () => {
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(403)
     expect((error as ApiError).detail).toBe('You can only view quotations for your own projects.')
+  })
+})
+
+describe('recordPayment', () => {
+  it('posts the amount to the invoice it is against', async () => {
+    const requests = stubFetch(
+      apiResponse(201, {
+        payment: {
+          id: '77777777-2222-4333-8444-555555555555',
+          invoiceId: invoice.id,
+          amount: 400,
+          paidBy: '33333333-2222-4333-8444-555555555555',
+          recordedAtUtc: '2026-09-25T10:00:00Z',
+        },
+        outstandingAmount: 600,
+        invoiceStatus: 'Pending',
+      }),
+    )
+
+    const result = await recordPayment(authFetch, invoice.id, { amount: 400 })
+
+    expect(requests[0].path).toBe(`/api/payments/invoices/${invoice.id}/payments`)
+    expect(requests[0].method).toBe('POST')
+    expect(requests[0].body).toEqual({ amount: 400 })
+    expect(result.outstandingAmount).toBe(600)
+    expect(result.invoiceStatus).toBe('Pending')
+  })
+
+  it('reports the invoice as Paid once a payment settles it', async () => {
+    stubFetch(
+      apiResponse(201, {
+        payment: {
+          id: '77777777-2222-4333-8444-555555555555',
+          invoiceId: invoice.id,
+          amount: 600,
+          paidBy: '33333333-2222-4333-8444-555555555555',
+          recordedAtUtc: '2026-09-25T10:00:00Z',
+        },
+        outstandingAmount: 0,
+        invoiceStatus: 'Paid',
+      }),
+    )
+
+    const result = await recordPayment(authFetch, invoice.id, { amount: 600 })
+
+    expect(result.outstandingAmount).toBe(0)
+    expect(result.invoiceStatus).toBe('Paid')
+  })
+})
+
+describe('paymentRefusal', () => {
+  it("carries the invoice's real outstanding amount off an over-payment", async () => {
+    // The whole reason the service sends it: the screen can offer the figure
+    // that would have worked instead of only reporting the error.
+    stubFetch(
+      apiResponse(409, {
+        title: 'Payment exceeds the outstanding amount.',
+        detail: 'This invoice has 600.00 outstanding. Enter that amount or less.',
+        reason: 'ExceedsOutstanding',
+        outstandingAmount: 600,
+      }),
+    )
+
+    const error = await recordPayment(authFetch, invoice.id, { amount: 700 }).catch(
+      (caught: unknown) => caught,
+    )
+
+    expect(paymentRefusal(error)).toEqual({ reason: 'ExceedsOutstanding', outstandingAmount: 600 })
+  })
+
+  it('recognises an already-settled invoice', async () => {
+    stubFetch(
+      apiResponse(409, {
+        title: 'This invoice is already paid.',
+        detail: 'Nothing is outstanding on this invoice.',
+        reason: 'AlreadyPaid',
+        outstandingAmount: 0,
+      }),
+    )
+
+    const error = await recordPayment(authFetch, invoice.id, { amount: 10 }).catch(
+      (caught: unknown) => caught,
+    )
+
+    expect(paymentRefusal(error)?.reason).toBe('AlreadyPaid')
+  })
+
+  it('is null for a failure the screen cannot act on', async () => {
+    // A 403 is a refusal, but not one with a figure to offer — it falls through
+    // to the ordinary error message.
+    stubFetch(apiResponse(403, { title: 'Not your invoice.', detail: 'Not yours.' }))
+
+    const error = await recordPayment(authFetch, invoice.id, { amount: 10 }).catch(
+      (caught: unknown) => caught,
+    )
+
+    expect(paymentRefusal(error)).toBeNull()
+  })
+
+  it('branches on the reason rather than the prose', async () => {
+    // So improving the wording cannot break the screen.
+    stubFetch(
+      apiResponse(409, {
+        title: 'Completely different wording.',
+        detail: 'Reworded entirely.',
+        reason: 'ExceedsOutstanding',
+        outstandingAmount: 250.5,
+      }),
+    )
+
+    const error = await recordPayment(authFetch, invoice.id, { amount: 999 }).catch(
+      (caught: unknown) => caught,
+    )
+
+    expect(paymentRefusal(error)).toEqual({
+      reason: 'ExceedsOutstanding',
+      outstandingAmount: 250.5,
+    })
   })
 })

@@ -135,6 +135,23 @@ public class InvoiceRepository : IInvoiceRepository
         return rows;
     }
 
+    public async Task<Invoice?> GetAsync(Guid invoiceId, CancellationToken cancellationToken = default)
+    {
+        const string sql = $@"
+            SELECT {SelectColumns}
+            FROM invoices
+            WHERE id = @invoiceId;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@invoiceId", invoiceId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
+    }
+
     private static void AddParameter(DbCommand command, string name, object value)
     {
         var parameter = command.CreateParameter();

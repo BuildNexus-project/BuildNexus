@@ -412,15 +412,17 @@ services:
       Jwt__SigningKey: ${Jwt__SigningKey:?set Jwt__SigningKey in infra/.env (min 32 bytes)}
       # US-15. The broker, under the shared name every service that touches
       # Kafka uses. The internal listener, since this runs on the compose
-      # network. This service consumes project-events; it publishes nothing.
+      # network. This service consumes project-events and construction-events,
+      # and since US-16 it publishes payment-events too.
       Kafka__BootstrapServers: kafka:9092
     ports:
       - "5005:8080"
     depends_on:
       payment-db:
         condition: service_healthy
-      # Start order only. Kafka being down means ProjectCreated events pile up
-      # unconsumed until it is back — not that this service fails to boot.
+      # Start order only. Kafka being down means incoming events pile up
+      # unconsumed and recorded payments wait on the outbox until it is back —
+      # not that this service fails to boot, and not that anything is lost.
       kafka:
         condition: service_started
 

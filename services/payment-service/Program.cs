@@ -33,6 +33,8 @@ builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IQuotationRepository, QuotationRepository>();
 builder.Services.AddScoped<IProjectOwnerRepository, ProjectOwnerRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and the ownership rows the Client's quotation view is
@@ -41,7 +43,23 @@ builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
+    .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
     .ValidateOnStart();
+
+// How fast the outbox drains. Both settings have working defaults, so there is
+// nothing to validate on start — an outbox nobody configured should still drain.
+builder.Services.AddOptions<OutboxOptions>()
+    .Bind(builder.Configuration.GetSection(OutboxOptions.SectionName));
+
+// The producer is a singleton: librdkafka's producer is thread-safe, holds its own
+// background threads and connection pool, and building one per request would be
+// expensive and would lose whatever is still in the buffer on dispose.
+builder.Services.AddSingleton<IPaymentEventPublisher, KafkaPaymentEventPublisher>();
+
+// Drains payment_outbox_events onto payment-events (AC-3). The only thing that
+// publishes — recording a payment enqueues, this sends, so a payment can succeed
+// while the broker is down.
+builder.Services.AddHostedService<OutboxDispatcher>();
 
 // Reads project-events and records which Client owns each project, so the
 // Client-facing quotation read can be scoped to the caller's own projects.

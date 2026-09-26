@@ -159,6 +159,77 @@ public class MigrationScriptTests
             + string.Join(", ", missing));
     }
 
+    [Fact]
+    public void A_payment_records_its_invoice_its_amount_and_its_payer()
+    {
+        // US-16: the rows an invoice's outstanding amount is derived from.
+        var sql = StripComments(ReadScript(Script("005_create_payments.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS payments", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?i)amount\s+DECIMAL\(15,\s*2\)", sql);
+        Assert.DoesNotMatch(@"(?i)amount\s+(FLOAT|DOUBLE|REAL)", sql);
+
+        foreach (var column in (string[])["invoice_id", "paid_by", "recorded_at"])
+        {
+            Assert.Contains(column, sql, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void A_payment_cannot_be_zero_or_negative()
+    {
+        // A negative payment would raise the outstanding amount rather than
+        // reduce it — a refund dressed as a payment, which US-16 does not have.
+        var sql = StripComments(ReadScript(Script("005_create_payments.sql")));
+
+        Assert.Contains("ck_payments_amount_positive", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?i)CHECK\s*\(\s*amount\s*>\s*0\s*\)", sql);
+    }
+
+    [Fact]
+    public void A_payment_belongs_to_an_invoice_in_this_services_own_schema()
+    {
+        // The one direction a foreign key may point: within this service. The
+        // guard above already refuses a REFERENCES into another service's tables.
+        var sql = StripComments(ReadScript(Script("005_create_payments.sql")));
+
+        Assert.Contains("fk_payments_invoice", sql, StringComparison.Ordinal);
+        Assert.Matches(@"(?is)REFERENCES\s+invoices\s*\(\s*id\s*\)", sql);
+    }
+
+    [Fact]
+    public void Every_event_type_the_service_can_publish_is_allowed_by_the_outbox_schema()
+    {
+        // Written over PaymentEventTypes rather than over today's names: an event
+        // type added in a later story without a matching migration would only
+        // surface as a ck_payment_outbox_events_type violation the first time it
+        // was raised.
+        var sql = string.Concat(ScriptNames().Select(ReadScript));
+
+        var missing = Messaging.PaymentEventTypes.All
+            .Where(eventType => !sql.Contains($"'{eventType}'", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "These event types exist in PaymentEventTypes but no migration allows them in the database: "
+            + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_outbox_keys_an_event_to_its_project_and_its_invoice()
+    {
+        // The project is the Kafka message key; the invoice is what makes an event
+        // traceable without parsing the envelope.
+        var sql = StripComments(ReadScript(Script("006_create_payment_outbox.sql")));
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS payment_outbox_events", sql, StringComparison.Ordinal);
+        Assert.Contains("project_id", sql, StringComparison.Ordinal);
+        Assert.Contains("fk_payment_outbox_events_invoice", sql, StringComparison.Ordinal);
+        // One row per published event, so a retry cannot duplicate one.
+        Assert.Contains("uq_payment_outbox_events_id", sql, StringComparison.Ordinal);
+    }
+
     private static string Script(string fileName) =>
         ScriptNames().Single(name => name.EndsWith(fileName, StringComparison.Ordinal));
 

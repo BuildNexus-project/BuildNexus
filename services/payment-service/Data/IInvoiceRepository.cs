@@ -54,4 +54,16 @@ public interface IInvoiceRepository
     Task<IReadOnlyList<Invoice>> ListForProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// One invoice by its id, or <c>null</c> if there is no such invoice.
+    /// </summary>
+    /// <remarks>
+    /// Added with US-16: a payment names the invoice, but the caller's right to
+    /// pay it is a question about the <em>project</em> — so the project has to be
+    /// looked up before the ownership check can be made. Kept as a read of the
+    /// whole invoice rather than just its project id, so the caller can also
+    /// answer "what is this invoice" without a second query.
+    /// </remarks>
+    Task<Invoice?> GetAsync(Guid invoiceId, CancellationToken cancellationToken = default);
 }
