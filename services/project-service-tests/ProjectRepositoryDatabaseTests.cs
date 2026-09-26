@@ -18,6 +18,7 @@ namespace BuildNexus.ProjectService.Tests;
 /// Needs <c>project-db</c> running — see <see cref="ProjectDatabaseFixture"/>.
 /// </para>
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(ProjectDatabaseCollection.Name)]
 public class ProjectRepositoryDatabaseTests
 {

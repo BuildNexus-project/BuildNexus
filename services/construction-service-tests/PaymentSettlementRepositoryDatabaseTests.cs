@@ -12,6 +12,7 @@ namespace BuildNexus.ConstructionService.Tests;
 /// as an error the gate might mistake for a pass.
 /// <para>Needs <c>construction-db</c> running — see <see cref="ConstructionDatabaseFixture"/>.</para>
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(ConstructionDatabaseCollection.Name)]
 public class PaymentSettlementRepositoryDatabaseTests
 {

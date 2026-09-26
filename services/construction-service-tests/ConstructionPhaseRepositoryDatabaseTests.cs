@@ -16,6 +16,7 @@ namespace BuildNexus.ConstructionService.Tests;
 /// rather than from a check in C#. Only the real engine can show any of that.
 /// <para>Needs <c>construction-db</c> running — see <see cref="ConstructionDatabaseFixture"/>.</para>
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(ConstructionDatabaseCollection.Name)]
 public class ConstructionPhaseRepositoryDatabaseTests
 {
