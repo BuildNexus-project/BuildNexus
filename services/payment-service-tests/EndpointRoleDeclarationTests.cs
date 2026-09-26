@@ -120,6 +120,19 @@ public class EndpointRoleDeclarationTests
             RolesForActionOn<Controllers.ClientPaymentsController>("Record"));
     }
 
+    [Fact]
+    public void Viewing_your_own_payment_history_is_the_clients_alone()
+    {
+        // US-17: the story is framed around the Client seeing what they have
+        // paid and what they still owe. Staff have the richer per-project cost
+        // view on QuotationsController and InvoicesController. The role is only
+        // half the gate — the endpoint also refuses a Client who does not own
+        // the project, which ClientPaymentHistoryControllerTests pins.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.ClientPaymentHistoryController>("Get"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)
