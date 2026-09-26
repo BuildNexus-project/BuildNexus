@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -239,5 +240,174 @@ describe('reading the Client&apos;s costs', () => {
     renderPage(apiResponse(200, []))
 
     expect(await screen.findByText('You have no projects yet.')).toBeInTheDocument()
+  })
+})
+
+describe('paying an invoice', () => {
+  it('posts the amount to the invoice being paid and re-reads the costs', async () => {
+    const requests = renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, [quotation(VILLA_ID, 1_000_000)]),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      // the payment
+      apiResponse(201, {
+        payment: {
+          id: crypto.randomUUID(),
+          invoiceId: VILLA_ID,
+          amount: 400,
+          paidBy: CLIENT_ID,
+          recordedAtUtc: '2026-09-25T10:00:00Z',
+        },
+        outstandingAmount: 600,
+        invoiceStatus: 'Pending',
+      }),
+      // the re-read
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, [quotation(VILLA_ID, 1_000_000)]),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+    )
+
+    await screen.findByText(/Pending/)
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '400')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+
+    await waitFor(() => {
+      const post = requests.find((request) => request.method === 'POST')
+      expect(post?.body).toEqual({ amount: 400 })
+    })
+
+    const post = requests.find((request) => request.method === 'POST')
+    expect(post?.path).toContain('/payments')
+  })
+
+  it('offers no pay form on an invoice that is already settled', async () => {
+    // Nothing left to pay, and the service would refuse it anyway.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000, 'Paid')]),
+    )
+
+    expect(await screen.findByText('Paid')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Pay' })).not.toBeInTheDocument()
+  })
+
+  it('refuses a zero amount at the form edge without calling the service', async () => {
+    const requests = renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+    )
+
+    await screen.findByText('Pending')
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+
+    expect(await screen.findByText(/must be greater than zero/)).toBeInTheDocument()
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(0)
+  })
+
+  it("offers the payable figure when the service refuses an over-payment", async () => {
+    // AC-1 as the Client experiences it: told they cannot pay that much, and
+    // handed the amount that would have worked.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(409, {
+        title: 'Payment exceeds the outstanding amount.',
+        detail: 'This invoice has 600.00 outstanding. Enter that amount or less.',
+        reason: 'ExceedsOutstanding',
+        outstandingAmount: 600,
+      }),
+    )
+
+    await screen.findByText('Pending')
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '700')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+
+    expect(
+      await screen.findByText('This invoice has 600.00 outstanding. Enter that amount or less.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Pay .*600/ })).toBeInTheDocument()
+  })
+
+  it('fills the form with the payable figure when the correction is taken', async () => {
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(409, {
+        title: 'Payment exceeds the outstanding amount.',
+        detail: 'This invoice has 600.00 outstanding.',
+        reason: 'ExceedsOutstanding',
+        outstandingAmount: 600,
+      }),
+    )
+
+    await screen.findByText('Pending')
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '700')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+    await userEvent.click(await screen.findByRole('button', { name: /Pay .*600/ }))
+
+    expect(screen.getByLabelText(/Payment amount/)).toHaveValue(600)
+  })
+
+  it('shows a settled invoice as Paid after the re-read', async () => {
+    // AC-2 as the Client sees it.
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(201, {
+        payment: {
+          id: crypto.randomUUID(),
+          invoiceId: VILLA_ID,
+          amount: 1_000,
+          paidBy: CLIENT_ID,
+          recordedAtUtc: '2026-09-25T10:00:00Z',
+        },
+        outstandingAmount: 0,
+        invoiceStatus: 'Paid',
+      }),
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000, 'Paid')]),
+    )
+
+    await screen.findByText('Pending')
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '1000')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+
+    expect(await screen.findByText('Paid')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Pay' })).not.toBeInTheDocument()
+  })
+
+  it("shows the service's reason when a payment is refused for any other cause", async () => {
+    renderPage(
+      apiResponse(200, [projects()[0]]),
+      apiResponse(200, []),
+      apiResponse(200, [invoice(VILLA_ID, 1_000)]),
+      apiResponse(403, {
+        title: 'Not your invoice.',
+        detail: 'You can only record payments against invoices on your own projects.',
+      }),
+    )
+
+    await screen.findByText('Pending')
+
+    await userEvent.type(screen.getByLabelText(/Payment amount/), '100')
+    await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
+
+    expect(
+      await screen.findByText(
+        'You can only record payments against invoices on your own projects.',
+      ),
+    ).toBeInTheDocument()
   })
 })

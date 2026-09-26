@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
 
 import { useAuth } from '@/auth/auth-context'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { apiErrorMessage } from '@/lib/api'
 import {
   fetchMyProjectInvoices,
   fetchMyProjectQuotations,
+  paymentRefusal,
+  recordPayment,
   type Invoice,
   type InvoiceStatus,
   type Quotation,
 } from '@/lib/payment-api'
+import { recordPaymentSchema, type RecordPaymentValues } from '@/lib/payment-schemas'
 import { fetchProjects, type ProjectSummary } from '@/lib/project-api'
 import { useAutoRefresh } from '@/lib/use-auto-refresh'
 
@@ -149,13 +157,21 @@ export function MyProjectCostsPage() {
         </Card>
       ) : null}
 
-      {entries?.map((entry) => <ProjectCostCard key={entry.project.id} entry={entry} />)}
+      {entries?.map((entry) => (
+        <ProjectCostCard key={entry.project.id} entry={entry} onPaid={load} />
+      ))}
     </main>
   )
 }
 
 /** One project: its current estimate, and every invoice raised against it. */
-function ProjectCostCard({ entry }: { entry: ProjectCostEntry }) {
+function ProjectCostCard({
+  entry,
+  onPaid,
+}: {
+  entry: ProjectCostEntry
+  onPaid: () => Promise<void>
+}) {
   const { project, quotations, invoices, error } = entry
 
   // The service returns quotations newest first, so the front of the list is
@@ -211,23 +227,29 @@ function ProjectCostCard({ entry }: { entry: ProjectCostEntry }) {
                   Nothing has been billed for this project yet.
                 </p>
               ) : (
-                <ul className="flex flex-col gap-2">
+                <ul className="flex flex-col gap-3">
                   {invoices.map((invoice) => (
-                    <li
-                      key={invoice.id}
-                      className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 last:border-b-0 last:pb-0"
-                    >
-                      <span className="text-sm font-medium tabular-nums">
-                        {formatMoney(invoice.amount)}
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <span className="text-muted-foreground text-xs">
-                          {formatDate(invoice.createdAtUtc)}
+                    <li key={invoice.id} className="border-b pb-3 last:border-b-0 last:pb-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-medium tabular-nums">
+                          {formatMoney(invoice.amount)}
                         </span>
-                        <Badge variant={INVOICE_BADGE_VARIANT[invoice.status]}>
-                          {invoice.status}
-                        </Badge>
-                      </span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-muted-foreground text-xs">
+                            {formatDate(invoice.createdAtUtc)}
+                          </span>
+                          <Badge variant={INVOICE_BADGE_VARIANT[invoice.status]}>
+                            {invoice.status}
+                          </Badge>
+                        </span>
+                      </div>
+
+                      {/* Only a Pending invoice can be paid. A settled one keeps
+                          its badge and loses the form — there is nothing left to
+                          pay, and the service would refuse it anyway. */}
+                      {invoice.status === 'Pending' ? (
+                        <PayInvoiceForm invoice={invoice} onPaid={onPaid} />
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -237,5 +259,104 @@ function ProjectCostCard({ entry }: { entry: ProjectCostEntry }) {
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * The Client's pay control for one pending invoice (US-16).
+ *
+ * The service is the authority on what may be paid: the outstanding amount can
+ * change between this rendering and the request landing, so the form does not
+ * try to cap the figure itself. When the service refuses an over-payment it
+ * sends back the invoice's real outstanding amount, and that is shown here as a
+ * correction rather than a bare error.
+ */
+function PayInvoiceForm({ invoice, onPaid }: { invoice: Invoice; onPaid: () => Promise<void> }) {
+  const { authFetch } = useAuth()
+  const [formError, setFormError] = useState<string | null>(null)
+  /** What the service says is actually left, after it refused an over-payment. */
+  const [payableAmount, setPayableAmount] = useState<number | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<RecordPaymentValues>({
+    resolver: zodResolver(recordPaymentSchema),
+  })
+
+  async function onSubmit(values: RecordPaymentValues) {
+    setFormError(null)
+    setPayableAmount(null)
+
+    try {
+      await recordPayment(authFetch, invoice.id, { amount: values.amount })
+      reset()
+      // Re-read rather than patching the row in place: the payment may have
+      // settled the invoice, and the card shows a billed total and a status that
+      // both move with it.
+      await onPaid()
+    } catch (error) {
+      const refusal = paymentRefusal(error)
+
+      // An over-payment is the one failure the screen can help with — it knows
+      // the figure that would have worked, so it offers it.
+      if (refusal?.reason === 'ExceedsOutstanding' && refusal.outstandingAmount !== null) {
+        setPayableAmount(refusal.outstandingAmount)
+      }
+
+      setFormError(apiErrorMessage(error, 'Could not record your payment. Please try again.'))
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit(onSubmit)}
+      noValidate
+      className="mt-3 flex flex-col gap-2"
+      aria-label={`Pay invoice of ${formatMoney(invoice.amount)}`}
+    >
+      <div className="flex flex-wrap items-end gap-2">
+        <Field className="flex-1">
+          <FieldLabel htmlFor={`amount-${invoice.id}`}>Payment amount (LKR)</FieldLabel>
+          <Input
+            id={`amount-${invoice.id}`}
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0.01"
+            aria-invalid={Boolean(errors.amount)}
+            {...register('amount', { valueAsNumber: true })}
+          />
+        </Field>
+
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Recording…' : 'Pay'}
+        </Button>
+      </div>
+
+      <FieldError errors={[errors.amount]} />
+
+      {formError ? <p className="text-destructive text-sm">{formError}</p> : null}
+
+      {payableAmount !== null ? (
+        <p className="text-sm">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setValue('amount', payableAmount, { shouldValidate: true })
+              setFormError(null)
+              setPayableAmount(null)
+            }}
+          >
+            Pay {formatMoney(payableAmount)} instead
+          </Button>
+        </p>
+      ) : null}
+    </form>
   )
 }

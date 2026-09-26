@@ -55,3 +55,19 @@ export const generateInvoiceSchema = z.object({
 })
 
 export type GenerateInvoiceValues = z.infer<typeof generateInvoiceSchema>
+
+/**
+ * The record-payment form: just the amount.
+ *
+ * Deliberately does not try to enforce AC-1's cap. The outstanding amount is a
+ * fact about the invoice that can change between the screen rendering and the
+ * request landing — another payment, a re-issued invoice — so the only place it
+ * can be checked correctly is inside the service's own transaction. The screen
+ * shows the figure and the service is the authority; a bound baked in here would
+ * be a second answer that can disagree with the first.
+ */
+export const recordPaymentSchema = z.object({
+  amount: money('A payment amount'),
+})
+
+export type RecordPaymentValues = z.infer<typeof recordPaymentSchema>
