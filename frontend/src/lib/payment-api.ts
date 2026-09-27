@@ -242,3 +242,55 @@ export function recordPayment(
     json: payload,
   })
 }
+
+/**
+ * One invoice with everything paid against it (US-17).
+ */
+export type InvoiceWithPayments = {
+  invoice: Invoice
+  /** Oldest first — the order the Client made them. */
+  payments: Payment[]
+  /** What has been paid against this invoice so far. */
+  amountPaid: number
+  /**
+   * What is still owed on this invoice. Zero once settled, and exactly the
+   * figure {@link recordPayment} will accept — the service computes both with
+   * the same arithmetic, so a Client is never offered an amount it then refuses.
+   */
+  outstandingAmount: number
+}
+
+/**
+ * A project's billing picture in one answer: the history and the balance
+ * (US-17).
+ *
+ * Both halves arrive together because AC-2 requires the balance on the same
+ * view as the history — two requests would let a payment land between them and
+ * show a balance that disagrees with the invoices beneath it.
+ */
+export type ProjectPaymentHistory = {
+  projectId: string
+  /** Most recent first. */
+  invoices: InvoiceWithPayments[]
+  /** Everything ever billed on this project, settled or not. */
+  totalInvoiced: number
+  /** Everything ever paid on this project. */
+  totalPaid: number
+  /** What the Client still owes across the project. */
+  outstandingBalance: number
+}
+
+/**
+ * The full billing history for one of the Client's own projects, with the
+ * balance still outstanding (US-17).
+ *
+ * Client only and ownership-scoped, exactly as the other `my-projects` reads
+ * are: the service answers 403 for anyone else's project, and the same 403
+ * whether it exists or not.
+ *
+ * A project with no invoices is a real answer — an empty list at a zero balance
+ * — not a failure.
+ */
+export function fetchMyProjectPaymentHistory(authFetch: AuthFetch, projectId: string) {
+  return authFetch<ProjectPaymentHistory>(`/api/payments/my-projects/${projectId}/history`)
+}
