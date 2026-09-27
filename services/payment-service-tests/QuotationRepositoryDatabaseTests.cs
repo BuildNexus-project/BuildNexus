@@ -5,6 +5,7 @@ namespace BuildNexus.PaymentService.Tests;
 /// <summary>
 /// The <c>quotations</c> SQL against the real engine (US-15, AC-1).
 /// </summary>
+[Trait("Category", "Integration")]
 [Collection(PaymentDatabaseCollection.Name)]
 public class QuotationRepositoryDatabaseTests
 {

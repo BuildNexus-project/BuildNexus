@@ -12,6 +12,7 @@ namespace BuildNexus.PaymentService.Tests;
 /// computes, inside a transaction holding a row lock on the invoice — so these
 /// run against a real database rather than a stub, which could not show either.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(PaymentDatabaseCollection.Name)]
 public class PaymentRepositoryDatabaseTests
 {

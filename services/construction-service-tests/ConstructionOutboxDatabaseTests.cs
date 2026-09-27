@@ -17,6 +17,7 @@ namespace BuildNexus.ConstructionService.Tests;
 /// — and only a real engine can be asked whether the row survived.
 /// <para>Needs <c>construction-db</c> running — see <see cref="ConstructionDatabaseFixture"/>.</para>
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(ConstructionDatabaseCollection.Name)]
 public class ConstructionOutboxDatabaseTests
 {

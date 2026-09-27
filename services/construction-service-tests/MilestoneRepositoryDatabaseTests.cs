@@ -10,6 +10,7 @@ namespace BuildNexus.ConstructionService.Tests;
 /// progress rollup.
 /// </summary>
 /// <remarks>Needs <c>construction-db</c> running — see <see cref="ConstructionDatabaseFixture"/>.</remarks>
+[Trait("Category", "Integration")]
 [Collection(ConstructionDatabaseCollection.Name)]
 public class MilestoneRepositoryDatabaseTests
 {

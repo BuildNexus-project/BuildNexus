@@ -8,6 +8,7 @@ namespace BuildNexus.PaymentService.Tests;
 /// C#, so only the real engine can show that a redelivered <c>ProjectCreated</c>
 /// is absorbed instead of raising a duplicate-key error.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(PaymentDatabaseCollection.Name)]
 public class ProjectOwnerRepositoryDatabaseTests
 {

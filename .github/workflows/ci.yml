@@ -6,12 +6,12 @@
 #
 #   build            Sprint 1  (below)
 #   unit tests       Sprint 1  (below)
-#   integration      Sprint 3  — attaches with `needs: [backend-unit-tests, ...]`
+#   integration      Sprint 3  (below — US-30)
 #   docker build     Sprint 4
 #   deploy           Sprint 4  (below — User Service SCRUM-52, Project Service SCRUM-53)
 #
-# The remaining two are deliberately not stubbed here: an empty job that always
-# passes reads as a green stage that proves nothing.
+# Docker build is deliberately not stubbed here: an empty job that always passes
+# reads as a green stage that proves nothing.
 #
 # The deploy stage is per service, not one job for all five. Each service gets
 # its own job, gated on its own paths, so a change to one service redeploys that
@@ -129,103 +129,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: backend-build
 
-    env:
-      # --- Why the database credentials are literals -----------------------
-      # UserServiceFactory connects with a fixed connection string compiled
-      # into the test assembly (User Id=buildnexus;Password=buildnexus-dev).
-      # These values must match it exactly or every database-backed test fails
-      # to authenticate, so they are not free to vary — a secret here would let
-      # someone change one half of a pair that has to agree. They are the same
-      # published development values as infra/.env.example, they are already in
-      # the repository, and they belong to a MySQL container that exists only
-      # for the length of this job.
-      USER_DB_ROOT_PASSWORD: buildnexus-root-dev
-      USER_DB_USER: buildnexus
-      USER_DB_PASSWORD: buildnexus-dev
-
-      # --- Why the Project Service database credentials are literals --------
-      # Same reason as the User Service's above: ProjectDatabaseFixture connects
-      # with a fixed connection string compiled into the test assembly
-      # (User Id=buildnexus;Password=buildnexus-dev), so these values are not
-      # free to vary — a secret here would let someone change one half of a pair
-      # that has to agree.
-      #
-      # A project-db container IS started below. It was not needed while every
-      # class in services/project-service-tests stubbed its collaborators, but
-      # ProjectRepositoryDatabaseTests deliberately does not: the status-history
-      # ordering defect it guards only exists once a timestamp has been through
-      # a whole-second MySQL DATETIME, which no in-memory stand-in reproduces.
-      PROJECT_DB_ROOT_PASSWORD: buildnexus-root-dev
-      PROJECT_DB_USER: buildnexus
-      PROJECT_DB_PASSWORD: buildnexus-dev
-
-      # --- Why the Design Service database credentials are here ------------
-      # No design-db container is started in this job yet — no test in
-      # services/design-service-tests needs one. But compose interpolates the
-      # WHOLE file before it starts anything, so the `${DESIGN_DB_*:?...}`
-      # variables on the design-db and design-service blocks must be set or
-      # `docker compose up user-db project-db` fails to parse. Same reason,
-      # and same published development values, as the two blocks above.
-      DESIGN_DB_ROOT_PASSWORD: buildnexus-root-dev
-      DESIGN_DB_USER: buildnexus
-      DESIGN_DB_PASSWORD: buildnexus-dev
-
-      # --- Why the Construction Service database credentials are here ------
-      # This job now starts construction-db (US-23):
-      # MilestoneSetupRepositoryDatabaseTests runs the real migrations and the
-      # real INSERT IGNORE against it on localhost:3310. Compose also needs
-      # these to parse the `${CONSTRUCTION_DB_*:?...}` on the construction-db
-      # and construction-service blocks before it starts anything at all. Same
-      # published development values as the blocks above, and the same reason
-      # they are literals: a fixed connection string is compiled into the test
-      # assembly and these must match it exactly.
-      CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-dev
-      CONSTRUCTION_DB_USER: buildnexus
-      CONSTRUCTION_DB_PASSWORD: buildnexus-dev
-
-      # --- Why the Payment Service database credentials are here (US-15) ----
-      # This job now starts payment-db: QuotationRepositoryDatabaseTests runs the
-      # real migrations and the real ADO.NET against it on localhost:3311 — its
-      # own container, its own port, since one schema per service means one
-      # container per service. Compose also needs these to interpolate the
-      # `${PAYMENT_DB_*:?...}` on the payment-db and payment-service blocks before
-      # it starts anything at all. Same published development values as the blocks
-      # above, and the same reason they are literals: a fixed connection string is
-      # compiled into the test assembly and these must match it exactly.
-      PAYMENT_DB_ROOT_PASSWORD: buildnexus-root-dev
-      PAYMENT_DB_USER: buildnexus
-      PAYMENT_DB_PASSWORD: buildnexus-dev
-
-      # --- Why the JWT values are here at all -------------------------------
-      # Compose interpolates the WHOLE file before it starts anything, so the
-      # required `${Jwt__*:?...}` variables declared on the user-service and
-      # api-gateway blocks must be set even though this job only starts
-      # user-db. Without them `docker compose up user-db` fails to parse.
-      #
-      # The test run itself does not depend on these: both WebApplicationFactory
-      # test hosts supply their own JWT settings through AddInMemoryCollection,
-      # which layers after the environment variables and wins. They are set at
-      # job level anyway so that stays true if a factory ever stops overriding
-      # them, rather than failing then as a puzzle.
-      Jwt__Issuer: BuildNexusAuth
-      Jwt__Audience: BuildNexusServices
-      # Repository secret. Must be at least 32 bytes: JwtOptions validates the
-      # key length at startup and the host refuses to boot below it.
-      Jwt__SigningKey: ${{ secrets.JWT_SIGNING_KEY }}
-
-      # --- Why the internal service key is here (US-11) ---------------------
-      # Same trap as the Jwt__* block above: docker-compose.yml's user-service
-      # block requires InternalService__ApiKey to parse, even though this job
-      # only starts user-db. UserServiceFactory supplies its own value through
-      # AddInMemoryCollection, so the test run itself does not depend on this —
-      # it is set at job level so that stays true rather than failing as a
-      # puzzle if the factory ever stops overriding it.
-      #
-      # Repository secret, the same class of value as the JWT signing key: a
-      # shared key with a minimum-length check at startup, not a throwaway dev
-      # password like the ones below.
-      InternalService__ApiKey: ${{ secrets.INTERNAL_SERVICE_API_KEY }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -240,51 +143,12 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      # None of the three test projects is fully isolated.
-      #
-      # services/user-service-tests: RoleAccessTests and RegistrationRoleTests
-      # boot the real User Service host through UserServiceFactory, which
-      # migrates and queries a live MySQL on localhost:3306. The other eight
-      # classes stub their dependencies and need nothing here.
-      #
-      # services/project-service-tests: ProjectRepositoryDatabaseTests runs the
-      # real migrations and the real ADO.NET against project-db on localhost:3307
-      # — one schema per service means one container per service, so it needs a
-      # port of its own. Every other class in that project stubs its
-      # collaborators.
-      #
-      # services/design-service-tests: DesignDocumentRepositoryDatabaseTests runs
-      # the real migrations and the real ADO.NET against design-db on
-      # localhost:3309 — again its own container, its own port. Every other class
-      # in that project (validator, contract, role-declaration, migration-script,
-      # and the controller suite over fakes) needs nothing running.
-      #
-      # services/construction-service-tests: MilestoneSetupRepositoryDatabaseTests
-      # runs the real migrations and the real INSERT IGNORE against
-      # construction-db on localhost:3310 — its own container, its own port. The
-      # consumer suite drives HandleAsync over a fake repository and the
-      # controller and role-declaration suites need nothing running.
-
-      # services/payment-service-tests: QuotationRepositoryDatabaseTests runs the
-      # real migrations and the real ADO.NET against payment-db on localhost:3311
-      # — its own container, its own port. What it covers only the real engine can
-      # answer: that DECIMAL(15,2) returns the exact figure that went in, and that
-      # the CHECK constraint refuses a non-positive total. MigrationScriptTests
-      # alongside it reads the built assembly and needs nothing running.
-      #
-      # --wait holds until every container reports healthy, not merely started,
-      # which the healthchecks defined on them make meaningful: MySQL accepts
-      # connections some seconds after the process starts, and without this the
-      # first test would race it.
-      - name: Start the service databases
-        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db construction-db payment-db
-
-      # No Kafka container for any of these, still. OutboxDispatcherTests does
-      # cover the dispatcher that publishes to the broker, but over a fake
-      # publisher — what is under test there is what the dispatcher does with a
-      # success and with a failure, and a real broker would only make the run
-      # depend on how long it took to answer.
-      # services/project-service-tests reaches MySQL and never the broker.
+      # Nothing is started for this stage, and nothing may need to be. Every test
+      # class that talks to MySQL or Kafka carries [Trait("Category", "Integration")]
+      # and is run by the integration job below, which starts the infrastructure it
+      # needs. The filter is what keeps the two stages honest: a test that reached
+      # for a database without the trait fails here on a refused connection, rather
+      # than quietly relying on a container this job does not start.
       #
       # --collect:"XPlat Code Coverage" activates coverlet.collector, which every
       # *-tests project already references (US-33) — it was sitting unused until
@@ -292,12 +156,12 @@ jobs:
       # per service, so a project's own file cannot be confused with another's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
-          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/payment-service
-          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
+          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/payment-service
+          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
 
       # Kept as a build artifact rather than only living on the runner: the raw
       # Cobertura files are what a merged, human-readable report is built from
@@ -337,6 +201,7 @@ jobs:
         if: always()
         run: |
           if [ -f coverage/report/SummaryGithub.md ]; then
+            echo "## Backend coverage — unit tests only" >> "$GITHUB_STEP_SUMMARY"
             cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -347,17 +212,6 @@ jobs:
           name: backend-coverage-report
           path: coverage/report/
           if-no-files-found: ignore
-
-      # A failed run is usually a database, and the container's log says why in
-      # a way the test output does not. Both are printed rather than guessing
-      # which of the two took the run down.
-      - name: Database logs (on failure)
-        if: failure()
-        run: docker compose -f infra/docker-compose.yml logs user-db project-db design-db construction-db
-
-      - name: Stop the service databases
-        if: always()
-        run: docker compose -f infra/docker-compose.yml down -v
 
   frontend-unit-tests:
     name: Unit tests (frontend)
@@ -414,6 +268,206 @@ jobs:
           path: frontend/coverage/
           if-no-files-found: ignore
 
+  # ---------------------------------------------------- integration tests ----
+  # US-30. The tests that need real infrastructure: a MySQL container for every
+  # service, and the Kafka broker for the four that publish or consume.
+  #
+  # What separates this stage from the unit stage is one xUnit trait. Every test
+  # class that talks to a database or a broker carries
+  # [Trait("Category", "Integration")]; the unit job runs "Category!=Integration"
+  # and this one runs "Category=Integration", so each test runs in exactly one
+  # of them and the infrastructure is started only where something uses it.
+  #
+  # Runs only once the unit stage has passed: there is no reason to pull and
+  # start six containers for a commit whose unit tests already failed.
+  backend-integration-tests:
+    name: Integration tests (backend)
+    runs-on: ubuntu-latest
+    needs: backend-unit-tests
+    # A container that never turns healthy, or a consumer that never joins its
+    # group, would otherwise hold the runner until GitHub's six-hour default.
+    timeout-minutes: 20
+
+    env:
+      # --- Why the database credentials are literals -----------------------
+      # Every *DatabaseFixture, and UserServiceFactory, connects with a fixed
+      # connection string compiled into the test assembly
+      # (User Id=buildnexus;Password=buildnexus-dev). These values must match it
+      # exactly or every database-backed test fails to authenticate, so they are
+      # not free to vary — a secret here would let someone change one half of a
+      # pair that has to agree. They are the same published development values
+      # as infra/.env.example, they are already in the repository, and they
+      # belong to MySQL containers that exist only for the length of this job.
+      #
+      # One block per service because one schema per service means one
+      # container per service, each on a host port of its own: user-db 3306,
+      # project-db 3307, design-db 3309, construction-db 3310, payment-db 3311.
+      # Compose also needs every one of them to interpolate the
+      # `${*_DB_*:?...}` variables before it starts anything at all.
+      USER_DB_ROOT_PASSWORD: buildnexus-root-dev
+      USER_DB_USER: buildnexus
+      USER_DB_PASSWORD: buildnexus-dev
+      PROJECT_DB_ROOT_PASSWORD: buildnexus-root-dev
+      PROJECT_DB_USER: buildnexus
+      PROJECT_DB_PASSWORD: buildnexus-dev
+      DESIGN_DB_ROOT_PASSWORD: buildnexus-root-dev
+      DESIGN_DB_USER: buildnexus
+      DESIGN_DB_PASSWORD: buildnexus-dev
+      CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-dev
+      CONSTRUCTION_DB_USER: buildnexus
+      CONSTRUCTION_DB_PASSWORD: buildnexus-dev
+      PAYMENT_DB_ROOT_PASSWORD: buildnexus-root-dev
+      PAYMENT_DB_USER: buildnexus
+      PAYMENT_DB_PASSWORD: buildnexus-dev
+
+      # --- Where the broker is ---------------------------------------------
+      # The name every publishing service reads its broker address under, and
+      # the one each Kafka test reads too. The compose broker's HOST listener,
+      # published on the runner: kafka:9092 is the address for services inside
+      # the compose network, and these tests run outside it. Not a secret — it
+      # is a localhost port on a container that exists only for this job.
+      Kafka__BootstrapServers: localhost:29092
+
+      # --- Why the JWT values are here at all -------------------------------
+      # Compose interpolates the WHOLE file before it starts anything, so the
+      # required `${Jwt__*:?...}` variables declared on the service and
+      # api-gateway blocks must be set even though this job starts only the
+      # databases and the broker. Without them `docker compose up` fails to
+      # parse. No test reads them: the WebApplicationFactory hosts supply their
+      # own JWT settings through AddInMemoryCollection.
+      Jwt__Issuer: BuildNexusAuth
+      Jwt__Audience: BuildNexusServices
+      # Repository secret. Must be at least 32 bytes: JwtOptions validates the
+      # key length at startup and the host refuses to boot below it.
+      Jwt__SigningKey: ${{ secrets.JWT_SIGNING_KEY }}
+
+      # --- Why the internal service key is here (US-11) ---------------------
+      # Same trap as the Jwt__* block above: docker-compose.yml's user-service
+      # and design-service blocks require InternalService__ApiKey to parse.
+      # Repository secret, the same class of value as the JWT signing key: a
+      # shared key with a minimum-length check at startup, not a throwaway dev
+      # password like the ones above.
+      InternalService__ApiKey: ${{ secrets.INTERNAL_SERVICE_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Every fixture and test host connects on a fixed localhost port, so what
+      # each test project needs running is:
+      #
+      #   user-service-tests          user-db (UserServiceFactory boots the real host)
+      #   project-service-tests       project-db, and the broker
+      #   design-service-tests        design-db, and the broker
+      #   construction-service-tests  construction-db, and the broker
+      #   payment-service-tests       payment-db, and the broker
+      #
+      # The User Service is REST-only and never touches Kafka.
+      #
+      # --wait holds until every container reports healthy, not merely started,
+      # which the healthchecks defined on them make meaningful: MySQL accepts
+      # connections some seconds after the process starts, and the broker only
+      # once its metadata quorum has formed. Without this the first test would
+      # race them. The broker is new for the run, so no earlier run's messages
+      # are on it, and topics are created on first publish.
+      - name: Start the service databases and Kafka
+        run: docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 180 user-db project-db design-db construction-db payment-db kafka
+
+      # The Kafka tests are real round trips: a row written to MySQL is sent by
+      # the real dispatcher through the real broker and read back by an
+      # independent consumer, and a message produced onto a topic is read by the
+      # real consumer and lands in MySQL. A missing broker fails them on a
+      # timeout — it never skips them.
+      #
+      # Coverage is collected here too. The repository and consumer code these
+      # tests exercise left the unit stage's number when the database-backed
+      # tests moved out of it, and a figure that silently lost them would say
+      # less than the truth. Each run writes its Cobertura XML under its own
+      # directory, kept apart from the unit stage's.
+      - name: Test
+        run: |
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/construction-service
+          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/payment-service
+
+      - name: Upload raw integration coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-coverage-raw
+          path: coverage/integration/
+          if-no-files-found: ignore
+
+      # The unit stage's raw files, fetched so the report below covers the whole
+      # backend rather than only the half this job ran. Not fatal if it cannot
+      # be fetched: the report is a courtesy, and the Test step above has
+      # already said whether this stage passed.
+      - name: Download unit-test coverage
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage-raw
+          path: coverage/unit
+
+      # The same merge the unit stage does, over both sets of files. Runs even
+      # after a failed Test step — whatever did run still measured real coverage
+      # — and skips cleanly if nothing was measured.
+      - name: Merge unit and integration coverage report
+        if: always()
+        run: |
+          if ! find coverage -name 'coverage.cobertura.xml' -print -quit 2>/dev/null | grep -q .; then
+            echo "No backend coverage files found — nothing to merge."
+            exit 0
+          fi
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.11
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:"coverage/**/coverage.cobertura.xml" \
+            -targetdir:"coverage/report" \
+            -reporttypes:"Html;MarkdownSummaryGithub"
+
+      # Headed, because the unit job's own summary is unit tests only and the
+      # two would otherwise read as a disagreement.
+      - name: Publish combined coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/report/SummaryGithub.md ]; then
+            echo "## Backend coverage — unit and integration tests together" >> "$GITHUB_STEP_SUMMARY"
+            cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload combined coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-combined-coverage-report
+          path: coverage/report/
+          if-no-files-found: ignore
+
+      # A failed run is usually a container, and its log says why in a way the
+      # test output does not. All six are printed rather than guessing which one
+      # took the run down.
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs user-db project-db design-db construction-db payment-db kafka
+
+      - name: Stop the service databases and Kafka
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
   # --------------------------------------------------------------- deploy ----
   # Which services actually changed.
   #
@@ -452,9 +506,9 @@ jobs:
   deploy-user-service:
     name: Deploy User Service
     runs-on: ubuntu-latest
-    # Tests first. Deploying code that the unit test stage rejected would make
-    # the pipeline's ordering decorative.
-    needs: [changed-services, backend-unit-tests]
+    # Tests first, unit and integration both. Deploying code that either stage
+    # rejected would make the pipeline's ordering decorative.
+    needs: [changed-services, backend-unit-tests, backend-integration-tests]
     if: needs.changed-services.outputs.user-service == 'true'
 
     # Two pushes in quick succession must not deploy over each other: App Service
@@ -533,7 +587,7 @@ jobs:
     # its own path filter above, so a change under services/project-service/**
     # redeploys this one App Service, and a User Service change never rebuilds
     # or restarts it.
-    needs: [changed-services, backend-unit-tests]
+    needs: [changed-services, backend-unit-tests, backend-integration-tests]
     if: needs.changed-services.outputs.project-service == 'true'
 
     # Its own group rather than deploy-user-service's: two Project Service
