@@ -11,6 +11,7 @@ namespace BuildNexus.PaymentService.Tests;
 /// different number would offer a Client an amount the pay endpoint then
 /// refuses. That agreement is only demonstrable against a real database.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(PaymentDatabaseCollection.Name)]
 public class PaymentHistoryRepositoryDatabaseTests
 {
