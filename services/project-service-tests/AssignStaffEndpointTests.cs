@@ -321,6 +321,17 @@ public class AssignStaffEndpointTests
             return Task.FromResult(true);
         }
 
+        /// <summary>
+        /// Not part of this suite's story — US-24's payment reflection has its own coverage in
+        /// <c>PaymentEventsConsumerTests</c>. Throws rather than returning a value, so a change
+        /// that starts depending on it here cannot pass unnoticed.
+        /// </summary>
+        public Task<bool> UpdatePaymentStatusAsync(
+            Guid projectId,
+            ProjectPaymentStatus paymentStatus,
+            Guid sourceEventId,
+            DateTime occurredAtUtc) => throw new NotSupportedException();
+
         public Task<IReadOnlyList<ProjectStatusChange>> GetStatusHistoryAsync(Guid projectId) =>
             Task.FromResult<IReadOnlyList<ProjectStatusChange>>([]);
 

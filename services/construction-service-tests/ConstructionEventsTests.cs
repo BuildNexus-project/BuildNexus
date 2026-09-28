@@ -138,14 +138,11 @@ public class ConstructionEventsTests
         // copies of one list, and a new event type added to only one of them is
         // either an event the database silently refuses at the write or a type no
         // consumer agreed to. This holds the two together.
-        var migration = ReadMigration("006_create_construction_outbox.sql");
-
-        var allowed = migration
-            .Split("CHECK (event_type IN (")[1]
-            .Split("))")[0]
-            .Split(',')
-            .Select(value => value.Trim().Trim('\''))
-            .ToList();
+        // Whichever migration defines the list *last* is the one in force: 006 created it
+        // and 009 widened it for MilestoneCompleted, and a later story will widen it again.
+        // Scanning in order and taking the final definition means this test does not need
+        // editing every time — and still fails if the two lists ever disagree.
+        var allowed = EffectiveAllowedEventTypes();
 
         Assert.Equal(ConstructionEventTypes.All.OrderBy(type => type), allowed.OrderBy(type => type));
     }
@@ -166,6 +163,41 @@ public class ConstructionEventsTests
         CompletedAtUtc = CompletedAt,
         UpdatedAtUtc = CompletedAt
     };
+
+    /// <summary>
+    /// The event types the schema actually permits: the last <c>CHECK (event_type IN (...))</c>
+    /// across the migrations, in filename order.
+    /// </summary>
+    private static IReadOnlyList<string> EffectiveAllowedEventTypes()
+    {
+        var assembly = typeof(ConstructionEventTypes).Assembly;
+
+        var definitions = assembly.GetManifestResourceNames()
+            .Where(name => name.EndsWith(".sql", StringComparison.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .Select(ReadResource)
+            .Where(sql => sql.Contains("CHECK (event_type IN (", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.NotEmpty(definitions);
+
+        return definitions[^1]
+            .Split("CHECK (event_type IN (")[^1]
+            .Split("))")[0]
+            .Split(',')
+            .Select(value => value.Trim().Trim('\''))
+            .ToList();
+    }
+
+    /// <summary>Reads one embedded resource by its full name.</summary>
+    private static string ReadResource(string resourceName)
+    {
+        using var stream = typeof(ConstructionEventTypes).Assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Could not read the embedded resource '{resourceName}'.");
+        using var reader = new StreamReader(stream);
+
+        return reader.ReadToEnd();
+    }
 
     /// <summary>
     /// Reads a migration out of the service assembly, where the csproj embeds them —

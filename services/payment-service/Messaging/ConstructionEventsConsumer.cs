@@ -39,6 +39,7 @@ public sealed class ConstructionEventsConsumer : BackgroundService
 {
     private const string Topic = "construction-events";
     private const string ConstructionStartedType = "ConstructionStarted";
+    private const string ConstructionCompletedType = "ConstructionCompleted";
 
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
 
@@ -190,10 +191,16 @@ public sealed class ConstructionEventsConsumer : BackgroundService
         var envelope = JsonSerializer.Deserialize<IncomingEvent>(value, IncomingEvent.SerializerOptions)
             ?? throw new JsonException("The message body deserialised to null.");
 
+        if (string.Equals(envelope.EventType, ConstructionCompletedType, StringComparison.Ordinal))
+        {
+            await HandleCompletedAsync(envelope, cancellationToken);
+            return;
+        }
+
         if (!string.Equals(envelope.EventType, ConstructionStartedType, StringComparison.Ordinal))
         {
-            // ConstructionCompleted, and whatever the topic carries later. Only
-            // the start of the build is a billable stage in this story.
+            // Whatever the topic carries later. Only the start of the build is a
+            // billable stage, and only its completion bears on final settlement.
             // Committed by the caller.
             return;
         }
@@ -258,6 +265,60 @@ public sealed class ConstructionEventsConsumer : BackgroundService
             _logger.LogInformation(
                 "ConstructionStarted {EventId} had already raised an invoice for project {ProjectId}; absorbed.",
                 envelope.EventId, payload.ProjectId);
+        }
+    }
+
+    /// <summary>
+    /// Records that a project's build is complete, and announces the final
+    /// settlement if the project is already paid up.
+    /// </summary>
+    /// <remarks>
+    /// The second of the two triggers that can make a settlement final. A Client
+    /// who paid everything while the build was still running owes nothing the
+    /// moment it completes — and without this, nothing would ever notice, so
+    /// handover would stay blocked on a project that is finished and fully paid.
+    /// <para>
+    /// Both the record and the announcement are idempotent, so a redelivered
+    /// event is absorbed rather than announcing twice.
+    /// </para>
+    /// </remarks>
+    private async Task HandleCompletedAsync(IncomingEvent envelope, CancellationToken cancellationToken)
+    {
+        if (envelope.Payload.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("A ConstructionCompleted event carried no payload object.");
+        }
+
+        var payload = envelope.Payload.Deserialize<ConstructionCompletedPayload>(IncomingEvent.SerializerOptions)
+            ?? throw new JsonException("The ConstructionCompleted payload deserialised to null.");
+
+        if (payload.ProjectId == Guid.Empty)
+        {
+            throw new JsonException("The ConstructionCompleted payload was missing its projectId.");
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var completions = scope.ServiceProvider.GetRequiredService<IConstructionCompletionRepository>();
+
+        var announced = await completions.RecordCompletionAndMaybeAnnounceAsync(
+            payload.ProjectId,
+            payload.CompletedAt.UtcDateTime,
+            envelope.EventId,
+            cancellationToken);
+
+        if (announced)
+        {
+            _logger.LogInformation(
+                "Project {ProjectId} completed construction owing nothing; announced FinalPaymentSettled "
+                + "from ConstructionCompleted {EventId}.",
+                payload.ProjectId, envelope.EventId);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Recorded project {ProjectId} as construction-complete from ConstructionCompleted {EventId}. "
+                + "No final settlement announced — the project still owes, or it was announced already.",
+                payload.ProjectId, envelope.EventId);
         }
     }
 

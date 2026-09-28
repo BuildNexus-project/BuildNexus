@@ -1,4 +1,5 @@
 using System.Data.Common;
+using BuildNexus.PaymentService.Messaging;
 using BuildNexus.PaymentService.Models;
 
 namespace BuildNexus.PaymentService.Data;
@@ -44,21 +45,34 @@ public class InvoiceRepository : IInvoiceRepository
             INSERT INTO invoices ({SelectColumns})
             VALUES (@id, @projectId, @amount, @status, @createdBy, @sourceEventId, @createdAt, @paidAt);";
 
+        // Transactional now, for US-24: the invoice and the InvoiceGenerated event it raises
+        // must commit together, or a crash between them would bill a project without ever
+        // announcing it.
         await using var connection = await _connectionFactory.OpenConnectionAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        AddParameter(command, "@id", invoice.Id);
-        AddParameter(command, "@projectId", invoice.ProjectId);
-        AddParameter(command, "@amount", invoice.Amount);
-        // Persisted as the enum's own name, which is also what the CHECK
-        // constraint allows.
-        AddParameter(command, "@status", invoice.Status.ToString());
-        AddParameter(command, "@createdBy", invoice.CreatedBy);
-        AddParameter(command, "@sourceEventId", DBNull.Value);
-        AddParameter(command, "@createdAt", invoice.CreatedAtUtc);
-        AddParameter(command, "@paidAt", DBNull.Value);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            AddParameter(command, "@id", invoice.Id);
+            AddParameter(command, "@projectId", invoice.ProjectId);
+            AddParameter(command, "@amount", invoice.Amount);
+            // Persisted as the enum's own name, which is also what the CHECK
+            // constraint allows.
+            AddParameter(command, "@status", invoice.Status.ToString());
+            AddParameter(command, "@createdBy", invoice.CreatedBy);
+            AddParameter(command, "@sourceEventId", DBNull.Value);
+            AddParameter(command, "@createdAt", invoice.CreatedAtUtc);
+            AddParameter(command, "@paidAt", DBNull.Value);
+
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await OutboxRepository.InsertAsync(
+            connection, transaction, PaymentEvents.Generated(invoice), cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
 
         return invoice;
     }
@@ -92,20 +106,40 @@ public class InvoiceRepository : IInvoiceRepository
             VALUES (@id, @projectId, @amount, @status, @createdBy, @sourceEventId, @createdAt, @paidAt);";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        AddParameter(command, "@id", invoice.Id);
-        AddParameter(command, "@projectId", invoice.ProjectId);
-        AddParameter(command, "@amount", invoice.Amount);
-        AddParameter(command, "@status", invoice.Status.ToString());
-        AddParameter(command, "@createdBy", invoice.CreatedBy);
-        AddParameter(command, "@sourceEventId", invoice.SourceEventId!.Value);
-        AddParameter(command, "@createdAt", invoice.CreatedAtUtc);
-        AddParameter(command, "@paidAt", DBNull.Value);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        // Zero rows means the event had already raised one. Null says so, rather
-        // than returning an invoice this call did not create.
-        return await command.ExecuteNonQueryAsync(cancellationToken) == 1 ? invoice : null;
+        int rowsAffected;
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            AddParameter(command, "@id", invoice.Id);
+            AddParameter(command, "@projectId", invoice.ProjectId);
+            AddParameter(command, "@amount", invoice.Amount);
+            AddParameter(command, "@status", invoice.Status.ToString());
+            AddParameter(command, "@createdBy", invoice.CreatedBy);
+            AddParameter(command, "@sourceEventId", invoice.SourceEventId!.Value);
+            AddParameter(command, "@createdAt", invoice.CreatedAtUtc);
+            AddParameter(command, "@paidAt", DBNull.Value);
+
+            rowsAffected = await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (rowsAffected != 1)
+        {
+            // Zero rows means the event had already raised an invoice. No new row, so no
+            // event either — a second InvoiceGenerated for one invoice is exactly what the
+            // idempotency above exists to prevent, and Kafka will redeliver.
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        await OutboxRepository.InsertAsync(
+            connection, transaction, PaymentEvents.Generated(invoice), cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return invoice;
     }
 
     public async Task<IReadOnlyList<Invoice>> ListForProjectAsync(

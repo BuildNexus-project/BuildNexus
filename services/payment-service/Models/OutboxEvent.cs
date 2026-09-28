@@ -38,8 +38,17 @@ public class OutboxEvent
     /// </summary>
     public Guid ProjectId { get; set; }
 
-    /// <summary>The invoice the payment was against.</summary>
-    public Guid InvoiceId { get; set; }
+    /// <summary>
+    /// The invoice the payment was against, or <c>null</c> for an event about
+    /// the project as a whole.
+    /// </summary>
+    /// <remarks>
+    /// <c>PaymentReceived</c> always names one. <c>FinalPaymentSettled</c> never
+    /// does: it says the project owes nothing further, and it can be triggered
+    /// by construction completing on an already-paid project, where no invoice
+    /// caused it.
+    /// </remarks>
+    public Guid? InvoiceId { get; set; }
 
     /// <summary>One of <see cref="Messaging.PaymentEventTypes"/>.</summary>
     public string EventType { get; set; } = string.Empty;

@@ -100,7 +100,7 @@ public class ConstructionOutboxDatabaseTests
 
         await _fixture.ConstructionPhaseRepository.CompleteAsync(projectId, ActingPm);
 
-        var events = await _fixture.OutboxRepository.ListForProjectAsync(projectId);
+        var events = await PhaseEventsForAsync(projectId);
 
         // Oldest first by sequence_number: a consumer must never see the build
         // finish before it began.
@@ -154,7 +154,7 @@ public class ConstructionOutboxDatabaseTests
         Assert.Equal(ConstructionTransitionOutcome.MilestonesIncomplete, result.Outcome);
 
         // Only the start is on the outbox; the refused complete added nothing.
-        var announced = Assert.Single(await _fixture.OutboxRepository.ListForProjectAsync(projectId));
+        var announced = Assert.Single(await PhaseEventsForAsync(projectId));
         Assert.Equal(ConstructionEventTypes.ConstructionStarted, announced.EventType);
     }
 
@@ -188,7 +188,10 @@ public class ConstructionOutboxDatabaseTests
         // asserts the relative order of this project's two events rather than the
         // whole batch.
         var pending = await _fixture.OutboxRepository.ListPendingAsync(batchSize: 500);
-        var mine = pending.Where(e => e.ProjectId == projectId).ToList();
+        var mine = pending
+            .Where(e => e.ProjectId == projectId
+                        && e.EventType != ConstructionEventTypes.MilestoneCompleted)
+            .ToList();
 
         Assert.Equal(2, mine.Count);
         Assert.Equal(ConstructionEventTypes.ConstructionStarted, mine[0].EventType);
@@ -229,6 +232,26 @@ public class ConstructionOutboxDatabaseTests
         Assert.DoesNotContain(
             await _fixture.OutboxRepository.ListPendingAsync(batchSize: 500),
             e => e.Id == announced.Id);
+    }
+
+    /// <summary>
+    /// The project's <em>phase</em> events — what this class is about.
+    /// </summary>
+    /// <remarks>
+    /// Filtered rather than taking the whole outbox, because US-24 made completing a milestone
+    /// announce itself too: a test here that set up its milestones by completing them would
+    /// otherwise be asserting against those events as well, and fail for a reason that has
+    /// nothing to do with the phase transition it was written to prove. The
+    /// <c>MilestoneCompleted</c> events have their own coverage in
+    /// <see cref="MilestoneCompletedEventDatabaseTests"/>.
+    /// </remarks>
+    private async Task<IReadOnlyList<Models.OutboxEvent>> PhaseEventsForAsync(Guid projectId)
+    {
+        var events = await _fixture.OutboxRepository.ListForProjectAsync(projectId);
+
+        return events
+            .Where(e => e.EventType != ConstructionEventTypes.MilestoneCompleted)
+            .ToList();
     }
 
     /// <summary>

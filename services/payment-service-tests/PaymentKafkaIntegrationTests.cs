@@ -137,8 +137,11 @@ public class PaymentKafkaIntegrationTests
         var recorded = await _fixture.PaymentRepository.RecordPaymentAsync(invoice.Id, 1_000m, paidBy);
         Assert.Equal(PaymentRecordingOutcome.Recorded, recorded.Outcome);
 
-        var stored = Assert.Single(await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id));
-        Assert.Equal(PaymentEventTypes.PaymentReceived, stored.EventType);
+        // The invoice announced itself as well, since US-24 — so this picks the payment's
+        // event out rather than assuming the invoice has only one.
+        var stored = Assert.Single(
+            (await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id))
+                .Where(e => e.EventType == PaymentEventTypes.PaymentReceived));
         Assert.False(stored.IsPublished);
 
         using (var publisher = new KafkaPaymentEventPublisher(
@@ -164,7 +167,9 @@ public class PaymentKafkaIntegrationTests
         // At least one attempt rather than exactly one — delivery is at-least-once,
         // and a second dispatcher (another replica, or the stack running beside this
         // test) may have sent and counted it too.
-        var row = Assert.Single(await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id));
+        var row = Assert.Single(
+            (await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id))
+                .Where(e => e.EventType == PaymentEventTypes.PaymentReceived));
         Assert.True(row.IsPublished);
         Assert.True(row.AttemptCount >= 1);
         Assert.Null(row.LastError);
@@ -172,9 +177,13 @@ public class PaymentKafkaIntegrationTests
         // The broker side, read by a consumer that shares nothing with the service:
         // a fresh group, from the start of the topic, matching on the message key —
         // the project id, so a project's payments stay in order on one partition.
+        // Keyed by project, and now matched on the stored bytes too: the invoice's own
+        // InvoiceGenerated carries the same key onto the same partition, so the key alone no
+        // longer identifies one message.
         var message = ReadFromStart(
             KafkaPaymentEventPublisher.Topic,
-            m => m.Message.Key == projectId.ToString());
+            m => m.Message.Key == projectId.ToString()
+                 && m.Message.Value == stored.Envelope);
 
         // Byte for byte what was stored in MySQL before dispatch — through the
         // column, the dispatcher and the broker — so a retry can never mint a new

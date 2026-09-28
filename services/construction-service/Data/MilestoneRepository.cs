@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using BuildNexus.ConstructionService.Messaging;
 using BuildNexus.ConstructionService.Models;
 using MySqlConnector;
 
@@ -94,20 +95,33 @@ public class MilestoneRepository : IMilestoneRepository
         MilestoneStatus newStatus,
         CancellationToken cancellationToken = default)
     {
-        // Two statements on one connection: the UPDATE moves the row, and the
-        // SELECT that follows reads it back so the caller (and the AC-3
-        // progress recalculation the caller does next) sees the same
-        // updated_at. Wrapped in a transaction so a concurrent PATCH on the
-        // same row cannot slip between them.
+        // Three statements on one connection now: the status the row held is read
+        // first — under a row lock — because whether this call is a *transition*
+        // into Completed decides whether US-24's MilestoneCompleted is raised, and
+        // the UPDATE would otherwise destroy the only evidence of it. Then the
+        // UPDATE moves the row, and the SELECT reads it back so the caller (and
+        // the AC-3 progress recalculation it does next) sees the same updated_at.
+        // Wrapped in a transaction so a concurrent PATCH on the same row cannot
+        // slip between them.
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var previousStatus = await ReadStatusForUpdateAsync(
+            connection, transaction, milestoneId, cancellationToken);
+
+        if (previousStatus is null)
+        {
+            // No such milestone — the controller maps this to 404. Nothing was
+            // written, but the transaction still needs to close cleanly.
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
 
         const string updateSql = @"
             UPDATE construction_milestones
             SET status = @status, updated_at = @updatedAt
             WHERE id = @id;";
 
-        int rowsAffected;
         await using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
@@ -116,15 +130,7 @@ public class MilestoneRepository : IMilestoneRepository
             AddParameter(command, "@updatedAt", DateTime.UtcNow);
             AddParameter(command, "@id", milestoneId);
 
-            rowsAffected = await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        if (rowsAffected == 0)
-        {
-            // No such milestone — the controller maps this to 404. Nothing to
-            // roll back, but the transaction still needs to close cleanly.
-            await transaction.RollbackAsync(cancellationToken);
-            return null;
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
         const string selectSql = $@"
@@ -143,8 +149,55 @@ public class MilestoneRepository : IMilestoneRepository
             milestone = await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
         }
 
+        // US-24: announce the milestone finishing, in the same transaction as the
+        // change itself. Only on the transition *into* Completed — a repeat PATCH
+        // that leaves a milestone where it already was is not a milestone
+        // finishing, and an event per idle update would make the real moment
+        // impossible to pick out of the topic.
+        if (milestone is not null
+            && newStatus is MilestoneStatus.Completed
+            && previousStatus is not MilestoneStatus.Completed)
+        {
+            await OutboxRepository.InsertAsync(
+                connection,
+                transaction,
+                ConstructionEvents.MilestoneCompleted(milestone),
+                cancellationToken);
+        }
+
         await transaction.CommitAsync(cancellationToken);
         return milestone;
+    }
+
+    /// <summary>
+    /// The status a milestone currently holds, locked for the rest of the transaction, or
+    /// <c>null</c> when no milestone has that id.
+    /// </summary>
+    /// <remarks>
+    /// Read before the UPDATE overwrites it, because "did this call complete the milestone"
+    /// cannot be answered afterwards. <c>FOR UPDATE</c> so two concurrent PATCHes cannot both
+    /// see a non-Completed status and both announce the same milestone finishing.
+    /// </remarks>
+    private static async Task<MilestoneStatus?> ReadStatusForUpdateAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid milestoneId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = @"
+            SELECT status
+            FROM construction_milestones
+            WHERE id = @id
+            FOR UPDATE;";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        AddParameter(command, "@id", milestoneId);
+
+        var status = await command.ExecuteScalarAsync(cancellationToken);
+
+        return status is null ? null : Enum.Parse<MilestoneStatus>((string)status);
     }
 
     public async Task<IReadOnlyList<Milestone>?> CreateFromTemplateAsync(
