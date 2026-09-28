@@ -65,12 +65,18 @@ function signInAs(role: Role) {
  * other, and their order is not something this page controls.
  */
 function renderPage(
-  responses: { progress?: Response | Error; summaries?: Array<Response | Error> } = {},
+  responses: {
+    progress?: Response | Error
+    summaries?: Array<Response | Error>
+    /** The project listing the names come from; refused by default, as it is for a PM not on the project. */
+    projects?: Response | Error
+  } = {},
 ): RecordedRequest[] {
   signInAs('ProjectManager')
 
   const progress = responses.progress ?? apiResponse(200, [progressRow()])
   const summaries = responses.summaries ?? [apiResponse(200, summary())]
+  const projects = responses.projects ?? apiResponse(403, { title: 'Forbidden' })
 
   const requests: RecordedRequest[] = []
   let summaryCall = 0
@@ -80,6 +86,13 @@ function renderPage(
 
     if (path.startsWith('/api/construction/reports/progress')) {
       return progress instanceof Error ? Promise.reject(progress) : Promise.resolve(progress)
+    }
+
+    // Routed explicitly rather than falling through: the name lookup is a third
+    // request, and letting it draw from the summaries queue would silently shift
+    // which summary every later assertion sees.
+    if (path.startsWith('/api/projects')) {
+      return projects instanceof Error ? Promise.reject(projects) : Promise.resolve(projects)
     }
 
     const answer = summaries[Math.min(summaryCall++, summaries.length - 1)]
@@ -273,5 +286,72 @@ describe('ConstructionPaymentReportPage', () => {
         '/api/payments/reports/summary',
       ]),
     )
+  })
+})
+
+describe('naming the projects in the construction half (US-19)', () => {
+  it('shows the project name when the caller may see it', async () => {
+    // The report comes from the Construction Service, which knows ids and nothing
+    // else. A bare id tells the reader nothing about which build they are looking at.
+    renderPage({
+      projects: apiResponse(200, [
+        { id: FIRST_PROJECT, clientId: PM_ID, name: 'Seaside Villa', location: 'Galle', status: 'Construction', createdAt: '2026-09-01T09:00:00', updatedAt: '2026-09-01T09:00:00' },
+      ]),
+    })
+
+    expect(await screen.findByRole('link', { name: 'Seaside Villa' })).toBeInTheDocument()
+  })
+
+  it('falls back to the short id when the name cannot be resolved', async () => {
+    // A Project Manager only sees projects they are on, so the listing can legitimately
+    // omit a row the report still includes. It must degrade, not disappear.
+    renderPage({ projects: apiResponse(403, { title: 'Forbidden' }) })
+
+    expect(await screen.findByRole('link', { name: FIRST_PROJECT.slice(0, 8) })).toBeInTheDocument()
+  })
+
+  it('still renders the progress figures when the name lookup fails', async () => {
+    // The names are decoration on top of the report; losing them must not cost the
+    // reader the numbers they came for.
+    renderPage({ projects: new TypeError('Failed to fetch') })
+
+    const panel = await screen.findByTestId('construction-report')
+    expect(within(panel).getByText('25.00%')).toBeInTheDocument()
+  })
+
+  it('carries the full id on the link for a reader who needs it', async () => {
+    renderPage({
+      projects: apiResponse(200, [
+        { id: FIRST_PROJECT, clientId: PM_ID, name: 'Seaside Villa', location: 'Galle', status: 'Construction', createdAt: '2026-09-01T09:00:00', updatedAt: '2026-09-01T09:00:00' },
+      ]),
+    })
+
+    expect(await screen.findByRole('link', { name: 'Seaside Villa' })).toHaveAttribute(
+      'title',
+      FIRST_PROJECT,
+    )
+  })
+})
+
+describe('saying what "active" means (US-19)', () => {
+  it('states the rule the report actually filters on', async () => {
+    renderPage()
+
+    const panel = await screen.findByTestId('construction-report')
+
+    // The three build states that appear, and the one that removes a project.
+    expect(within(panel).getByText(/design is approved/i)).toBeInTheDocument()
+    expect(within(panel).getByText(/not yet been handed over/i)).toBeInTheDocument()
+    expect(within(panel).getByText(/milestones are planned/i)).toBeInTheDocument()
+  })
+
+  it('does not claim a rule when there is nothing to describe', async () => {
+    // An empty report already explains itself; repeating the definition beneath it
+    // would describe a selection the reader cannot see.
+    renderPage({ progress: apiResponse(200, []) })
+
+    const panel = await screen.findByTestId('construction-report')
+
+    expect(within(panel).queryByText(/not yet been handed over/i)).not.toBeInTheDocument()
   })
 })
