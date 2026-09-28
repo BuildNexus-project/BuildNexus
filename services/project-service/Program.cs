@@ -36,6 +36,11 @@ builder.Services.AddHostedService<OutboxDispatcher>();
 // request path waits on it.
 builder.Services.AddHostedService<ConstructionEventsConsumer>();
 
+// Reads payment-events and reflects each PaymentReceived onto the project's payment status
+// (US-24). The money stays in Payment Service; this keeps one derived fact locally so a project
+// can be read without asking that service anything. Nothing on any request path waits on it.
+builder.Services.AddHostedService<PaymentEventsConsumer>();
+
 // The User Service, asked over HTTP — with the Admin's own token — what role an
 // account holds before it is assigned to a project. Its address is validated at
 // startup for the same reason the JWT settings are: a service that cannot reach

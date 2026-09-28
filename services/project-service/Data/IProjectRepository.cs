@@ -77,6 +77,32 @@ public interface IProjectRepository
         IReadOnlyList<OutboxEvent> outboxEvents);
 
     /// <summary>
+    /// Reflects a <c>PaymentReceived</c> event onto the project's payment status (US-24 AC-4).
+    /// </summary>
+    /// <remarks>
+    /// Deduplicated by <paramref name="sourceEventId"/>: the update only applies when the
+    /// project's <c>last_payment_event_id</c> is something else. Kafka delivers at least once
+    /// and the Payment Service's dispatcher re-sends anything it could not confirm, so the same
+    /// event will arrive again — and a second write would move
+    /// <c>payment_status_updated_at</c> forward for a payment that did not just happen.
+    /// <para>
+    /// Not conditional on the status actually changing. Two different payments can both leave a
+    /// project <c>PartiallyPaid</c>, and that second payment is a real event whose time is worth
+    /// recording — so it is the event id, not the status, that decides whether this is new.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// <c>false</c> when nothing was written — either no project has that id, or this exact
+    /// event had already been applied. The caller treats both as "nothing more to do"; neither
+    /// is a failure.
+    /// </returns>
+    Task<bool> UpdatePaymentStatusAsync(
+        Guid projectId,
+        ProjectPaymentStatus paymentStatus,
+        Guid sourceEventId,
+        DateTime occurredAtUtc);
+
+    /// <summary>
     /// Sets a project's assigned Architect, and — when <paramref name="transition"/>
     /// is supplied — moves the project on and records it, all in one
     /// transaction.

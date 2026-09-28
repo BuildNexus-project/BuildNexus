@@ -12,7 +12,8 @@ public class ProjectRepository : IProjectRepository
     private const string SelectColumns =
         "id, client_id, name, location, land_size_perches, budget, floors, bedrooms, bathrooms, "
         + "garage_spaces, other_requirements, status, assigned_architect_id, "
-        + "assigned_project_manager_id, created_at, updated_at";
+        + "assigned_project_manager_id, payment_status, payment_status_updated_at, "
+        + "last_payment_event_id, created_at, updated_at";
 
     private const string SelectHistoryColumns =
         "id, project_id, from_status, to_status, changed_by_user_id, changed_by_role, note, changed_at";
@@ -394,6 +395,46 @@ public class ProjectRepository : IProjectRepository
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
+    /// <summary>Reads a nullable <c>DATETIME</c>, for a stamp that has never been set.</summary>
+    public async Task<bool> UpdatePaymentStatusAsync(
+        Guid projectId,
+        ProjectPaymentStatus paymentStatus,
+        Guid sourceEventId,
+        DateTime occurredAtUtc)
+    {
+        // One statement, and the idempotency is in its WHERE rather than in a read-then-write:
+        // two deliveries of the same event racing each other would both pass a prior SELECT and
+        // both write. The NULL-safe comparison matters because the column starts null — the
+        // ordinary <> would answer NULL there and the row would never match.
+        const string sql = @"
+            UPDATE projects
+            SET payment_status            = @paymentStatus,
+                payment_status_updated_at = @occurredAt,
+                last_payment_event_id     = @sourceEventId,
+                updated_at                = @occurredAt
+            WHERE id = @projectId
+              AND NOT (last_payment_event_id <=> @sourceEventId);";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        AddParameter(command, "@paymentStatus", paymentStatus.ToString());
+        AddParameter(command, "@occurredAt", occurredAtUtc);
+        AddParameter(command, "@sourceEventId", sourceEventId);
+        AddParameter(command, "@projectId", projectId);
+
+        // Zero rows means the project does not exist, or this event had already been applied.
+        // The caller cannot act on either, and neither is a failure.
+        return await command.ExecuteNonQueryAsync() == 1;
+    }
+
+    private static DateTime? GetNullableDateTime(DbDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+
+        return reader.IsDBNull(ordinal) ? null : reader.GetDateTime(ordinal);
+    }
+
     private static Guid? GetNullableGuid(DbDataReader reader, string column)
     {
         var ordinal = reader.GetOrdinal(column);
@@ -428,6 +469,10 @@ public class ProjectRepository : IProjectRepository
         Status = Enum.Parse<ProjectStatus>(reader.GetString(reader.GetOrdinal("status"))),
         AssignedArchitectId = GetNullableGuid(reader, "assigned_architect_id"),
         AssignedProjectManagerId = GetNullableGuid(reader, "assigned_project_manager_id"),
+        PaymentStatus = Enum.Parse<ProjectPaymentStatus>(
+            reader.GetString(reader.GetOrdinal("payment_status"))),
+        PaymentStatusUpdatedAt = GetNullableDateTime(reader, "payment_status_updated_at"),
+        LastPaymentEventId = GetNullableGuid(reader, "last_payment_event_id"),
         CreatedAt = reader.GetDateTime(reader.GetOrdinal("created_at")),
         UpdatedAt = reader.GetDateTime(reader.GetOrdinal("updated_at"))
     };
