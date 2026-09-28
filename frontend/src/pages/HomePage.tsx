@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/auth/auth-context'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES, ROLE_LABELS } from '@/lib/roles'
+import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES, REPORTING_ROLES, ROLE_LABELS } from '@/lib/roles'
 
 /**
  * Placeholder landing page for a signed-in user. The real role-aware dashboard
@@ -77,6 +77,16 @@ export function HomePage() {
               className="w-full"
             >
               Design approval report
+            </Button>
+          )}
+
+          {REPORTING_ROLES.includes(user.role) && (
+            <Button
+              render={<Link to="/reports/construction-payment" />}
+              variant="outline"
+              className="w-full"
+            >
+              Construction &amp; payment report
             </Button>
           )}
 

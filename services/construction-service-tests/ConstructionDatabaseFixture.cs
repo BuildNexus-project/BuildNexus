@@ -88,6 +88,14 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public PaymentSettlementRepository PaymentSettlementRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.ConstructionReportRepository"/> over the same development
+    /// database. Added for US-19: the report is one aggregate query with an active-project
+    /// gate and three conditional counts in it, and only the real engine can show that the
+    /// gate excludes what it should and that the counts add up.
+    /// </summary>
+    public ConstructionReportRepository ConstructionReportRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -137,6 +145,7 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         ConstructionPhaseRepository = new ConstructionPhaseRepository(connectionFactory);
         OutboxRepository = new OutboxRepository(connectionFactory);
         PaymentSettlementRepository = new PaymentSettlementRepository(connectionFactory);
+        ConstructionReportRepository = new ConstructionReportRepository(connectionFactory);
 
         return Task.CompletedTask;
     }

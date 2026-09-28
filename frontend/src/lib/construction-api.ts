@@ -380,3 +380,39 @@ export function handOverConstruction(authFetch: AuthFetch, projectId: string) {
     method: 'POST',
   })
 }
+
+/**
+ * One project's line in the construction progress report (US-19 AC-1).
+ *
+ * `phaseStatus` is `null` when the build has not been started — a project whose
+ * milestones are planned but whose work has not begun is a real line in the report.
+ *
+ * The breakdown counts sum to `totalMilestones`, since a milestone is always in exactly
+ * one of the three states. They sit alongside `progressPercent` rather than instead of
+ * it: the percentage says how far along a build is, the counts say what is actually
+ * outstanding.
+ */
+export type ConstructionProgressReportRow = {
+  projectId: string
+  phaseStatus: ConstructionPhaseStatus | null
+  totalMilestones: number
+  completedMilestones: number
+  inProgressMilestones: number
+  notStartedMilestones: number
+  progressPercent: number
+}
+
+/**
+ * Per-project progress across the active projects that have milestones defined
+ * (US-19 AC-1).
+ *
+ * Admin and Project Manager only; the service answers 403 to anyone else.
+ *
+ * "Active" is the Construction Service's own definition: a design-approved project whose
+ * build has not been handed over. A project with no milestones is left out rather than
+ * reported at zero, and an empty array is the correct answer when no active project has
+ * any — not an error.
+ */
+export function fetchConstructionProgressReport(authFetch: AuthFetch) {
+  return authFetch<ConstructionProgressReportRow[]>('/api/construction/reports/progress')
+}

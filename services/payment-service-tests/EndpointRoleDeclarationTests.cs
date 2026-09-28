@@ -71,6 +71,18 @@ public class EndpointRoleDeclarationTests
     }
 
     [Fact]
+    public void The_payment_report_belongs_to_the_project_managers_and_admins()
+    {
+        // US-19: the story is framed around an Admin or a PM reading financial health beside
+        // build progress — the same pair that raises invoices. A Client reads their own
+        // billing through ClientPaymentHistoryController and has no portfolio-wide view; an
+        // Architect has no part in billing at all.
+        Assert.Equal(
+            [PlatformRoles.ProjectManager, PlatformRoles.Admin],
+            RolesForActionOn<Controllers.ReportsController>("GetSummary"));
+    }
+
+    [Fact]
     public void Viewing_your_own_projects_quotations_is_the_clients_alone()
     {
         // US-15 AC-1: the estimate is viewable by the Client. The role is only
