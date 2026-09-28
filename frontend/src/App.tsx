@@ -4,6 +4,7 @@ import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
 import { ConstructionProgressPage } from '@/pages/ConstructionProgressPage'
+import { ConstructionPaymentReportPage } from '@/pages/ConstructionPaymentReportPage'
 import { DesignApprovalReportPage } from '@/pages/DesignApprovalReportPage'
 import { DesignDocumentsPage } from '@/pages/DesignDocumentsPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
@@ -19,7 +20,7 @@ import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES, REPORTING_ROLES } from '@/lib/roles'
 
 export default function App() {
   return (
@@ -134,6 +135,16 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={ADMIN_ROLES}>
               <AdminUsersPage />
+            </RoleRoute>
+          }
+        />
+        {/* Admin and Project Manager, so not under /admin: the combined report is as much
+            the PM's view of their builds and their billing as it is an admin one. */}
+        <Route
+          path="/reports/construction-payment"
+          element={
+            <RoleRoute allowedRoles={REPORTING_ROLES}>
+              <ConstructionPaymentReportPage />
             </RoleRoute>
           }
         />
