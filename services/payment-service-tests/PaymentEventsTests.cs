@@ -123,10 +123,13 @@ public class PaymentEventsTests
     {
         // The database's own CHECK constraint is held to this same list, so an
         // invented event type fails at the write rather than on somebody's topic.
-        // Both of these are consumed by another service: PaymentReceived by
-        // nobody yet, FinalPaymentSettled by the Construction Service's handover
-        // gate — which is why adding to this list is never a local decision.
-        Assert.Equal(["PaymentReceived", "FinalPaymentSettled"], PaymentEventTypes.All);
+        // Each of these is somebody else's dependency: FinalPaymentSettled by the
+        // Construction Service's handover gate, InvoiceGenerated and PaymentReceived
+        // by anything reacting to billing — which is why adding to this list is
+        // never a local decision.
+        Assert.Equal(
+            ["PaymentReceived", "FinalPaymentSettled", "InvoiceGenerated"],
+            PaymentEventTypes.All);
     }
 
     private static Payment Payment(decimal amount) => new()

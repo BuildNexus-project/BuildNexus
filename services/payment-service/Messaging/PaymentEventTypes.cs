@@ -37,5 +37,17 @@ public static class PaymentEventTypes
     /// and for the test that holds the database's own CHECK constraint to the
     /// same set.
     /// </summary>
-    public static readonly IReadOnlyList<string> All = [PaymentReceived, FinalPaymentSettled];
+    /// <summary>
+    /// An invoice has been raised against a project (US-24).
+    /// </summary>
+    /// <remarks>
+    /// Raised by both paths that create an invoice — a Project Manager doing it by hand, and
+    /// the <c>ConstructionStarted</c> consumer doing it automatically — because a consumer
+    /// reacting to billing has no interest in which of the two it was, and an event from only
+    /// one of them would make the topic an unreliable record of what was billed.
+    /// </remarks>
+    public const string InvoiceGenerated = nameof(InvoiceGenerated);
+
+    public static readonly IReadOnlyList<string> All =
+        [PaymentReceived, FinalPaymentSettled, InvoiceGenerated];
 }

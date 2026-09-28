@@ -57,6 +57,35 @@ public static class PaymentEvents
     /// invoice: the trigger may be construction completing on an already-paid
     /// project, in which case no invoice caused it.
     /// </remarks>
+    /// <summary>
+    /// An invoice has been raised against a project (US-24).
+    /// </summary>
+    /// <remarks>
+    /// Enqueued by <see cref="Data.InvoiceRepository"/> in the same transaction as the invoice
+    /// row itself, from both the manual and the automatic path — so the event and the invoice
+    /// it announces commit together or not at all.
+    /// </remarks>
+    public static OutboxEvent Generated(Invoice invoice)
+    {
+        var envelope = EventEnvelope<InvoiceGeneratedPayload>.Create(
+            PaymentEventTypes.InvoiceGenerated,
+            InvoiceGeneratedPayload.From(invoice),
+            // The moment the invoice was raised, off the row rather than the clock, so the
+            // event's occurredAt and the stored created_at cannot disagree.
+            EventTimestamp.AsUtc(invoice.CreatedAtUtc));
+
+        return new OutboxEvent
+        {
+            Id = envelope.EventId,
+            ProjectId = invoice.ProjectId,
+            // Unlike a project-level settlement, a generated invoice always names one.
+            InvoiceId = invoice.Id,
+            EventType = PaymentEventTypes.InvoiceGenerated,
+            Envelope = envelope.ToJson(),
+            OccurredAt = invoice.CreatedAtUtc
+        };
+    }
+
     public static OutboxEvent FinalSettled(Guid projectId, DateTime settledAtUtc)
     {
         var envelope = EventEnvelope<FinalPaymentSettledPayload>.Create(

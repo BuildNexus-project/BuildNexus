@@ -32,7 +32,7 @@ public class PaymentOutboxDatabaseTests
 
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 400m, Guid.NewGuid());
 
-        var announced = Assert.Single(await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId));
+        var announced = Assert.Single(await PaymentEventsForAsync(invoiceId));
         Assert.Equal(PaymentEventTypes.PaymentReceived, announced.EventType);
         Assert.False(announced.IsPublished);
         Assert.Equal(0, announced.AttemptCount);
@@ -47,7 +47,7 @@ public class PaymentOutboxDatabaseTests
 
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 500m, Guid.NewGuid());
 
-        var announced = Assert.Single(await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId));
+        var announced = Assert.Single(await PaymentEventsForAsync(invoiceId));
         Assert.Equal(projectId, announced.ProjectId);
     }
 
@@ -61,7 +61,7 @@ public class PaymentOutboxDatabaseTests
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 400m, Guid.NewGuid());
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 600m, Guid.NewGuid());
 
-        var announced = await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId);
+        var announced = await PaymentEventsForAsync(invoiceId);
 
         Assert.Equal(2, announced.Count);
         Assert.True(announced[0].SequenceNumber < announced[1].SequenceNumber);
@@ -79,7 +79,7 @@ public class PaymentOutboxDatabaseTests
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 400m, Guid.NewGuid());
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 600m, Guid.NewGuid());
 
-        var announced = await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId);
+        var announced = await PaymentEventsForAsync(invoiceId);
 
         Assert.Contains("\"invoiceStatus\":\"Pending\"", announced[0].Envelope, StringComparison.Ordinal);
         Assert.Contains("\"invoiceStatus\":\"Paid\"", announced[1].Envelope, StringComparison.Ordinal);
@@ -97,7 +97,7 @@ public class PaymentOutboxDatabaseTests
         var result = await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, amount, Guid.NewGuid());
 
         Assert.Equal(PaymentRecordingOutcome.ExceedsOutstanding, result.Outcome);
-        Assert.Empty(await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId));
+        Assert.Empty(await PaymentEventsForAsync(invoiceId));
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public class PaymentOutboxDatabaseTests
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 50m, Guid.NewGuid());
 
         // Exactly one event: the payment that actually happened.
-        Assert.Single(await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId));
+        Assert.Single(await PaymentEventsForAsync(invoiceId));
     }
 
     [Fact]
@@ -121,7 +121,13 @@ public class PaymentOutboxDatabaseTests
 
         await _fixture.PaymentRepository.RecordPaymentAsync(invoiceId, 100m, Guid.NewGuid());
 
-        var pending = await _fixture.OutboxRepository.ListPendingAsync(batchSize: 100);
+        // A generous cap, not 100: US-24 made every invoice announce itself too, so the
+        // pending queue now holds roughly two rows per invoice this suite creates, and a
+        // small batch would cut this payment off the end for reasons unrelated to the
+        // dispatcher's query.
+        var pending = (await _fixture.OutboxRepository.ListPendingAsync(batchSize: 1000))
+            .Where(e => e.EventType != PaymentEventTypes.InvoiceGenerated)
+            .ToList();
 
         Assert.Contains(pending, outboxEvent => outboxEvent.InvoiceId == invoiceId);
     }
@@ -150,7 +156,26 @@ public class PaymentOutboxDatabaseTests
         command.Parameters.AddWithValue("@invoiceId", invoiceId);
 
         await Assert.ThrowsAsync<MySqlException>(() => command.ExecuteNonQueryAsync());
-        Assert.Empty(await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId));
+        Assert.Empty(await PaymentEventsForAsync(invoiceId));
+    }
+
+    /// <summary>
+    /// The invoice's <em>payment</em> events — what this class is about.
+    /// </summary>
+    /// <remarks>
+    /// Filtered rather than taking the whole outbox, because US-24 made raising an invoice
+    /// announce itself too: every test here creates an invoice to have something to pay, so
+    /// without this they would be asserting against an InvoiceGenerated they never set out to
+    /// test, and failing for a reason unrelated to the payment. That event has its own
+    /// coverage in <see cref="InvoiceGeneratedEventDatabaseTests"/>.
+    /// </remarks>
+    private async Task<IReadOnlyList<Models.OutboxEvent>> PaymentEventsForAsync(Guid invoiceId)
+    {
+        var events = await _fixture.OutboxRepository.ListForInvoiceAsync(invoiceId);
+
+        return events
+            .Where(e => e.EventType != PaymentEventTypes.InvoiceGenerated)
+            .ToList();
     }
 
     /// <summary>An invoice of <paramref name="amount"/>, with the project it belongs to.</summary>
