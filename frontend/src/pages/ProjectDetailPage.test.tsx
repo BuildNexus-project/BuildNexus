@@ -37,7 +37,11 @@ function projectDetail(overrides: Record<string, unknown> = {}) {
     otherRequirements: 'Solar hot water',
     status: 'Designing',
     assignedArchitectId: ARCHITECT_ID,
+    // The service sends a null name when it could not find one out, and that is
+    // what a test gets unless it sets a name — so the id fallback is the default.
+    assignedArchitectName: null,
     assignedProjectManagerId: PROJECT_MANAGER_ID,
+    assignedProjectManagerName: null,
     createdAt: '2026-08-01T09:00:00',
     updatedAt: '2026-08-04T09:00:00',
     statusHistory: [
@@ -46,6 +50,7 @@ function projectDetail(overrides: Record<string, unknown> = {}) {
         fromStatus: null,
         toStatus: 'Pending',
         changedByUserId: CLIENT_ID,
+        changedByName: null,
         changedByRole: 'Client',
         changedAt: '2026-08-01T09:00:00',
       },
@@ -54,6 +59,7 @@ function projectDetail(overrides: Record<string, unknown> = {}) {
         fromStatus: 'Pending',
         toStatus: 'Designing',
         changedByUserId: PROJECT_MANAGER_ID,
+        changedByName: null,
         changedByRole: 'ProjectManager',
         changedAt: '2026-08-04T09:00:00',
       },
@@ -273,8 +279,40 @@ describe('ProjectDetailPage', () => {
     expect(screen.getByText(/Galle · submitted .*2026/)).toBeInTheDocument()
   })
 
-  it('shows who is assigned to the project', async () => {
-    renderPage(asOwningClient, apiResponse(200, projectDetail()))
+  it('shows who is assigned to the project by name', async () => {
+    renderPage(
+      asOwningClient,
+      apiResponse(
+        200,
+        projectDetail({
+          assignedArchitectName: 'Nimali Fernando',
+          assignedProjectManagerName: 'Kasun Jayawardena',
+        }),
+      ),
+    )
+
+    const architect = await field('Architect')
+    const projectManager = await field('Project manager')
+
+    expect(within(architect).getByText('Nimali Fernando')).toBeInTheDocument()
+    expect(within(projectManager).getByText('Kasun Jayawardena')).toBeInTheDocument()
+    // The name replaces the id rather than sitting beside it. Scoped to the
+    // fields: the same people can appear in the history below, on its own terms.
+    expect(within(architect).queryByText(ARCHITECT_ID)).not.toBeInTheDocument()
+    expect(within(projectManager).queryByText(PROJECT_MANAGER_ID)).not.toBeInTheDocument()
+  })
+
+  it('falls back to the id for an assignee whose name could not be found out', async () => {
+    // The service sends a null name when the account has been removed or the
+    // User Service could not be reached — the page still says who, just less
+    // readably.
+    renderPage(
+      asOwningClient,
+      apiResponse(
+        200,
+        projectDetail({ assignedArchitectName: null, assignedProjectManagerName: null }),
+      ),
+    )
 
     // Scoped to the field, because the same ids appear again further down as
     // the author of a history entry.
@@ -310,12 +348,43 @@ describe('ProjectDetailPage', () => {
   })
 
   it('names who made each change, so the record is auditable', async () => {
+    const detail = projectDetail()
+    renderPage(
+      asOwningClient,
+      apiResponse(200, {
+        ...detail,
+        statusHistory: [
+          { ...detail.statusHistory[0], changedByName: 'Ayesha Rahman' },
+          { ...detail.statusHistory[1], changedByName: 'Kasun Jayawardena' },
+        ],
+      }),
+    )
+
+    await screen.findByText('Beachfront villa')
+
+    // The person leads and the role they acted in sits beneath — and no id is
+    // left on show, which is what the name is there to replace.
+    const rows = historyRows()
+    expect(within(rows[0]).getByText('Ayesha Rahman')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('Client')).toBeInTheDocument()
+    expect(within(rows[0]).queryByText(CLIENT_ID)).not.toBeInTheDocument()
+    expect(within(rows[1]).getByText('Kasun Jayawardena')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('Project Manager')).toBeInTheDocument()
+    expect(within(rows[1]).queryByText(PROJECT_MANAGER_ID)).not.toBeInTheDocument()
+  })
+
+  it('falls back to the role and id for a change whose author could not be named', async () => {
+    // A null name is the service saying it could not find one out — the account
+    // has since been removed, or the User Service was unreachable. The entry
+    // must still say who acted rather than showing a blank.
     renderPage(asOwningClient, apiResponse(200, projectDetail()))
 
     await screen.findByText('Beachfront villa')
 
     const rows = historyRows()
+    expect(within(rows[0]).getByText('Client')).toBeInTheDocument()
     expect(within(rows[0]).getByText(CLIENT_ID)).toBeInTheDocument()
+    expect(within(rows[1]).getByText('Project Manager')).toBeInTheDocument()
     expect(within(rows[1]).getByText(PROJECT_MANAGER_ID)).toBeInTheDocument()
   })
 
@@ -1681,5 +1750,41 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     expect(
       within(panel).getByRole('button', { name: 'Hand over to client' }),
     ).toBeInTheDocument()
+  })
+
+  // -------------------------------------- the quotation & payments link ----
+
+  it('offers a Project Manager the way into quotation and payments', async () => {
+    // US-15's quotation and invoicing page existed at /projects/:id/costs with nothing linking
+    // to it, so a PM could only reach it by typing the URL. This pins the link's presence and
+    // its destination.
+    renderPage(asProjectManager, apiResponse(200, projectDetail()))
+
+    const link = await screen.findByRole('link', { name: 'Quotation & payments' })
+
+    expect(link).toHaveAttribute('href', `/projects/${PROJECT_ID}/costs`)
+  })
+
+  it('offers it to an Admin too', async () => {
+    // The /costs route is gated on ProjectManager and Admin, so the link matches that pair
+    // rather than being PM-only — otherwise an Admin would be back to typing the URL.
+    // An Admin render also fetches the integration events, so that response is supplied —
+    // otherwise the project object falls through to it and the events panel throws.
+    renderPage(asAdmin, apiResponse(200, projectDetail()), apiResponse(200, []))
+
+    expect(await screen.findByRole('link', { name: 'Quotation & payments' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['a Client', asOwningClient],
+    ['an Architect', asAssignedArchitect],
+  ])('does not offer it to %s, whom the route would refuse', async (_who, as) => {
+    // Offering a page the route then refuses is worse than not offering it: the caller clicks,
+    // gets bounced, and has no idea why.
+    renderPage(as, apiResponse(200, projectDetail()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByRole('link', { name: 'Quotation & payments' })).not.toBeInTheDocument()
   })
 })

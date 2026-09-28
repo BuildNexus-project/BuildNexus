@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useParams } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -62,7 +63,7 @@ import {
 } from '@/lib/project-api'
 import { deliveryOf, needsAttention } from '@/lib/project-events'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
-import { ADMIN_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, COST_MANAGEMENT_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
 
 /** A date and time the service sent, as a reader would write it. */
 function formatMoment(iso: string): string {
@@ -998,6 +999,9 @@ export function ProjectDetailPage() {
   // service's own [Authorize] gate on the endpoints behind it. Offering a
   // control the service will refuse is worse than not showing it at all.
   const isProjectManager = user !== null && user.role === 'ProjectManager'
+  // The same pair /projects/:projectId/costs is gated on, so this link never offers a page
+  // the route would then refuse — a Project Manager or an Admin, not an Architect or a Client.
+  const canManageCosts = user !== null && COST_MANAGEMENT_ROLES.includes(user.role)
 
   useEffect(() => {
     if (!projectId) {
@@ -1213,7 +1217,7 @@ export function ProjectDetailPage() {
 
   if (loadError) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
         <Card>
           <CardHeader>
             <CardTitle>This project is not available to you</CardTitle>
@@ -1232,7 +1236,7 @@ export function ProjectDetailPage() {
 
   if (!project) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
         <p className="text-muted-foreground text-sm">Loading this project…</p>
       </main>
     )
@@ -1254,12 +1258,12 @@ export function ProjectDetailPage() {
       project.status === 'DesignApproved')
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col justify-center gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center gap-3">
             {project.name}
-            <Badge variant="secondary">{PROJECT_STATUS_LABELS[project.status]}</Badge>
+            <StatusBadge status={project.status} />
           </CardTitle>
           <CardDescription>
             {project.location} · submitted {formatDate(project.createdAt)}
@@ -1291,18 +1295,21 @@ export function ProjectDetailPage() {
           <section className="flex flex-col gap-3">
             <h2 className="text-sm font-medium">Team</h2>
 
-            {/* Ids rather than names: the accounts live in the User Service's
-                own database, and the Project Service holds no copy of them. */}
+            {/* Names come from the service, which asks the User Service for them
+                when the project is read. The id is only the fallback for a name
+                it could not find out. */}
             <div className="grid gap-4 sm:grid-cols-2">
               <Detail label="Architect">
-                {project.assignedArchitectId ?? (
-                  <span className="text-muted-foreground">Not yet assigned</span>
-                )}
+                {project.assignedArchitectName ??
+                  project.assignedArchitectId ?? (
+                    <span className="text-muted-foreground">Not yet assigned</span>
+                  )}
               </Detail>
               <Detail label="Project manager">
-                {project.assignedProjectManagerId ?? (
-                  <span className="text-muted-foreground">Not yet assigned</span>
-                )}
+                {project.assignedProjectManagerName ??
+                  project.assignedProjectManagerId ?? (
+                    <span className="text-muted-foreground">Not yet assigned</span>
+                  )}
               </Detail>
             </div>
 
@@ -1368,9 +1375,16 @@ export function ProjectDetailPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <span className="block">{ROLE_LABELS[change.changedByRole]}</span>
+                      {/* The person, with the role they acted in beneath. Where the
+                          service could not find a name, the role leads and the id
+                          stands in for it. */}
+                      <span className="block">
+                        {change.changedByName ?? ROLE_LABELS[change.changedByRole]}
+                      </span>
                       <span className="text-muted-foreground block text-xs">
-                        {change.changedByUserId}
+                        {change.changedByName
+                          ? ROLE_LABELS[change.changedByRole]
+                          : change.changedByUserId}
                       </span>
                     </TableCell>
                     <TableCell>{formatMoment(change.changedAt)}</TableCell>
@@ -1532,6 +1546,18 @@ export function ProjectDetailPage() {
           <Button render={<Link to={`/projects/${project.id}/designs`} />} variant="outline" className="w-full">
             Design documents
           </Button>
+
+          {/* US-15's quotation and invoicing lived at /projects/:id/costs with nothing linking
+              to it, so a Project Manager had no way to reach it except by typing the URL. */}
+          {canManageCosts && (
+            <Button
+              render={<Link to={`/projects/${project.id}/costs`} />}
+              variant="outline"
+              className="w-full"
+            >
+              Quotation &amp; payments
+            </Button>
+          )}
 
           <p className="text-muted-foreground text-center text-sm">
             <Link to="/projects" className="text-foreground underline underline-offset-4">

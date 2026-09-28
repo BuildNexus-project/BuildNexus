@@ -969,6 +969,7 @@ accident. Mailpit is local-only and is not deployed.
 | `Kafka__RequestTimeoutMs` / `Kafka__SocketKeepaliveEnable` / `Kafka__MetadataMaxAgeMs` | `60000` / `true` / `180000` — the values Azure documents for librdkafka clients connecting to Event Hubs. |
 | `Kafka__MessageTimeoutMs` | `60000`, raised from the service's own 5000ms default so a slower Event Hubs acknowledgement is not counted as a failed publish. |
 | `Services__UserService__BaseUrl` | The deployed User Service's own URL. Without it, assigning an Architect or Project Manager answers `502`. |
+| `InternalService__ApiKey` | `var.internal_service_api_key`. Sensitive, no default. The same key the User Service checks; used to look up the names shown in a project's status history and team. The service refuses to start without it (32-byte minimum). |
 | `ASPNETCORE_ENVIRONMENT` | `Production`. Turns off Swagger. |
 
 ## Known issue: TLS interception breaks the Terraform plugin handshake

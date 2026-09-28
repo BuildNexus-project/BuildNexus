@@ -22,6 +22,7 @@ import {
   type ConstructionProgressReportRow,
 } from '@/lib/construction-api'
 import { fetchPaymentReportSummary, type PaymentReportSummary } from '@/lib/payment-api'
+import { fetchProjects } from '@/lib/project-api'
 
 const CONSTRUCTION_LOAD_FAILED = 'Could not load the construction progress report.'
 const PAYMENT_LOAD_FAILED = 'Could not load the payment summary.'
@@ -80,6 +81,8 @@ export function ConstructionPaymentReportPage() {
 
   const [rows, setRows] = useState<ConstructionProgressReportRow[] | null>(null)
   const [constructionError, setConstructionError] = useState<string | null>(null)
+  /** Project id to name, for whichever projects this caller is allowed to see. */
+  const [projectNames, setProjectNames] = useState<Map<string, string>>(new Map())
 
   const [summary, setSummary] = useState<PaymentReportSummary | null>(null)
   const [paymentError, setPaymentError] = useState<string | null>(null)
@@ -105,6 +108,23 @@ export function ConstructionPaymentReportPage() {
         if (!cancelled) {
           setConstructionError(apiErrorMessage(error, CONSTRUCTION_LOAD_FAILED))
         }
+      })
+
+    // Names, separately and best-effort. The report comes from the Construction
+    // Service, which knows project ids and nothing else — a name belongs to the
+    // Project Service. Its listing is scoped to what the caller may see: an Admin
+    // gets every project, a Project Manager only the ones they are on. So a row
+    // whose name cannot be resolved falls back to its short id rather than
+    // disappearing, and a failure here never blocks the progress figures.
+    fetchProjects(authFetch)
+      .then((projects) => {
+        if (!cancelled) {
+          setProjectNames(new Map(projects.map((project) => [project.id, project.name])))
+        }
+      })
+      .catch(() => {
+        // Deliberately silent: the report is still complete and correct without
+        // names, and an error banner here would suggest otherwise.
       })
 
     return () => {
@@ -164,7 +184,7 @@ export function ConstructionPaymentReportPage() {
   const filtered = summary !== null && (summary.fromUtc !== null || summary.toUtc !== null)
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-4xl flex-col gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle>Construction &amp; payment report</CardTitle>
@@ -230,7 +250,21 @@ export function ConstructionPaymentReportPage() {
               )}
 
               {rows !== null && rows.length > 0 && (
-                <Table>
+                <>
+                  {/* The report's own definition of "active", stated where the reader
+                      is looking at the rows it selected. Taken from what the service
+                      actually filters on, not restated by hand: a project appears once
+                      its design is approved and milestones exist, and drops out only
+                      when it is handed over. */}
+                  <p className="text-muted-foreground text-sm">
+                    <strong className="text-foreground font-medium">Active</strong> means the
+                    project&rsquo;s design is approved and its milestones are planned, and the
+                    build has not yet been handed over — so builds that are{' '}
+                    <em>not started</em>, <em>started</em> and <em>completed</em> all appear
+                    here. A handed-over project leaves the report; so does one with no
+                    milestones planned yet.
+                  </p>
+                  <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Project</TableHead>
@@ -251,8 +285,9 @@ export function ConstructionPaymentReportPage() {
                           <Link
                             to={`/projects/${row.projectId}`}
                             className="underline underline-offset-4"
+                            title={row.projectId}
                           >
-                            {row.projectId.slice(0, 8)}
+                            {projectNames.get(row.projectId) ?? row.projectId.slice(0, 8)}
                           </Link>
                         </TableCell>
                         <TableCell>
@@ -276,8 +311,9 @@ export function ConstructionPaymentReportPage() {
                         </TableCell>
                       </TableRow>
                     ))}
-                  </TableBody>
-                </Table>
+                    </TableBody>
+                  </Table>
+                </>
               )}
             </section>
           ) : (

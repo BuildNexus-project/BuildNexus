@@ -61,6 +61,25 @@ builder.Services.AddHttpClient<IUserDirectoryClient, HttpUserDirectoryClient>((s
     client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
 });
 
+// The shared key this service presents to the User Service's /api/internal
+// endpoints, to turn the account ids a project stores into names for whoever is
+// viewing it. Validated at startup at the same 32-byte bar as the JWT signing
+// key — see user-service's identically-named options, which check the same
+// value on the receiving side.
+builder.Services.AddOptions<InternalServiceOptions>()
+    .Bind(builder.Configuration.GetSection(InternalServiceOptions.SectionName))
+    .Validate(
+        o => Encoding.UTF8.GetByteCount(o.ApiKey) >= InternalServiceOptions.MinimumApiKeyBytes,
+        $"InternalService:ApiKey must be at least {InternalServiceOptions.MinimumApiKeyBytes} bytes.")
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IUserNameResolver, HttpUserNameResolver>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<UserServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
+
 // Resolved per request through EventsType below, so it can take an ILogger.
 builder.Services.AddScoped<AuthorizationProblemEvents>();
 

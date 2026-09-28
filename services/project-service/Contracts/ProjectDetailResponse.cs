@@ -48,14 +48,25 @@ public class ProjectDetailResponse
     /// The Architect on the project, or <c>null</c> while nobody is.
     /// </summary>
     /// <remarks>
-    /// An id and not a name, for the same reason as
+    /// An id is what is stored, for the same reason as
     /// <see cref="ProjectStatusChangeResponse.ChangedByUserId"/>: the account
-    /// lives in the User Service's own database.
+    /// lives in the User Service's own database. The name is beside it in
+    /// <see cref="AssignedArchitectName"/>.
     /// </remarks>
     public Guid? AssignedArchitectId { get; set; }
 
+    /// <summary>
+    /// The Architect's name, or <c>null</c> while nobody is assigned <em>or</em>
+    /// when the name could not be found out — see
+    /// <see cref="ProjectStatusChangeResponse.ChangedByName"/>.
+    /// </summary>
+    public string? AssignedArchitectName { get; set; }
+
     /// <summary>The Project Manager on the project, or <c>null</c> while nobody is.</summary>
     public Guid? AssignedProjectManagerId { get; set; }
+
+    /// <summary>The Project Manager's name, on the same terms as <see cref="AssignedArchitectName"/>.</summary>
+    public string? AssignedProjectManagerName { get; set; }
 
     public DateTime CreatedAt { get; set; }
 
@@ -81,7 +92,32 @@ public class ProjectDetailResponse
     /// </remarks>
     public IReadOnlyList<string> AllowedNextStatuses { get; set; } = [];
 
-    public static ProjectDetailResponse From(Project project, IReadOnlyList<ProjectStatusChange> history) => new()
+    /// <summary>
+    /// The accounts on a project that need naming: whoever changed its status —
+    /// the Client who submitted it is the first of those — and whoever is
+    /// assigned to it. Not de-duplicated; the resolver does that.
+    /// </summary>
+    public static IEnumerable<Guid> PeopleToName(Project project, IReadOnlyList<ProjectStatusChange> history)
+    {
+        var people = history.Select(change => change.ChangedByUserId);
+
+        if (project.AssignedArchitectId is { } architectId)
+        {
+            people = people.Append(architectId);
+        }
+
+        if (project.AssignedProjectManagerId is { } projectManagerId)
+        {
+            people = people.Append(projectManagerId);
+        }
+
+        return people;
+    }
+
+    public static ProjectDetailResponse From(
+        Project project,
+        IReadOnlyList<ProjectStatusChange> history,
+        IReadOnlyDictionary<Guid, string> names) => new()
     {
         Id = project.Id,
         ClientId = project.ClientId,
@@ -96,12 +132,18 @@ public class ProjectDetailResponse
         OtherRequirements = project.OtherRequirements,
         Status = project.Status.ToString(),
         AssignedArchitectId = project.AssignedArchitectId,
+        AssignedArchitectName = project.AssignedArchitectId is { } architectId
+            ? names.GetValueOrDefault(architectId)
+            : null,
         AssignedProjectManagerId = project.AssignedProjectManagerId,
+        AssignedProjectManagerName = project.AssignedProjectManagerId is { } projectManagerId
+            ? names.GetValueOrDefault(projectManagerId)
+            : null,
         CreatedAt = project.CreatedAt,
         UpdatedAt = project.UpdatedAt,
         // Already ordered oldest first by the query that read them; nothing here
         // re-sorts, so the response cannot disagree with the table.
-        StatusHistory = [.. history.Select(ProjectStatusChangeResponse.From)],
+        StatusHistory = [.. history.Select(change => ProjectStatusChangeResponse.From(change, names))],
         AllowedNextStatuses = [.. ProjectStatusTransitions.NextFrom(project.Status).Select(status => status.ToString())]
     };
 }

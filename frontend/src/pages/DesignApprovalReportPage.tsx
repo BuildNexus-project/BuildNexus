@@ -78,7 +78,7 @@ export function DesignApprovalReportPage() {
 
   if (loadError) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
         <Card>
           <CardHeader>
             <CardTitle>This report is not available to you</CardTitle>
@@ -95,7 +95,7 @@ export function DesignApprovalReportPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-4xl flex-col justify-center gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle>Design approval report</CardTitle>

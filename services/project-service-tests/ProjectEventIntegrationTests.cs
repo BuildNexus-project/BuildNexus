@@ -233,7 +233,7 @@ public class ProjectEventIntegrationTests
         var outbox = new FakeOutboxRepository();
 
         var controller = new ProjectsController(
-            repository, outbox, new FakeUserDirectoryClient(), NullLogger<ProjectsController>.Instance)
+            repository, outbox, new FakeUserDirectoryClient(), new FakeUserNameResolver(), NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {

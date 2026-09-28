@@ -199,6 +199,7 @@ public class ProjectsControllerTests
             repository,
             new FakeOutboxRepository(),
             new FakeUserDirectoryClient(),
+            new FakeUserNameResolver(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
