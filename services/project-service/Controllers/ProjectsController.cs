@@ -32,17 +32,20 @@ public class ProjectsController : ControllerBase
     private readonly IProjectRepository _projectRepository;
     private readonly IOutboxRepository _outboxRepository;
     private readonly IUserDirectoryClient _userDirectory;
+    private readonly IUserNameResolver _userNames;
     private readonly ILogger<ProjectsController> _logger;
 
     public ProjectsController(
         IProjectRepository projectRepository,
         IOutboxRepository outboxRepository,
         IUserDirectoryClient userDirectory,
+        IUserNameResolver userNames,
         ILogger<ProjectsController> logger)
     {
         _projectRepository = projectRepository;
         _outboxRepository = outboxRepository;
         _userDirectory = userDirectory;
+        _userNames = userNames;
         _logger = logger;
     }
 
@@ -221,9 +224,7 @@ public class ProjectsController : ControllerBase
             return NotOnThisProject(id, userId, "view");
         }
 
-        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
-
-        return Ok(ProjectDetailResponse.From(project, history));
+        return Ok(await DetailResponseAsync(project));
     }
 
     /// <summary>
@@ -341,9 +342,7 @@ public class ProjectsController : ControllerBase
         project.Status = target;
         project.UpdatedAt = now;
 
-        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
-
-        return Ok(ProjectDetailResponse.From(project, history));
+        return Ok(await DetailResponseAsync(project));
     }
 
     /// <summary>
@@ -469,9 +468,7 @@ public class ProjectsController : ControllerBase
         project.Status = ProjectStatus.Cancelled;
         project.UpdatedAt = now;
 
-        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
-
-        return Ok(ProjectDetailResponse.From(project, history));
+        return Ok(await DetailResponseAsync(project));
     }
 
     /// <summary>
@@ -583,9 +580,7 @@ public class ProjectsController : ControllerBase
             project.Status = ProjectStatus.Designing;
         }
 
-        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
-
-        return Ok(ProjectDetailResponse.From(project, history));
+        return Ok(await DetailResponseAsync(project));
     }
 
     /// <summary>
@@ -660,9 +655,7 @@ public class ProjectsController : ControllerBase
         project.AssignedProjectManagerId = projectManagerId;
         project.UpdatedAt = now;
 
-        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
-
-        return Ok(ProjectDetailResponse.From(project, history));
+        return Ok(await DetailResponseAsync(project));
     }
 
     /// <summary>
@@ -719,6 +712,27 @@ public class ProjectsController : ControllerBase
         var events = await _outboxRepository.ListForProjectAsync(id);
 
         return Ok(events.Select(ProjectEventResponse.From).ToList());
+    }
+
+    /// <summary>
+    /// The project as every detail endpoint answers with it: its status
+    /// history, and the names of the people in it.
+    /// </summary>
+    /// <remarks>
+    /// The names are asked of the User Service on the way out and are never
+    /// stored, so they cannot go stale. A name that could not be found out is
+    /// simply absent from the response — the project is still shown, and the
+    /// caller falls back to the role and id it was already given.
+    /// </remarks>
+    private async Task<ProjectDetailResponse> DetailResponseAsync(Project project)
+    {
+        var history = await _projectRepository.GetStatusHistoryAsync(project.Id);
+
+        var names = await _userNames.ResolveNamesAsync(
+            ProjectDetailResponse.PeopleToName(project, history),
+            HttpContext.RequestAborted);
+
+        return ProjectDetailResponse.From(project, history, names);
     }
 
     /// <summary>

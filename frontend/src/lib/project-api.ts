@@ -72,10 +72,17 @@ export type ProjectStatusChange = {
   fromStatus: ProjectStatus | null
   toStatus: ProjectStatus
   /**
-   * Who made the change, as an id rather than a name: the account lives in the
-   * User Service's own database and the Project Service holds no copy of it.
+   * Who made the change, as the id the Project Service stores: the account lives
+   * in the User Service's own database and the Project Service holds no copy of
+   * it.
    */
   changedByUserId: string
+  /**
+   * Their name today, asked of the User Service when the project is read.
+   * `null` when it could not be found out — the account has been removed, or the
+   * User Service could not be reached — so show the role and id instead.
+   */
+  changedByName: string | null
   /** The role they held at the time, not the role they hold now. */
   changedByRole: Role
   /**
@@ -129,7 +136,11 @@ export type ProjectEvent = {
 export type ProjectDetail = Project & {
   /** `null` while nobody is assigned, which is every project so far. */
   assignedArchitectId: string | null
+  /** `null` while nobody is assigned, and also when the name could not be found out. */
+  assignedArchitectName: string | null
   assignedProjectManagerId: string | null
+  /** As {@link ProjectDetail.assignedArchitectName}, for the Project Manager. */
+  assignedProjectManagerName: string | null
   updatedAt: string
   /** Oldest first, starting at the project's creation. */
   statusHistory: ProjectStatusChange[]

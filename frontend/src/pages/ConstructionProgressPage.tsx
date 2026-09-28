@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ApiError, apiErrorMessage } from '@/lib/api'
@@ -14,7 +15,7 @@ import {
   type ProjectProgressSummary,
 } from '@/lib/construction-api'
 import { fetchProjects, type ProjectSummary } from '@/lib/project-api'
-import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
+import type { ProjectStatus } from '@/lib/project-status'
 import { useAutoRefresh } from '@/lib/use-auto-refresh'
 
 /**
@@ -119,7 +120,7 @@ function ProjectProgressCard({ entry }: { entry: ProjectProgressEntry }) {
           <Link to={`/projects/${project.id}`} className="underline underline-offset-4">
             {project.name}
           </Link>
-          <Badge variant="secondary">{PROJECT_STATUS_LABELS[project.status]}</Badge>
+          <StatusBadge status={project.status} />
         </CardTitle>
         <CardDescription>{project.location}</CardDescription>
       </CardHeader>
@@ -273,7 +274,7 @@ export function ConstructionProgressPage() {
   useAutoRefresh(useCallback(() => void load(), [load]))
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle>Construction progress</CardTitle>

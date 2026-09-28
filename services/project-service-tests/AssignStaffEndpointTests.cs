@@ -257,6 +257,7 @@ public class AssignStaffEndpointTests
             repository,
             new FakeOutboxRepository(),
             directory,
+            new FakeUserNameResolver(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = httpContext }

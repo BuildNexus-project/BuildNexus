@@ -218,6 +218,12 @@ resource "azurerm_linux_web_app" "project_service" {
     # appsettings.json it would point at localhost and every assignment would
     # answer 502. The deployed User Service, over HTTPS; trailing slash required.
     Services__UserService__BaseUrl = "https://${azurerm_linux_web_app.user_service.default_hostname}/"
+
+    # The service will not start without it: Program.cs binds
+    # InternalServiceOptions with ValidateOnStart() and a 32-byte minimum. It is
+    # what lets this service ask the User Service for the names behind the
+    # account ids on a project — the same key user-service checks on its side.
+    InternalService__ApiKey = var.internal_service_api_key
   }
 
   # The app runs its migrations as project_service the moment it starts, so the

@@ -342,8 +342,9 @@ jobs:
       Jwt__SigningKey: ${{ secrets.JWT_SIGNING_KEY }}
 
       # --- Why the internal service key is here (US-11) ---------------------
-      # Same trap as the Jwt__* block above: docker-compose.yml's user-service
-      # and design-service blocks require InternalService__ApiKey to parse.
+      # Same trap as the Jwt__* block above: docker-compose.yml's user-service,
+      # project-service and design-service blocks require InternalService__ApiKey
+      # to parse.
       # Repository secret, the same class of value as the JWT signing key: a
       # shared key with a minimum-length check at startup, not a throwaway dev
       # password like the ones above.

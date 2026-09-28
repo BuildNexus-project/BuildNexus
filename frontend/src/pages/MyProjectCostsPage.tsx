@@ -142,7 +142,7 @@ export function MyProjectCostsPage() {
   useAutoRefresh(useCallback(() => void load(), [load]))
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle>Your project costs</CardTitle>

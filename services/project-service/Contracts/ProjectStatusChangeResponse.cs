@@ -21,16 +21,23 @@ public class ProjectStatusChangeResponse
     /// Who made the change, as the User Service knows them.
     /// </summary>
     /// <remarks>
-    /// An id and not a name. The account lives in the User Service's own
+    /// What is stored: an id. The account lives in the User Service's own
     /// database and this service holds no copy of it — a name stored here would
-    /// go stale the moment they changed it, and querying across the boundary is
-    /// not something a service does.
+    /// go stale the moment they changed it. See <see cref="ChangedByName"/> for
+    /// the name, asked for when the history is read.
     /// </remarks>
     public Guid ChangedByUserId { get; set; }
 
     /// <summary>
+    /// Their name as the User Service knows it today, or <c>null</c> when it
+    /// could not be found out — the account has since been removed, or the User
+    /// Service could not be reached. The caller falls back to the role and id.
+    /// </summary>
+    public string? ChangedByName { get; set; }
+
+    /// <summary>
     /// The role they held at the time, so the entry reads as "the Project
-    /// Manager moved it" rather than as a bare id.
+    /// Manager moved it" even where no name could be found.
     /// </summary>
     public string ChangedByRole { get; set; } = string.Empty;
 
@@ -43,7 +50,9 @@ public class ProjectStatusChangeResponse
 
     public DateTime ChangedAt { get; set; }
 
-    public static ProjectStatusChangeResponse From(ProjectStatusChange change) => new()
+    public static ProjectStatusChangeResponse From(
+        ProjectStatusChange change,
+        IReadOnlyDictionary<Guid, string> names) => new()
     {
         Id = change.Id,
         // Statuses go out as their names rather than the enum's numbers, so the
@@ -51,6 +60,7 @@ public class ProjectStatusChangeResponse
         FromStatus = change.FromStatus?.ToString(),
         ToStatus = change.ToStatus.ToString(),
         ChangedByUserId = change.ChangedByUserId,
+        ChangedByName = names.GetValueOrDefault(change.ChangedByUserId),
         ChangedByRole = change.ChangedByRole,
         Note = change.Note,
         ChangedAt = change.ChangedAt

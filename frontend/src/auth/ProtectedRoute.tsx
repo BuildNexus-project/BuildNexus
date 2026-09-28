@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 
-import { Header } from '@/components/Header'
+import { AppShell } from '@/components/AppShell'
 
 import { useAuth } from './auth-context'
 
@@ -13,10 +13,10 @@ import { useAuth } from './auth-context'
  * security boundary — the data itself is protected by the User Service, which
  * rejects any request without a valid token.
  *
- * Every authenticated route also gets the app <Header /> above it — brand
- * on the left, user info + Sign out on the right — so a per-page header is
- * unnecessary. RoleRoute wraps this component, so role-gated pages inherit
- * the header for free.
+ * Every authenticated route is also framed by the <AppShell /> — the black
+ * header with the role's own navigation, a breadcrumb strip, and the footer —
+ * so no page needs its own. RoleRoute wraps this component, so role-gated pages
+ * inherit the frame for free.
  */
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth()
@@ -26,10 +26,5 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" replace state={{ from: location }} />
   }
 
-  return (
-    <>
-      <Header />
-      {children}
-    </>
-  )
+  return <AppShell>{children}</AppShell>
 }

@@ -284,6 +284,11 @@ services:
       # it to a project, forwarding the Admin's own token. The internal
       # listener, since this runs on the compose network.
       Services__UserService__BaseUrl: http://user-service:8080/
+      # Names the people in a project's status history and team by asking the
+      # User Service's internal lookup, presenting the shared key below — the
+      # role check above forwards an Admin's token, which a Client viewing their
+      # own project cannot supply.
+      InternalService__ApiKey: ${InternalService__ApiKey:?set InternalService__ApiKey in infra/.env (min 32 bytes)}
     ports:
       - "5002:8080"
     depends_on:

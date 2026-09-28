@@ -236,6 +236,7 @@ public class CancelProjectEndpointTests
             repository,
             new FakeOutboxRepository(),
             new FakeUserDirectoryClient(),
+            new FakeUserNameResolver(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = httpContext }
