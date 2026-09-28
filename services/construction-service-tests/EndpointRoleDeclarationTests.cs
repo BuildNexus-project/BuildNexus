@@ -104,6 +104,18 @@ public class EndpointRoleDeclarationTests
     }
 
     [Fact]
+    public void The_construction_report_is_the_admins_and_project_managers()
+    {
+        // US-19: the story is framed around an Admin or a PM reading build progress and
+        // financial health together, so both roles — and only those two. A Client reads
+        // their own project through ConstructionProgressController and has no portfolio
+        // -wide view; an Architect is measured by the design reports, not these.
+        Assert.Equal(
+            [PlatformRoles.Admin, PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ReportsController>("GetProgressReport"));
+    }
+
+    [Fact]
     public void Watching_a_projects_construction_progress_is_the_clients_alone()
     {
         // US-13: the story is framed around the Client watching their own

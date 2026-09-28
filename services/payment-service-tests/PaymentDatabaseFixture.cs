@@ -88,7 +88,23 @@ public class PaymentDatabaseFixture : IAsyncLifetime
     /// </summary>
     public PaymentHistoryRepository PaymentHistoryRepository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.ConstructionCompletionRepository"/> over the same
+    /// development database. The final-settlement rule spans three tables and a
+    /// row lock — invoices, payments and the completion marker — so only the real
+    /// engine can show that it announces once, and only when both conditions hold.
+    /// </summary>
+    public ConstructionCompletionRepository ConstructionCompletionRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
+    /// <summary>
+    /// The real <see cref="Data.PaymentReportRepository"/> over the same development
+    /// database. Added for US-19: the report sums invoices and payments in two separate
+    /// aggregates precisely to avoid a join fan-out inflating the money, and only the real
+    /// engine can show that it does not.
+    /// </summary>
+    public PaymentReportRepository PaymentReportRepository { get; private set; } = null!;
+
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
     public Task InitializeAsync()
@@ -112,6 +128,8 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         PaymentRepository = new PaymentRepository(connectionFactory);
         OutboxRepository = new OutboxRepository(connectionFactory);
         PaymentHistoryRepository = new PaymentHistoryRepository(connectionFactory);
+        PaymentReportRepository = new PaymentReportRepository(connectionFactory);
+        ConstructionCompletionRepository = new ConstructionCompletionRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
@@ -133,7 +151,8 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         // payments and payment_outbox_events are deliberately absent: neither has a
         // project_id of its own to match on, and both hold an FK to invoices that
         // is ON DELETE CASCADE — so deleting this run's invoices takes them too.
-        foreach (var table in new[] { "quotations", "invoices", "project_owners" })
+        foreach (var table in new[]
+                 { "quotations", "invoices", "project_owners", "construction_completions" })
         {
             await using var command = connection.CreateCommand();
             command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";

@@ -9,11 +9,10 @@ namespace BuildNexus.PaymentService.Messaging;
 /// dead weight on the topic — and <c>ck_payment_outbox_events_type</c> holds the
 /// database to the same list.
 /// <para>
-/// Note what is <em>not</em> here: the Construction Service's US-14 handover gate
-/// waits on a <c>FinalPaymentSettled</c> on this same topic, and nothing publishes
-/// it. That is a real gap, but it is not one US-16 names, and adding an event type
-/// no story agreed to is how a topic becomes a contract nobody can reason about.
-/// It needs its own story.
+/// <c>FinalPaymentSettled</c> is the contract the Construction Service's US-14
+/// handover gate has been waiting on: it consumes that event to build the local
+/// replica its gate reads, and until this service published it, handover was
+/// refused for every project.
 /// </para>
 /// </remarks>
 public static class PaymentEventTypes
@@ -22,9 +21,33 @@ public static class PaymentEventTypes
     public const string PaymentReceived = nameof(PaymentReceived);
 
     /// <summary>
+    /// A project owes nothing further: its build is complete and every invoice
+    /// raised against it is settled.
+    /// </summary>
+    /// <remarks>
+    /// The Construction Service's cue that handover is permitted (US-14 AC-4).
+    /// Deliberately <em>not</em> raised the moment a project's balance reaches
+    /// zero — see <see cref="FinalPaymentSettledPayload"/> for why a zero balance
+    /// on its own does not mean the final payment has landed.
+    /// </remarks>
+    public const string FinalPaymentSettled = nameof(FinalPaymentSettled);
+
+    /// <summary>
     /// Every type this service publishes, for code that has to enumerate them —
     /// and for the test that holds the database's own CHECK constraint to the
     /// same set.
     /// </summary>
-    public static readonly IReadOnlyList<string> All = [PaymentReceived];
+    /// <summary>
+    /// An invoice has been raised against a project (US-24).
+    /// </summary>
+    /// <remarks>
+    /// Raised by both paths that create an invoice — a Project Manager doing it by hand, and
+    /// the <c>ConstructionStarted</c> consumer doing it automatically — because a consumer
+    /// reacting to billing has no interest in which of the two it was, and an event from only
+    /// one of them would make the topic an unreliable record of what was billed.
+    /// </remarks>
+    public const string InvoiceGenerated = nameof(InvoiceGenerated);
+
+    public static readonly IReadOnlyList<string> All =
+        [PaymentReceived, FinalPaymentSettled, InvoiceGenerated];
 }

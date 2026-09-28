@@ -27,6 +27,7 @@ public class ConstructionEventsConsumerTests
 
     private readonly FakeQuotationRepository _quotations = new();
     private readonly FakeInvoiceRepository _invoices = new();
+    private readonly FakeConstructionCompletionRepository _completions = new();
 
     [Fact]
     public async Task A_ConstructionStarted_raises_an_invoice_for_the_projects_current_quotation()
@@ -94,12 +95,46 @@ public class ConstructionEventsConsumerTests
     [Fact]
     public async Task ConstructionCompleted_does_not_raise_an_invoice()
     {
-        // Only the start of the build is a billable stage in this story.
+        // Only the start of the build is a billable stage. Completion is read
+        // for a different reason — final settlement — and must not bill again.
         await _quotations.CreateAsync(ProjectId, 500_000m, Guid.NewGuid());
 
-        await HandleAsync(Envelope("ConstructionCompleted", new { projectId = ProjectId, startedBy = StartedBy }));
+        await HandleAsync(Completed());
 
         Assert.Empty(_invoices.Created);
+    }
+
+    [Fact]
+    public async Task ConstructionCompleted_records_the_build_as_complete()
+    {
+        // The fact that lets this service tell "nothing is outstanding right
+        // now" from "nothing more will ever be billed".
+        await HandleAsync(Completed());
+
+        var recorded = Assert.Single(_completions.Recorded);
+        Assert.Equal(ProjectId, recorded.ProjectId);
+    }
+
+    [Fact]
+    public async Task A_ConstructionCompleted_missing_its_project_is_reported_as_a_json_failure()
+    {
+        var message = $"{{\"eventType\":\"ConstructionCompleted\",\"eventId\":\"{Guid.NewGuid()}\","
+                      + $"\"occurredAt\":\"{DateTimeOffset.UtcNow:O}\",\"payload\":{{}}}}";
+
+        await Assert.ThrowsAsync<JsonException>(() => HandleAsync(message));
+        Assert.Empty(_completions.Recorded);
+    }
+
+    [Fact]
+    public async Task A_failing_completion_write_surfaces_as_something_other_than_a_json_failure()
+    {
+        // So the caller leaves the offset uncommitted and retries, rather than
+        // committing past a completion nobody recorded.
+        _completions.NextWriteThrows = new InvalidOperationException("payment-db is unreachable.");
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() => HandleAsync(Completed()));
+
+        Assert.IsNotType<JsonException>(failure);
     }
 
     [Theory]
@@ -156,6 +191,13 @@ public class ConstructionEventsConsumerTests
         Assert.IsNotType<JsonException>(failure);
     }
 
+    private static string Completed() =>
+        Envelope("ConstructionCompleted", new
+        {
+            projectId = ProjectId,
+            completedAt = DateTimeOffset.UtcNow
+        });
+
     private static string ConstructionStarted() =>
         Envelope("ConstructionStarted", new
         {
@@ -179,6 +221,7 @@ public class ConstructionEventsConsumerTests
         var services = new ServiceCollection();
         services.AddSingleton<IQuotationRepository>(_quotations);
         services.AddSingleton<IInvoiceRepository>(_invoices);
+        services.AddSingleton<IConstructionCompletionRepository>(_completions);
 
         var consumer = new ConstructionEventsConsumer(
             services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),

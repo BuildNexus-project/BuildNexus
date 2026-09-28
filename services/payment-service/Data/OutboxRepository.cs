@@ -149,7 +149,7 @@ public class OutboxRepository : IOutboxRepository
         command.CommandText = sql;
         AddParameter(command, "@id", outboxEvent.Id);
         AddParameter(command, "@projectId", outboxEvent.ProjectId);
-        AddParameter(command, "@invoiceId", outboxEvent.InvoiceId);
+        AddParameter(command, "@invoiceId", (object?)outboxEvent.InvoiceId ?? DBNull.Value);
         AddParameter(command, "@eventType", outboxEvent.EventType);
         AddParameter(command, "@envelope", outboxEvent.Envelope);
         AddParameter(command, "@occurredAt", outboxEvent.OccurredAt);
@@ -209,7 +209,9 @@ public class OutboxRepository : IOutboxRepository
         // MySqlConnector surfaces CHAR(36) as a Guid, not a string.
         Id = reader.GetGuid(reader.GetOrdinal("id")),
         ProjectId = reader.GetGuid(reader.GetOrdinal("project_id")),
-        InvoiceId = reader.GetGuid(reader.GetOrdinal("invoice_id")),
+        InvoiceId = reader.IsDBNull(reader.GetOrdinal("invoice_id"))
+            ? null
+            : reader.GetGuid(reader.GetOrdinal("invoice_id")),
         EventType = reader.GetString(reader.GetOrdinal("event_type")),
         Envelope = reader.GetString(reader.GetOrdinal("envelope")),
         OccurredAt = DateTime.SpecifyKind(

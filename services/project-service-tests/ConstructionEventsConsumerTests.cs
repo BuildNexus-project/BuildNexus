@@ -393,6 +393,17 @@ public class ConstructionEventsConsumerTests
             Guid projectId,
             Guid projectManagerId,
             DateTime updatedAtUtc) => throw new NotSupportedException();
+        /// <summary>
+        /// Not part of this suite's story — US-24's payment reflection has its own coverage in
+        /// <c>PaymentEventsConsumerTests</c>. Throws rather than returning a value, so a change
+        /// that starts depending on it here cannot pass unnoticed.
+        /// </summary>
+        public Task<bool> UpdatePaymentStatusAsync(
+            Guid projectId,
+            ProjectPaymentStatus paymentStatus,
+            Guid sourceEventId,
+            DateTime occurredAtUtc) => throw new NotSupportedException();
+
 
         internal readonly record struct RecordedStatusChange(
             ProjectStatusChange Change,

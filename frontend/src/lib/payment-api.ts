@@ -294,3 +294,58 @@ export type ProjectPaymentHistory = {
 export function fetchMyProjectPaymentHistory(authFetch: AuthFetch, projectId: string) {
   return authFetch<ProjectPaymentHistory>(`/api/payments/my-projects/${projectId}/history`)
 }
+
+/**
+ * The portfolio's financial totals (US-19 AC-2).
+ *
+ * `totalOutstanding` is `null` whenever a date range was applied. Invoiced is scoped by
+ * when an invoice was raised and collected by when a payment was recorded, so inside a
+ * window their difference can be negative and means nothing — "what is still owed" is a
+ * question about the whole ledger. The page shows the figure only when it is meaningful
+ * rather than printing a number that reads as debt.
+ *
+ * The two counts let a reader tell one large invoice from fifty small ones, and tell a
+ * genuine zero from an empty result.
+ */
+export type PaymentReportSummary = {
+  totalInvoiced: number
+  totalCollected: number
+  totalOutstanding: number | null
+  invoiceCount: number
+  paymentCount: number
+  /** ISO-8601, echoed back from the request; `null` when unfiltered. */
+  fromUtc: string | null
+  toUtc: string | null
+}
+
+/** An optional window for {@link fetchPaymentReportSummary}. Both bounds are independent. */
+export type PaymentReportRange = {
+  /** Inclusive lower bound, ISO-8601. */
+  fromUtc?: string
+  /** Exclusive upper bound, ISO-8601 — so two adjacent ranges neither overlap nor skip a row. */
+  toUtc?: string
+}
+
+/**
+ * Invoiced, collected and outstanding totals across every project, optionally narrowed to
+ * a date range (US-19 AC-2).
+ *
+ * Project Manager and Admin only; the service answers 403 to anyone else. An inverted or
+ * empty range comes back as {@link ApiError} with status 400 rather than as zeros, which
+ * would read as "nothing was billed".
+ */
+export function fetchPaymentReportSummary(authFetch: AuthFetch, range: PaymentReportRange = {}) {
+  const query = new URLSearchParams()
+
+  if (range.fromUtc) {
+    query.set('fromUtc', range.fromUtc)
+  }
+
+  if (range.toUtc) {
+    query.set('toUtc', range.toUtc)
+  }
+
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+
+  return authFetch<PaymentReportSummary>(`/api/payments/reports/summary${suffix}`)
+}
