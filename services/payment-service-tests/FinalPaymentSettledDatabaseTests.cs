@@ -13,6 +13,7 @@ namespace BuildNexus.PaymentService.Tests;
 /// will be billed again, and announcing then would let the Construction Service
 /// hand it over half-billed.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(PaymentDatabaseCollection.Name)]
 public class FinalPaymentSettledDatabaseTests
 {
