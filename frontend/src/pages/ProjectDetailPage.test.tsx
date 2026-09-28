@@ -1751,4 +1751,40 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
       within(panel).getByRole('button', { name: 'Hand over to client' }),
     ).toBeInTheDocument()
   })
+
+  // -------------------------------------- the quotation & payments link ----
+
+  it('offers a Project Manager the way into quotation and payments', async () => {
+    // US-15's quotation and invoicing page existed at /projects/:id/costs with nothing linking
+    // to it, so a PM could only reach it by typing the URL. This pins the link's presence and
+    // its destination.
+    renderPage(asProjectManager, apiResponse(200, projectDetail()))
+
+    const link = await screen.findByRole('link', { name: 'Quotation & payments' })
+
+    expect(link).toHaveAttribute('href', `/projects/${PROJECT_ID}/costs`)
+  })
+
+  it('offers it to an Admin too', async () => {
+    // The /costs route is gated on ProjectManager and Admin, so the link matches that pair
+    // rather than being PM-only — otherwise an Admin would be back to typing the URL.
+    // An Admin render also fetches the integration events, so that response is supplied —
+    // otherwise the project object falls through to it and the events panel throws.
+    renderPage(asAdmin, apiResponse(200, projectDetail()), apiResponse(200, []))
+
+    expect(await screen.findByRole('link', { name: 'Quotation & payments' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['a Client', asOwningClient],
+    ['an Architect', asAssignedArchitect],
+  ])('does not offer it to %s, whom the route would refuse', async (_who, as) => {
+    // Offering a page the route then refuses is worse than not offering it: the caller clicks,
+    // gets bounced, and has no idea why.
+    renderPage(as, apiResponse(200, projectDetail()))
+
+    await screen.findByText('Beachfront villa')
+
+    expect(screen.queryByRole('link', { name: 'Quotation & payments' })).not.toBeInTheDocument()
+  })
 })

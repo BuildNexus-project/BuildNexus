@@ -63,7 +63,7 @@ import {
 } from '@/lib/project-api'
 import { deliveryOf, needsAttention } from '@/lib/project-events'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
-import { ADMIN_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, COST_MANAGEMENT_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
 
 /** A date and time the service sent, as a reader would write it. */
 function formatMoment(iso: string): string {
@@ -999,6 +999,9 @@ export function ProjectDetailPage() {
   // service's own [Authorize] gate on the endpoints behind it. Offering a
   // control the service will refuse is worse than not showing it at all.
   const isProjectManager = user !== null && user.role === 'ProjectManager'
+  // The same pair /projects/:projectId/costs is gated on, so this link never offers a page
+  // the route would then refuse — a Project Manager or an Admin, not an Architect or a Client.
+  const canManageCosts = user !== null && COST_MANAGEMENT_ROLES.includes(user.role)
 
   useEffect(() => {
     if (!projectId) {
@@ -1543,6 +1546,18 @@ export function ProjectDetailPage() {
           <Button render={<Link to={`/projects/${project.id}/designs`} />} variant="outline" className="w-full">
             Design documents
           </Button>
+
+          {/* US-15's quotation and invoicing lived at /projects/:id/costs with nothing linking
+              to it, so a Project Manager had no way to reach it except by typing the URL. */}
+          {canManageCosts && (
+            <Button
+              render={<Link to={`/projects/${project.id}/costs`} />}
+              variant="outline"
+              className="w-full"
+            >
+              Quotation &amp; payments
+            </Button>
+          )}
 
           <p className="text-muted-foreground text-center text-sm">
             <Link to="/projects" className="text-foreground underline underline-offset-4">
