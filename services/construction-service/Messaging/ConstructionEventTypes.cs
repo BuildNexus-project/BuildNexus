@@ -24,9 +24,26 @@ public static class ConstructionEventTypes
     public const string ConstructionCompleted = nameof(ConstructionCompleted);
 
     /// <summary>
+    /// A milestone has been marked <c>Completed</c> (US-24).
+    /// </summary>
+    /// <remarks>
+    /// Raised on the transition into <c>Completed</c> only — not on a repeat update that
+    /// leaves a milestone where it already was, and not on a move to any other status. A
+    /// consumer reacting to build progress wants the moment a piece of work finished, and
+    /// an event per idle PATCH would make that moment impossible to pick out.
+    /// <para>
+    /// Unlike the two above, this one can be raised before the build has formally started:
+    /// nothing gates a milestone status change on the phase existing, which is why
+    /// migration 009 drops the outbox's foreign key to <c>construction_phases</c>.
+    /// </para>
+    /// </remarks>
+    public const string MilestoneCompleted = nameof(MilestoneCompleted);
+
+    /// <summary>
     /// Every type this service publishes, for code that has to enumerate them —
     /// and for the test that holds the database's own CHECK constraint to the
     /// same set.
     /// </summary>
-    public static readonly IReadOnlyList<string> All = [ConstructionStarted, ConstructionCompleted];
+    public static readonly IReadOnlyList<string> All =
+        [ConstructionStarted, ConstructionCompleted, MilestoneCompleted];
 }

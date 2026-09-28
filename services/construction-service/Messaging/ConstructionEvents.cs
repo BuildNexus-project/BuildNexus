@@ -43,6 +43,22 @@ public static class ConstructionEvents
             phase.CompletedAtUtc!.Value);
 
     /// <summary>
+    /// A milestone has been marked <c>Completed</c> (US-24).
+    /// </summary>
+    /// <remarks>
+    /// Raised by <see cref="Data.MilestoneRepository.UpdateStatusAsync"/> on the transition
+    /// into <c>Completed</c>, inside the same transaction as the status change — so the
+    /// event and the row it describes commit together or not at all.
+    /// </remarks>
+    public static OutboxEvent MilestoneCompleted(Milestone milestone) =>
+        Raise(
+            ConstructionEventTypes.MilestoneCompleted,
+            milestone.ProjectId,
+            MilestoneCompletedPayload.From(milestone),
+            // The moment the milestone moved, off the row rather than the clock.
+            milestone.UpdatedAtUtc);
+
+    /// <summary>
     /// Wraps a payload in the agreed envelope and parcels it up as an outbox row,
     /// with the id the envelope was minted with.
     /// </summary>
