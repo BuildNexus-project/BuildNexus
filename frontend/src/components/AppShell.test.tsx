@@ -99,8 +99,8 @@ describe('the header navigation', () => {
   it.each<[Role, string[]]>([
     ['Client', ['Dashboard', 'Projects', 'New project', 'Progress', 'My costs']],
     ['Architect', ['Dashboard', 'Projects', 'Project team']],
-    ['ProjectManager', ['Dashboard', 'Projects', 'Project team']],
-    ['Admin', ['Dashboard', 'Projects', 'Users', 'Design report']],
+    ['ProjectManager', ['Dashboard', 'Projects', 'Project team', 'Build & payment']],
+    ['Admin', ['Dashboard', 'Projects', 'Users', 'Design report', 'Build & payment']],
   ])('shows a %s their own pages', (role, expected) => {
     signInAs(role)
 
@@ -196,6 +196,7 @@ describe('the footer', () => {
       'Projects',
       'Users',
       'Design report',
+      'Build & payment',
     ])
   })
 

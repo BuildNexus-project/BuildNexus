@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import { initialsOf } from '@/lib/initials'
 import { NAV_ITEMS, activeNavItem, breadcrumbsFor } from '@/lib/nav'
-import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES, ROLES, type Role } from '@/lib/roles'
+import {
+  ADMIN_ROLES,
+  CLIENT_ROLES,
+  PROJECT_STAFF_ROLES,
+  REPORTING_ROLES,
+  ROLES,
+  type Role,
+} from '@/lib/roles'
 
 describe('NAV_ITEMS', () => {
   /**
@@ -18,6 +25,7 @@ describe('NAV_ITEMS', () => {
     '/directory': PROJECT_STAFF_ROLES,
     '/admin/users': ADMIN_ROLES,
     '/admin/reports/design-approval': ADMIN_ROLES,
+    '/reports/construction-payment': REPORTING_ROLES,
   }
 
   it.each(ROLES)('only offers %s pages that role may open', (role) => {
@@ -127,6 +135,13 @@ describe('breadcrumbsFor', () => {
       'Projects',
       'Project',
       'Design documents',
+    ])
+  })
+
+  it('leads to the combined report through Reports', () => {
+    expect(breadcrumbsFor('/reports/construction-payment')).toEqual([
+      { label: 'Reports' },
+      { label: 'Construction & payment' },
     ])
   })
 

@@ -1,5 +1,6 @@
 import {
   ChartColumn,
+  ChartNoAxesCombined,
   FolderKanban,
   HardHat,
   LayoutDashboard,
@@ -78,6 +79,14 @@ const DESIGN_REPORT: NavItem = {
   icon: ChartColumn,
 }
 
+const BUILD_PAYMENT_REPORT: NavItem = {
+  to: '/reports/construction-payment',
+  label: 'Build & payment',
+  description:
+    'Build progress across the active projects, and what has been invoiced, collected and is still owed.',
+  icon: ChartNoAxesCombined,
+}
+
 /**
  * What each role is offered, in the order it is shown. Mirrors the route guards
  * in `App` — a role is only ever invited into a page it can open. The guards and
@@ -87,8 +96,8 @@ const DESIGN_REPORT: NavItem = {
 export const NAV_ITEMS: Record<Role, readonly NavItem[]> = {
   Client: [PROJECTS, NEW_PROJECT, PROGRESS, MY_COSTS],
   Architect: [PROJECTS, TEAM],
-  ProjectManager: [PROJECTS, TEAM],
-  Admin: [PROJECTS, USERS, DESIGN_REPORT],
+  ProjectManager: [PROJECTS, TEAM, BUILD_PAYMENT_REPORT],
+  Admin: [PROJECTS, USERS, DESIGN_REPORT, BUILD_PAYMENT_REPORT],
 }
 
 /** What a role calls its own corner of the app, shown beside the breadcrumbs. */
@@ -154,6 +163,10 @@ const TRAILS: ReadonlyArray<{ path: string; trail: readonly Crumb[] }> = [
   { path: '/directory', trail: [{ label: 'Project team' }] },
   { path: '/profile', trail: [{ label: 'Profile' }] },
   { path: '/admin/users', trail: [{ label: 'Users' }] },
+  {
+    path: '/reports/construction-payment',
+    trail: [{ label: 'Reports' }, { label: 'Construction & payment' }],
+  },
   {
     path: '/admin/reports/design-approval',
     trail: [{ label: 'Reports' }, { label: 'Design approval' }],

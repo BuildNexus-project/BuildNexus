@@ -16,8 +16,8 @@ import { cn } from '@/lib/utils'
  * role's own navigation beside it with the current page marked, and on the right
  * who is signed in, a link to their profile, and Sign out.
  *
- * On a narrow screen the navigation folds into a menu button so nothing has to
- * wrap or scroll sideways.
+ * Below 1024px wide the navigation folds into a menu button, so nothing has to
+ * wrap or scroll sideways; the signed-in name joins the avatar from 1280px up.
  *
  * Rendered from `AppShell`, which `ProtectedRoute` wraps every authenticated
  * route in, so no page needs its own header. Returns null when there is no user:
@@ -52,7 +52,7 @@ export function Header() {
           <span className="font-heading text-base font-semibold tracking-tight">BuildNexus</span>
         </Link>
 
-        <nav aria-label="Primary" className="ml-4 hidden items-center gap-1 md:flex">
+        <nav aria-label="Primary" className="ml-4 hidden items-center gap-1 lg:flex">
           {items.map((item) => (
             <NavLink key={item.to} item={item} active={current?.to === item.to} />
           ))}
@@ -70,7 +70,7 @@ export function Header() {
             >
               {initialsOf(user.fullName)}
             </span>
-            <span className="hidden text-left leading-tight lg:block">
+            <span className="hidden text-left leading-tight xl:block">
               <span className="block text-sm font-medium">{user.fullName}</span>
               <span className="block text-xs text-brand-foreground/60">
                 {ROLE_LABELS[user.role]}
@@ -93,7 +93,7 @@ export function Header() {
             type="button"
             variant="ghost"
             size="icon"
-            className="text-brand-foreground hover:bg-white/10 hover:text-brand-foreground aria-expanded:bg-white/15 aria-expanded:text-brand-foreground md:hidden"
+            className="text-brand-foreground hover:bg-white/10 hover:text-brand-foreground aria-expanded:bg-white/15 aria-expanded:text-brand-foreground lg:hidden"
             aria-expanded={menuOpen}
             aria-controls="mobile-nav"
             aria-label={menuOpen ? 'Close menu' : 'Open menu'}
@@ -105,7 +105,7 @@ export function Header() {
       </div>
 
       {menuOpen && (
-        <div id="mobile-nav" className="border-t border-white/10 md:hidden">
+        <div id="mobile-nav" className="border-t border-white/10 lg:hidden">
           <nav aria-label="Mobile" className="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-3">
             {items.map((item) => (
               <NavLink key={item.to} item={item} active={current?.to === item.to} block />
@@ -152,7 +152,7 @@ function NavLink({
       to={item.to}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-white/40',
+        'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-white/40',
         block ? 'w-full' : 'h-9',
         active
           ? 'bg-white/15 text-brand-foreground'

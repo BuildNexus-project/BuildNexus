@@ -164,7 +164,7 @@ export function ConstructionPaymentReportPage() {
   const filtered = summary !== null && (summary.fromUtc !== null || summary.toUtc !== null)
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-4xl flex-col gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle>Construction &amp; payment report</CardTitle>

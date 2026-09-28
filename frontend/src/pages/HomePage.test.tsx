@@ -116,8 +116,8 @@ describe('HomePage', () => {
   it.each<[Role, string[]]>([
     ['Client', ['Projects', 'New project', 'Progress', 'My costs', 'Your profile']],
     ['Architect', ['Projects', 'Project team', 'Your profile']],
-    ['ProjectManager', ['Projects', 'Project team', 'Your profile']],
-    ['Admin', ['Projects', 'Users', 'Design report', 'Your profile']],
+    ['ProjectManager', ['Projects', 'Project team', 'Build & payment', 'Your profile']],
+    ['Admin', ['Projects', 'Users', 'Design report', 'Build & payment', 'Your profile']],
   ])('offers a %s their own pages and the profile', (role, expected) => {
     renderPage(role, apiResponse(200, []))
 
