@@ -1,9 +1,10 @@
-# Design Service: its own database on the shared MySQL server and its own MySQL
-# user that can reach that database and nothing else.
+# Design Service: its own database on the shared MySQL server, its own MySQL user
+# that can reach that database and nothing else, and its own Event Hub on the
+# shared Event Hubs namespace.
 #
 # Independently redeployable is the point. Nothing here is shared with another
-# service except the server itself, so redeploying the Design Service neither
-# rebuilds nor restarts the other four.
+# service except the server and the namespace themselves, so redeploying the
+# Design Service neither rebuilds nor restarts the other four.
 
 resource "azurerm_mysql_flexible_database" "design_service" {
   # The same database name the local stack uses, so a connection string differs
@@ -78,4 +79,36 @@ resource "mysql_grant" "design_service" {
   # Issued over the same connection as the user, so it waits for the same
   # firewall propagation.
   depends_on = [time_sleep.mysql_firewall_propagation]
+}
+
+# --- Event Hub ---------------------------------------------------------------
+#
+# design-events: the one topic this service publishes to. On Event Hubs the
+# Event Hub IS the Kafka topic, so the name must match
+# KafkaDesignEventPublisher.Topic exactly — a publish to any other name has
+# nowhere to land.
+#
+# The Construction Service reads it, under its own construction-service consumer
+# group, to set up milestones for each approved design. That service is not
+# deployed yet; when its story lands it subscribes here and changes nothing in
+# this block.
+#
+# Declared here rather than left to appear on first publish, the way
+# KAFKA_AUTO_CREATE_TOPICS_ENABLE lets it locally, so it exists with the
+# partitions and retention chosen below before the service ever starts.
+
+resource "azurerm_eventhub" "design_events" {
+  name         = "design-events"
+  namespace_id = azurerm_eventhub_namespace.main.id
+
+  # One partition, the same as the local stack and as project-events: events
+  # are keyed by document id, and a consumer sees them in a single order. The
+  # count cannot change after creation on Standard, but the stack is rebuilt
+  # between demos anyway.
+  partition_count = 1
+
+  # Seven days, the most Standard allows and included in its price — and the
+  # local broker's own default. Also the window a Construction Service deployed
+  # later has to catch up on approvals published before it existed.
+  message_retention = 7
 }
