@@ -2,9 +2,9 @@
 
 **Sprint dates:** 2026-09-20 to 2026-09-29
 
-**Stories:** SCRUM-26 (US-13), SCRUM-27 (US-14), SCRUM-28 (US-15), SCRUM-29 (US-16), SCRUM-30 (US-17), SCRUM-32 (US-19), SCRUM-43 (Integration Testing)
+**Stories:** SCRUM-25 (US-12), SCRUM-26 (US-13), SCRUM-27 (US-14), SCRUM-28 (US-15), SCRUM-29 (US-16), SCRUM-30 (US-17), SCRUM-32 (US-19), SCRUM-37 (US-24), SCRUM-45 (US-32), SCRUM-54 (US-35c), SCRUM-43 (Integration Testing)
 
-**Delivered:** 7 of 7 planned stories. Points not reportable — see *What Didn't Go Well*.
+**Delivered:** 11 of 11 planned stories. Points not reportable — see *What Didn't Go Well*.
 
 ---
 
