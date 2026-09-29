@@ -1,10 +1,10 @@
 # Design Service: its own database on the shared MySQL server, its own MySQL user
-# that can reach that database and nothing else, and its own Event Hub on the
-# shared Event Hubs namespace.
+# that can reach that database and nothing else, its own Event Hub on the shared
+# Event Hubs namespace, and its own App Service on the shared plan.
 #
 # Independently redeployable is the point. Nothing here is shared with another
-# service except the server and the namespace themselves, so redeploying the
-# Design Service neither rebuilds nor restarts the other four.
+# service except the plan, the server and the namespace themselves, so
+# redeploying the Design Service neither rebuilds nor restarts the other four.
 
 resource "azurerm_mysql_flexible_database" "design_service" {
   # The same database name the local stack uses, so a connection string differs
@@ -111,4 +111,112 @@ resource "azurerm_eventhub" "design_events" {
   # local broker's own default. Also the window a Construction Service deployed
   # later has to catch up on approvals published before it existed.
   message_retention = 7
+}
+
+# --- App Service -------------------------------------------------------------
+
+resource "azurerm_linux_web_app" "design_service" {
+  # Globally unique across Azure — this becomes <name>.azurewebsites.net.
+  name                = var.design_service_app_name
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "southeastasia"
+  service_plan_id     = azurerm_service_plan.main.id
+
+  # Every endpoint but /health takes a bearer token, so plain HTTP is redirected
+  # away before the app sees the request — same as the other services.
+  https_only = true
+
+  site_config {
+    # Same reason as the Project Service: the outbox dispatcher is a background
+    # service inside this process, and an App Service idled out for want of
+    # HTTP traffic stops draining events onto design-events until the next
+    # request wakes it.
+    always_on = true
+
+    # Already in Program.cs and [AllowAnonymous]. The app answers it only after
+    # DbUp has migrated buildnexus_design_db at startup, as the scoped
+    # design_service user, and every ValidateOnStart check has passed.
+    health_check_path                 = "/health"
+    health_check_eviction_time_in_min = 5
+
+    application_stack {
+      # Matches <TargetFramework>net10.0</TargetFramework> in DesignService.csproj.
+      dotnet_version = "10.0"
+    }
+  }
+
+  # The publish-profile deploy in .github/workflows/ci.yml needs this on; see
+  # the User Service's App Service for the 401 it causes when off.
+  webdeploy_publish_basic_authentication_enabled = true
+  ftp_publish_basic_authentication_enabled       = false
+
+  # --- Application Settings ---------------------------------------------------
+  #
+  # Environment variables, double-underscored onto configuration keys exactly as
+  # infra/docker-compose.yml does locally. Nothing is hardcoded: secrets come from
+  # variables with no default or from resource attributes, and addresses are
+  # built from the resources they point at.
+  app_settings = {
+    # Not Development: turns Swagger off on a publicly reachable host.
+    ASPNETCORE_ENVIRONMENT = "Production"
+
+    # The scoped design_service user, not the server administrator. This
+    # service cannot reach any other service's database. SslMode=Required for
+    # the same reason as the other services'.
+    ConnectionStrings__DesignDb = join("", [
+      "Server=${azurerm_mysql_flexible_server.main.fqdn};",
+      "Port=3306;",
+      "Database=${azurerm_mysql_flexible_database.design_service.name};",
+      "User Id=${mysql_user.design_service.user};",
+      "Password=${var.design_service_db_password};",
+      "SslMode=Required;",
+    ])
+
+    # The shared convention, from the same three variables as every other
+    # service. No lifetime setting: that is baked into exp by the User Service.
+    Jwt__Issuer     = var.jwt_issuer
+    Jwt__Audience   = var.jwt_audience
+    Jwt__SigningKey = var.jwt_signing_key
+
+    # Azure Event Hubs' Kafka endpoint, authenticated and tuned exactly as the
+    # Project Service's is — see project-service.tf for what each value is and
+    # why. The username is the literal text $ConnectionString; the password is
+    # the namespace's connection string, straight from the resource.
+    Kafka__BootstrapServers      = local.eventhub_kafka_bootstrap_servers
+    Kafka__SecurityProtocol      = "SaslSsl"
+    Kafka__SaslMechanism         = "Plain"
+    Kafka__SaslUsername          = "$ConnectionString"
+    Kafka__SaslPassword          = azurerm_eventhub_namespace.main.default_primary_connection_string
+    Kafka__RequestTimeoutMs      = "60000"
+    Kafka__SocketKeepaliveEnable = "true"
+    Kafka__MetadataMaxAgeMs      = "180000"
+    Kafka__MessageTimeoutMs      = "60000"
+
+    # Every upload and listing asks the Project Service whether the caller is
+    # party to the project. Left to appsettings.json it would point at
+    # localhost, and every call would answer 502. HTTPS; trailing slash
+    # required.
+    Services__ProjectService__BaseUrl = "https://${azurerm_linux_web_app.project_service.default_hostname}/"
+
+    # Not in appsettings.json at all, and required at startup: a revision
+    # request asks the User Service for the Architect's name and email to
+    # notify, presenting the shared internal key.
+    Services__UserService__BaseUrl = "https://${azurerm_linux_web_app.user_service.default_hostname}/"
+    InternalService__ApiKey        = var.internal_service_api_key
+
+    # Also required at startup (ValidateOnStart) and absent from
+    # appsettings.json — the same sender the local stack uses. Email__SmtpHost
+    # is deliberately unset, as on the User Service: Program.cs then resolves
+    # IEmailSender to LoggingEmailSender, and revision-request emails go to the
+    # App Service log stream rather than to real addresses.
+    Email__FromAddress = "no-reply@buildnexus.local"
+  }
+
+  # The app runs its migrations as design_service the moment it starts, so the
+  # grant must exist first; the Event Hub must exist before the dispatcher's
+  # first publish to it.
+  depends_on = [
+    mysql_grant.design_service,
+    azurerm_eventhub.design_events,
+  ]
 }

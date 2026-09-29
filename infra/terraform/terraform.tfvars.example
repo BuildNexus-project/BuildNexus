@@ -91,6 +91,10 @@ project_service_db_password = "REPLACE-ME"
 
 # --- Design Service ----------------------------------------------------------
 
+# Only needed if the default "buildnexus-design-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# design_service_app_name = "buildnexus-design-service-2026"
+
 # Password for the Design Service's own MySQL user, which can reach
 # buildnexus_design_db and nothing else. Generate a fresh one, the same way and
 # under the same rules as project_service_db_password above:

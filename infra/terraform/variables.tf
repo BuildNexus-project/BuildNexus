@@ -168,6 +168,12 @@ variable "project_service_db_password" {
 
 # --- Design Service ----------------------------------------------------------
 
+variable "design_service_app_name" {
+  description = "Name of the Design Service App Service. Must be globally unique across Azure, since it becomes <name>.azurewebsites.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-design-service-2026"
+}
+
 variable "design_service_db_password" {
   description = "Password for the Design Service's own MySQL user, which is granted privileges on buildnexus_design_db and nothing else on the server. No default on purpose — supply it through TF_VAR_design_service_db_password or a git-ignored terraform.tfvars so it never reaches the repository."
   type        = string
