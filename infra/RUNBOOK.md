@@ -21,6 +21,9 @@ local run.
 | Project Service database | `buildnexus_project_db` | On the shared server above. Connects as its own `project_service` MySQL user, scoped to this one database. |
 | Event Hubs namespace | `buildnexus-events-2026` | Standard tier. The Kafka-compatible endpoint on `9093`, shared by every publishing service. |
 | Event Hub `project-events` | `project-events` | Inside the namespace above — the Kafka topic Project Service publishes to. |
+| Design Service | `buildnexus-design-service-2026` | <https://buildnexus-design-service-2026.azurewebsites.net> |
+| Design Service database | `buildnexus_design_db` | On the shared server above. Connects as its own `design_service` MySQL user, scoped to this one database. Also holds every uploaded design document — see "Where uploaded design documents are stored" below. |
+| Event Hub `design-events` | `design-events` | Inside the shared namespace above — the Kafka topic Design Service publishes to, and Construction Service reads. |
 | Log Analytics workspace | `buildnexus-logs` | Backs the Application Insights resource below. Capped at `daily_quota_gb = 1`. |
 | Application Insights | `buildnexus-appinsights` | Workspace-based. Wired into the User Service only, as SCRUM-47's proof of concept — see "Application settings" below. |
 
@@ -35,6 +38,30 @@ month. A resource that receives zero telemetry costs zero — there is no hourly
 charge to avoid by destroying these two between sessions, though `terraform
 destroy` still takes them with it along with everything else in the resource
 group.
+
+### Where uploaded design documents are stored
+
+In `buildnexus_design_db`, on the shared MySQL server — **not** on the App
+Service's filesystem, and not in Blob Storage. There is no storage account in
+this stack for them.
+
+SCRUM-54's acceptance criteria assumed uploads went to the local filesystem,
+which App Service does not keep across a restart or redeploy, and named Blob
+Storage as the fix. That was checked before the story started and the premise
+did not hold: Design Service has always kept each version's bytes in the
+`design_document_versions.file_bytes` column (a `LONGBLOB`, capped at 10 MB per
+file by `DesignFileValidator`), written in the same transaction as the version
+row. Deployed, that column lives on Azure Database for MySQL, so an upload
+survives restarts, redeploys and instance moves, and is covered by the server's
+seven-day backups. The decision was to keep it there rather than add a Blob
+Storage account — adding one would have meant changing the service's storage
+code, a second store that could disagree with its database row, and another
+resource to pay for.
+
+What this does **not** survive is `terraform destroy`. Uploads go with the rest
+of the database's rows — see the post-apply checklist below. That is the same
+for every service's data, and Blob Storage in this resource group would have
+been destroyed with it all the same.
 
 Terraform's own state lives somewhere else entirely — resource group
 `buildnexus-tfstate-rg`, storage account `buildnexustfstate2026`, container
@@ -76,8 +103,9 @@ MySQL elsewhere while the App Service stayed in centralindia would cross a regio
 boundary on every query.
 
 The location is written out as a literal on every resource in `terraform/main.tf`,
-`terraform/user-service.tf` and `terraform/project-service.tf` so it cannot be
-overridden back to a region that fails.
+`terraform/user-service.tf`, `terraform/project-service.tf` and
+`terraform/design-service.tf` so it cannot be overridden back to a region that
+fails.
 
 ## Why there is no Service Principal, and no infra.yml
 
@@ -166,8 +194,8 @@ its firewall from wherever Terraform is running — see `terraform_operator_ip`
 below.
 
 Finally the variables with no default — the two signing keys, the MySQL
-administrator password, the Project Service's own database password, and the
-machine's current public IP:
+administrator password, the Project and Design Services' own database
+passwords, and the machine's current public IP:
 
 ```
 cd infra/terraform
@@ -182,6 +210,10 @@ and the API Gateway, or every token the User Service issues comes back 401.
 
 `project_service_db_password` is a fresh password for Project Service's own
 MySQL user, distinct from the administrator password and never reused as it.
+`design_service_db_password` is the same thing for Design Service's own user —
+generate another fresh one rather than reusing Project Service's, so one leaked
+connection string still reaches only one database. A `terraform.tfvars` written
+before SCRUM-54 does not have it, and the next plan stops to ask for it.
 
 `terraform_operator_ip` is **not a one-time value** — it is compared against
 this machine's actual address on every apply, and Terraform has no way to
@@ -550,9 +582,12 @@ these are gone and must be redone:
 2. **The bootstrap Admin.** A consequence of (1). See below; there is no Admin
    account until someone makes one.
 3. **Each service's publish profile.** App Service regenerates its deployment
-   credentials when it is recreated, so both `AZURE_WEBAPP_PUBLISH_PROFILE_USER_SERVICE`
-   and `AZURE_WEBAPP_PUBLISH_PROFILE_PROJECT_SERVICE` are stale, and the matching
-   deploy job fails with a 401 that does not explain itself. Refresh each one:
+   credentials when it is recreated, so `AZURE_WEBAPP_PUBLISH_PROFILE_USER_SERVICE`,
+   `AZURE_WEBAPP_PUBLISH_PROFILE_PROJECT_SERVICE` and
+   `AZURE_WEBAPP_PUBLISH_PROFILE_DESIGN_SERVICE` are all stale, and the matching
+   deploy job fails with a 401 that does not explain itself. Refresh each one —
+   and create the Design Service's the first time, since the secret does not
+   exist until someone adds it:
 
    ```
    az webapp deployment list-publishing-profiles \
@@ -561,8 +596,8 @@ these are gone and must be redone:
      --xml > publish-profile.xml
    ```
 
-   using `buildnexus-user-service-2026` or `buildnexus-project-service-2026` for
-   `<app-name>`. Paste the whole file into GitHub → Settings → Secrets and
+   using `buildnexus-user-service-2026`, `buildnexus-project-service-2026` or
+   `buildnexus-design-service-2026` for `<app-name>`. Paste the whole file into GitHub → Settings → Secrets and
    variables → Actions → the matching secret name above, then delete the local
    copy each time. It is a credential, and `*.xml` is not git-ignored.
 
@@ -706,6 +741,76 @@ regenerated, for instance) shows up only as a failed publish, never as a failed
 startup. Confirm the whole path by creating or approving a project and tailing
 the log for either a `Published <EventType> <eventId> ... to project-events`
 line or a logged Kafka exception in its place.
+
+## Redeploying Design Service
+
+### The normal path
+
+Push a change under `services/design-service/**` to `main`. The
+`deploy-design-service` job in `.github/workflows/ci.yml` runs after the unit
+and integration test stages, publishes that one project, pushes it to its own
+App Service with its own publish profile, and polls `/health` until it answers
+200 — the same shape as the other two deploy jobs, in its own job and its own
+concurrency group. It neither depends on them nor they on it, so a Design
+Service deploy never rebuilds, restarts, or waits behind another service's.
+
+A change anywhere else does not deploy the Design Service — the job is filtered
+on that path and skipped otherwise.
+
+### Forcing a redeploy without a code change
+
+```
+dotnet publish services/design-service/DesignService.csproj -c Release -o ./publish
+cd publish && zip -r ../design-service.zip . && cd ..
+
+az webapp deploy --resource-group buildnexus-rg \
+  --name buildnexus-design-service-2026 \
+  --src-path design-service.zip --type zip
+```
+
+It carries Confluent.Kafka's native libraries too, so the same warning as the
+Project Service applies: on Windows, build the zip with Git Bash's `zip -r`, not
+`Compress-Archive`.
+
+To restart the process without deploying anything at all:
+
+```
+az webapp restart --resource-group buildnexus-rg --name buildnexus-design-service-2026
+```
+
+A restart or redeploy loses no uploaded document — they are in the database,
+not on the App Service's disk.
+
+### Rolling back
+
+Same constraints and the same three options as the User Service: revert the
+commit and push, re-run the last green deploy job as a stopgap, or deploy an
+older commit by hand in an emergency and follow it with a revert.
+
+### When a deploy goes green but the service does not answer
+
+```
+az webapp log tail --resource-group buildnexus-rg --name buildnexus-design-service-2026
+```
+
+The app validates its configuration at startup and refuses to boot on anything
+missing or inconsistent — everything the Project Service checks (the JWT key, a
+connection string that cannot reach MySQL as the `design_service` user, a
+missing or half-set `Kafka__*` security configuration), plus three of its own:
+`Services__UserService__BaseUrl`, `InternalService__ApiKey` and
+`Email__FromAddress`, none of which `appsettings.json` supplies.
+
+**`/health` answering 200 does not prove Event Hubs is reachable**, for the same
+reason as the Project Service: the producer only connects when the outbox
+dispatcher has an event to send. Confirm the whole path by uploading a design
+document (which publishes `DesignSubmitted`), and tailing the log for a
+`Published <EventType> <eventId> for document <documentId> to design-events`
+line or a logged Kafka exception in its place.
+
+**Uploads and listings also depend on the Project Service being up.** Every one
+asks the deployed Project Service whether the caller is party to the project,
+and answers `502` if it cannot get a reply. A Design Service that is healthy on
+`/health` but 502s on every document call is usually a stopped Project Service.
 
 ## Health checks across services (SCRUM-47)
 
@@ -971,6 +1076,25 @@ accident. Mailpit is local-only and is not deployed.
 | `Services__UserService__BaseUrl` | The deployed User Service's own URL. Without it, assigning an Architect or Project Manager answers `502`. |
 | `InternalService__ApiKey` | `var.internal_service_api_key`. Sensitive, no default. The same key the User Service checks; used to look up the names shown in a project's status history and team. The service refuses to start without it (32-byte minimum). |
 | `ASPNETCORE_ENVIRONMENT` | `Production`. Turns off Swagger. |
+
+### Design Service (`terraform/design-service.tf`)
+
+| Setting | Source |
+|---|---|
+| `ConnectionStrings__DesignDb` | Built from the server and database resources, using the scoped `design_service` MySQL user and `var.design_service_db_password` — never the server administrator. Carries `SslMode=Required`. |
+| `Jwt__SigningKey` / `Jwt__Issuer` / `Jwt__Audience` | The same shared variables as every other service. |
+| `Kafka__BootstrapServers` | The shared Event Hubs namespace's Kafka endpoint, `<namespace>.servicebus.windows.net:9093`. |
+| `Kafka__SecurityProtocol` / `Kafka__SaslMechanism` / `Kafka__SaslUsername` / `Kafka__SaslPassword` | Identical to the Project Service's: `SaslSsl` / `Plain` / the literal `$ConnectionString` / the namespace's `default_primary_connection_string`. |
+| `Kafka__RequestTimeoutMs` / `Kafka__SocketKeepaliveEnable` / `Kafka__MetadataMaxAgeMs` / `Kafka__MessageTimeoutMs` | `60000` / `true` / `180000` / `60000`, for the same reasons as the Project Service. |
+| `Services__ProjectService__BaseUrl` | The deployed Project Service's own URL. Every upload and listing checks project access there; without it they answer `502`. |
+| `Services__UserService__BaseUrl` | The deployed User Service's own URL, used to look up the Architect to notify of a revision request. Required at startup. |
+| `InternalService__ApiKey` | `var.internal_service_api_key`. Sensitive, no default. Required at startup (32-byte minimum). |
+| `Email__FromAddress` | `no-reply@buildnexus.local`, the same sender as the local stack. Required at startup and not in `appsettings.json`. |
+| `ASPNETCORE_ENVIRONMENT` | `Production`. Turns off Swagger. |
+
+`Email__SmtpHost` is deliberately unset, for the same reason as on the User
+Service: revision-request emails go to the log stream rather than to real
+addresses.
 
 ## Known issue: TLS interception breaks the Terraform plugin handshake
 

@@ -89,6 +89,20 @@ internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
 #
 project_service_db_password = "REPLACE-ME"
 
+# --- Design Service ----------------------------------------------------------
+
+# Only needed if the default "buildnexus-design-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# design_service_app_name = "buildnexus-design-service-2026"
+
+# Password for the Design Service's own MySQL user, which can reach
+# buildnexus_design_db and nothing else. Generate a fresh one, the same way and
+# under the same rules as project_service_db_password above:
+#
+#   openssl rand -base64 32
+#
+design_service_db_password = "REPLACE-ME"
+
 # --- Azure subscription ------------------------------------------------------
 
 # Normally left unset: the provider falls back to ARM_SUBSCRIPTION_ID and then
