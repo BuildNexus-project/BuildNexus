@@ -1,0 +1,4 @@
+# The JMeter design-upload sampler needs this file byte-identical to what
+# DesignFileValidator's %PDF- magic-byte check saw when it was tested - never
+# let checkout/commit line-ending conversion touch it.
+infra/performance-tests/fixtures/*.pdf binary
