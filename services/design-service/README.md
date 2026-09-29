@@ -12,8 +12,8 @@ the client can review the latest work while the full history is preserved
 - ADO.NET over MySQL (MySqlConnector) — direct SQL only, no ORM
 - JWT bearer authentication (validation only — the User Service issues tokens)
 
-This service is **REST-only**. It does not publish or consume Kafka events — no
-story has named one for it yet.
+Publishes business events to Kafka on the `design-events` topic, drained from a
+transactional outbox (US-23). It consumes nothing.
 
 ## Database
 Owns `buildnexus_design_db`. No other service may query it or hold a foreign key
@@ -83,6 +83,21 @@ caller is party to the project, a `403` or `404` is relayed as-is.
 - `Services:ProjectService:BaseUrl` — where to reach the Project Service for the
   per-project access check. `http://project-service:8080/` in the stack,
   `http://localhost:5002/` for a native run.
+- `Kafka:BootstrapServers` — the broker, supplied as `Kafka__BootstrapServers`:
+  `kafka:9092` in the stack, the Event Hubs namespace's
+  `<namespace>.servicebus.windows.net:9093` when deployed.
+- `Kafka:SecurityProtocol`, `Kafka:SaslMechanism`, `Kafka:SaslUsername`,
+  `Kafka:SaslPassword` — how the producer authenticates to the broker. **All
+  four are unset locally**, and the producer speaks plaintext to the compose
+  broker. Azure Event Hubs accepts only SASL over TLS, so the deployed service is
+  given all four: `SaslSsl`, `Plain`, the literal username `$ConnectionString`,
+  and the namespace's connection string as the password — a secret, only ever
+  supplied as `Kafka__SaslPassword`. All-or-nothing: the service refuses to start
+  on a partial set. Same settings as the Project Service.
+- `Kafka:RequestTimeoutMs`, `Kafka:SocketKeepaliveEnable`,
+  `Kafka:MetadataMaxAgeMs` — Event Hubs connection tuning. **Unset locally**, so
+  librdkafka keeps its defaults; deployed as `60000`, `true` and `180000`, the
+  values Event Hubs documents for librdkafka clients.
 
 ## Tests
 
