@@ -34,6 +34,26 @@ output "project_service_app_name" {
   value       = azurerm_linux_web_app.project_service.name
 }
 
+output "design_service_url" {
+  description = "Public base address of the Design Service. /health answers anonymously, and only once the app has migrated its database as the scoped design_service user — the quickest proof the deploy worked."
+  value       = "https://${azurerm_linux_web_app.design_service.default_hostname}"
+}
+
+output "design_service_app_name" {
+  description = "App Service name, as the `az webapp` commands in infra/RUNBOOK.md want it."
+  value       = azurerm_linux_web_app.design_service.name
+}
+
+output "api_gateway_url" {
+  description = "Public base address of the API Gateway — the one host the frontend calls. /health answers anonymously and does not depend on any service behind it."
+  value       = "https://${azurerm_linux_web_app.api_gateway.default_hostname}"
+}
+
+output "api_gateway_app_name" {
+  description = "App Service name, as the `az webapp` commands in infra/RUNBOOK.md want it."
+  value       = azurerm_linux_web_app.api_gateway.name
+}
+
 output "eventhub_kafka_bootstrap_servers" {
   description = "Kafka bootstrap address of the shared Event Hubs namespace. Not a secret; the connection string that authenticates against it is, and is not output."
   value       = local.eventhub_kafka_bootstrap_servers

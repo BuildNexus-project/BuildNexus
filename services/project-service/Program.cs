@@ -30,6 +30,17 @@ builder.Services.AddSingleton<IProjectEventPublisher, KafkaProjectEventPublisher
 // afterwards. Nothing on the request path waits for the broker.
 builder.Services.AddHostedService<OutboxDispatcher>();
 
+// Reads construction-events and moves a project through the build half of its
+// lifecycle (US-14). The Construction Service owns the build phase and announces
+// it; the project's own status lives here, so this service reacts. Nothing on any
+// request path waits on it.
+builder.Services.AddHostedService<ConstructionEventsConsumer>();
+
+// Reads payment-events and reflects each PaymentReceived onto the project's payment status
+// (US-24). The money stays in Payment Service; this keeps one derived fact locally so a project
+// can be read without asking that service anything. Nothing on any request path waits on it.
+builder.Services.AddHostedService<PaymentEventsConsumer>();
+
 // The User Service, asked over HTTP — with the Admin's own token — what role an
 // account holds before it is assigned to a project. Its address is validated at
 // startup for the same reason the JWT settings are: a service that cannot reach
@@ -44,6 +55,25 @@ builder.Services.AddOptions<UserServiceOptions>()
     .ValidateOnStart();
 
 builder.Services.AddHttpClient<IUserDirectoryClient, HttpUserDirectoryClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<UserServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
+
+// The shared key this service presents to the User Service's /api/internal
+// endpoints, to turn the account ids a project stores into names for whoever is
+// viewing it. Validated at startup at the same 32-byte bar as the JWT signing
+// key — see user-service's identically-named options, which check the same
+// value on the receiving side.
+builder.Services.AddOptions<InternalServiceOptions>()
+    .Bind(builder.Configuration.GetSection(InternalServiceOptions.SectionName))
+    .Validate(
+        o => Encoding.UTF8.GetByteCount(o.ApiKey) >= InternalServiceOptions.MinimumApiKeyBytes,
+        $"InternalService:ApiKey must be at least {InternalServiceOptions.MinimumApiKeyBytes} bytes.")
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IUserNameResolver, HttpUserNameResolver>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<UserServiceOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
@@ -73,6 +103,9 @@ builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    // A consumer that cannot say which group it reads under would either replay the
+    // whole topic on every restart or share offsets with an unrelated reader.
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
     // The broker security settings are optional — none of them is set locally —
     // but half of them is a mistake that would otherwise only show up as every
     // publish failing to connect. See KafkaOptions.HasConsistentSaslSettings.

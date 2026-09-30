@@ -113,6 +113,14 @@ variable "internal_service_api_key" {
   }
 }
 
+# --- API Gateway -------------------------------------------------------------
+
+variable "api_gateway_app_name" {
+  description = "Name of the API Gateway App Service. Must be globally unique across Azure, since it becomes <name>.azurewebsites.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-api-gateway-2026"
+}
+
 # --- User Service ------------------------------------------------------------
 
 variable "user_service_app_name" {
@@ -122,7 +130,7 @@ variable "user_service_app_name" {
 }
 
 variable "frontend_origin" {
-  description = "Origin the React app is served from, used to build the password reset link that is emailed to a user. Still the local dev server: the frontend has no deployed home until its own story lands."
+  description = "Origin the React app is served from. Used to build the password reset link that is emailed to a user, and as the one origin the API Gateway's CORS policy allows. Still the local dev server: the frontend has no deployed home until its own story lands."
   type        = string
   default     = "http://localhost:5173"
 }
@@ -163,5 +171,37 @@ variable "project_service_db_password" {
     # quietly undo that for anyone who can read this service's settings.
     condition     = var.project_service_db_password != var.mysql_administrator_password
     error_message = "project_service_db_password must differ from mysql_administrator_password."
+  }
+}
+
+# --- Design Service ----------------------------------------------------------
+
+variable "design_service_app_name" {
+  description = "Name of the Design Service App Service. Must be globally unique across Azure, since it becomes <name>.azurewebsites.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-design-service-2026"
+}
+
+variable "design_service_db_password" {
+  description = "Password for the Design Service's own MySQL user, which is granted privileges on buildnexus_design_db and nothing else on the server. No default on purpose — supply it through TF_VAR_design_service_db_password or a git-ignored terraform.tfvars so it never reaches the repository."
+  type        = string
+  sensitive   = true
+
+  # The same three checks as project_service_db_password, for the same reasons.
+  validation {
+    condition     = length(var.design_service_db_password) >= 8
+    error_message = "design_service_db_password must be at least 8 characters."
+  }
+
+  validation {
+    # Embedded in ConnectionStrings__DesignDb, where a semicolon ends the
+    # Password= value early.
+    condition     = !strcontains(var.design_service_db_password, ";")
+    error_message = "design_service_db_password must not contain a semicolon — it is embedded in a MySQL connection string."
+  }
+
+  validation {
+    condition     = var.design_service_db_password != var.mysql_administrator_password
+    error_message = "design_service_db_password must differ from mysql_administrator_password."
   }
 }

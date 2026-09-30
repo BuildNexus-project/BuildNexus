@@ -24,6 +24,7 @@ namespace BuildNexus.UserService.Tests;
 /// tests register carries the factory's test prefix and is removed afterwards.
 /// </para>
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(UserServiceCollection.Name)]
 public class AdminUserDirectoryTests
 {

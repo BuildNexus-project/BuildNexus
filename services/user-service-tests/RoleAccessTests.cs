@@ -16,6 +16,7 @@ namespace BuildNexus.UserService.Tests;
 /// <c>cd infra &amp;&amp; docker compose up -d user-db</c>. Every account these
 /// tests register carries the factory's test prefix and is removed afterwards.
 /// </remarks>
+[Trait("Category", "Integration")]
 [Collection(UserServiceCollection.Name)]
 public class RoleAccessTests
 {

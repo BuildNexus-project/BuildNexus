@@ -43,8 +43,86 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
 
     public MilestoneSetupRepository Repository { get; private set; } = null!;
 
+    /// <summary>
+    /// The real <see cref="Data.MilestoneRepository"/> over the same
+    /// development database. Added for US-12: the milestone tests need to
+    /// exercise the ADO.NET SQL — the gate check against
+    /// <c>milestone_setups</c>, the duplicate-key translation, the aggregate
+    /// query — which only a real engine can answer.
+    /// </summary>
+    public MilestoneRepository MilestoneRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.ProjectOwnerRepository"/> over the same
+    /// development database. Added for US-13: the ownership check is what keeps
+    /// one Client from reading another's build progress, so its SQL — the
+    /// <c>INSERT IGNORE</c> that absorbs a redelivered <c>ProjectCreated</c>,
+    /// and the <c>EXISTS</c> that answers the pair — is worth exercising
+    /// against the real engine rather than a stub.
+    /// </summary>
+    public ProjectOwnerRepository ProjectOwnerRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.ConstructionPhaseRepository"/> over the same
+    /// development database. Added for US-14: the three transitions are gated by
+    /// SQL that reads other tables in the same transaction — the design-approval
+    /// marker, the milestone tally — and the start gate is enforced by a primary
+    /// key rather than by a check in C#. None of that can be shown against a stub.
+    /// </summary>
+    public ConstructionPhaseRepository ConstructionPhaseRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.OutboxRepository"/> over the same development
+    /// database. Added for US-14: a transition's event is enqueued inside the
+    /// transition's own transaction, so the only honest way to assert that it was
+    /// announced — and that a refused transition announced nothing — is to read the
+    /// outbox table back after the fact.
+    /// </summary>
+    public OutboxRepository OutboxRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.PaymentSettlementRepository"/> over the same
+    /// development database. Added for US-14: the settlement marker is what AC-4's
+    /// handover gate reads, and only the real engine can show that the primary key
+    /// absorbs a redelivered event rather than raising a duplicate-key error.
+    /// </summary>
+    public PaymentSettlementRepository PaymentSettlementRepository { get; private set; } = null!;
+
+    /// <summary>
+    /// The real <see cref="Data.ConstructionReportRepository"/> over the same development
+    /// database. Added for US-19: the report is one aggregate query with an active-project
+    /// gate and three conditional counts in it, and only the real engine can show that the
+    /// gate excludes what it should and that the counts add up.
+    /// </summary>
+    public ConstructionReportRepository ConstructionReportRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
+
+    /// <summary>
+    /// Plants a <c>milestone_setups</c> row for a project — the local marker
+    /// the <c>DesignApproved</c> consumer would leave (US-23), and the row
+    /// <see cref="Data.MilestoneRepository.CreateAsync"/> and
+    /// <see cref="Data.MilestoneRepository.GetProgressForProjectAsync"/>
+    /// check to answer "has the design been approved?".
+    /// </summary>
+    /// <summary>
+    /// Plants a <c>payment_settlements</c> row for a project — the marker the
+    /// <c>FinalPaymentSettled</c> consumer would leave, and the row AC-4's handover
+    /// gate checks.
+    /// </summary>
+    public Task PlantSettledPaymentAsync(Guid projectId) =>
+        PaymentSettlementRepository.RecordSettlementIfAbsentAsync(
+            projectId,
+            sourceEventId: Guid.NewGuid(),
+            settledAtUtc: DateTime.UtcNow);
+
+    public Task PlantApprovedDesignAsync(Guid projectId) =>
+        Repository.CreatePlaceholderIfAbsentAsync(
+            projectId,
+            sourceDocumentId: Guid.NewGuid(),
+            sourceEventId: Guid.NewGuid(),
+            approvedAtUtc: DateTime.UtcNow);
 
     public Task InitializeAsync()
     {
@@ -60,25 +138,46 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
             })
             .Build();
 
-        Repository = new MilestoneSetupRepository(new MySqlConnectionFactory(configuration));
+        var connectionFactory = new MySqlConnectionFactory(configuration);
+        Repository = new MilestoneSetupRepository(connectionFactory);
+        MilestoneRepository = new MilestoneRepository(connectionFactory);
+        ProjectOwnerRepository = new ProjectOwnerRepository(connectionFactory);
+        ConstructionPhaseRepository = new ConstructionPhaseRepository(connectionFactory);
+        OutboxRepository = new OutboxRepository(connectionFactory);
+        PaymentSettlementRepository = new PaymentSettlementRepository(connectionFactory);
+        ConstructionReportRepository = new ConstructionReportRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Removes the placeholders this run created, leaving the development
-    /// database as it was found.
+    /// Removes the placeholders and milestones this run created, leaving the
+    /// development database as it was found.
     /// </summary>
     public async Task DisposeAsync()
     {
         await using var connection = new MySqlConnection(ConnectionString);
         await connection.OpenAsync();
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM milestone_setups WHERE project_id LIKE @prefix;";
-        command.Parameters.AddWithValue("@prefix", RunId + "-%");
-
-        await command.ExecuteNonQueryAsync();
+        // Every table uses project_id from the same run-scoped namespace, so a
+        // LIKE on the run prefix reaches every row this run created. No FKs
+        // between them, so the order does not matter — this order is a
+        // preference for tidiness, not a constraint.
+        foreach (var table in new[]
+                 {
+                     // The outbox leads: its rows point at construction_phases with
+                     // ON DELETE CASCADE, so deleting them explicitly first keeps
+                     // this cleanup readable rather than relying on the cascade.
+                     "construction_outbox_events", "construction_phases",
+                     "construction_milestones", "milestone_setups", "project_owners",
+                     "payment_settlements"
+                 })
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"DELETE FROM {table} WHERE project_id LIKE @prefix;";
+            command.Parameters.AddWithValue("@prefix", RunId + "-%");
+            await command.ExecuteNonQueryAsync();
+        }
 
         GC.SuppressFinalize(this);
     }

@@ -233,7 +233,7 @@ public class ProjectEventIntegrationTests
         var outbox = new FakeOutboxRepository();
 
         var controller = new ProjectsController(
-            repository, outbox, new FakeUserDirectoryClient(), NullLogger<ProjectsController>.Instance)
+            repository, outbox, new FakeUserDirectoryClient(), new FakeUserNameResolver(), NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {
@@ -335,5 +335,16 @@ public class ProjectEventIntegrationTests
             Guid projectManagerId,
             DateTime updatedAtUtc) =>
             Task.FromResult(false);
+        /// <summary>
+        /// Not part of this suite's story — US-24's payment reflection has its own coverage in
+        /// <c>PaymentEventsConsumerTests</c>. Throws rather than returning a value, so a change
+        /// that starts depending on it here cannot pass unnoticed.
+        /// </summary>
+        public Task<bool> UpdatePaymentStatusAsync(
+            Guid projectId,
+            ProjectPaymentStatus paymentStatus,
+            Guid sourceEventId,
+            DateTime occurredAtUtc) => throw new NotSupportedException();
+
     }
 }

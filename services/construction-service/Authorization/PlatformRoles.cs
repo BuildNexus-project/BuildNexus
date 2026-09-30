@@ -23,5 +23,15 @@ public static class PlatformRoles
     public const string Admin = nameof(Admin);
 
     /// <summary>All four names, for code that has to enumerate the roles.</summary>
+    /// <summary>
+    /// The two roles that read the construction reports (US-19): an Admin overseeing
+    /// the whole portfolio, and a Project Manager running the builds in it.
+    /// </summary>
+    /// <remarks>
+    /// Spelled as one constant rather than repeated in an attribute, so the pair cannot
+    /// drift between endpoints — and so widening it is one edit in one place.
+    /// </remarks>
+    public const string AdminOrProjectManager = $"{Admin},{ProjectManager}";
+
     public static readonly IReadOnlyList<string> All = [Client, Architect, ProjectManager, Admin];
 }

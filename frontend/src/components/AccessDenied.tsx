@@ -19,7 +19,7 @@ export function AccessDenied({
   allowedRoles: readonly Role[]
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
+    <main className="flex justify-center px-4 py-16 sm:px-6">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>You do not have access to this page</CardTitle>

@@ -62,7 +62,72 @@ public class EndpointRoleDeclarationTests
         // DesignApproved consumer has done. An Admin checks a run without
         // needing a role on any of the projects involved; the clients and
         // architects on those projects do not see this list.
-        Assert.Equal([PlatformRoles.Admin], RolesFor("List"));
+        Assert.Equal([PlatformRoles.Admin], RolesForActionOn<Controllers.MilestoneSetupsController>("List"));
+    }
+
+    [Fact]
+    public void Managing_construction_milestones_is_the_project_managers_alone()
+    {
+        // US-12: the story is framed around the Project Manager — no other
+        // role creates, moves, lists or reads these rows in this story.
+        // US-13 gave the Client a read of the same data without widening this
+        // gate: it is a separate Client-only endpoint on
+        // ConstructionProgressController, so the PM's contract did not move and
+        // the two gates cannot be widened by accident together.
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("Create"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("List"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("UpdateStatus"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("GetProgress"));
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("CreateFromTemplate"));
+    }
+
+    [Fact]
+    public void Moving_a_project_through_its_build_phase_is_the_project_managers_alone()
+    {
+        // US-14: starting construction and marking it complete are the Project
+        // Manager's formal decisions, and the phase read exists so their screen can
+        // show which one is available next. No other role transitions a build — a
+        // Client watches theirs through ConstructionProgressController, which reads
+        // and never writes.
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("Start"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("Complete"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("HandOver"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ConstructionPhaseController>("Get"));
+    }
+
+    [Fact]
+    public void The_construction_report_is_the_admins_and_project_managers()
+    {
+        // US-19: the story is framed around an Admin or a PM reading build progress and
+        // financial health together, so both roles — and only those two. A Client reads
+        // their own project through ConstructionProgressController and has no portfolio
+        // -wide view; an Architect is measured by the design reports, not these.
+        Assert.Equal(
+            [PlatformRoles.Admin, PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.ReportsController>("GetProgressReport"));
+    }
+
+    [Fact]
+    public void Watching_a_projects_construction_progress_is_the_clients_alone()
+    {
+        // US-13: the story is framed around the Client watching their own
+        // project. The role is only half the gate — the endpoint also refuses a
+        // Client who does not own the project, which
+        // ConstructionProgressControllerTests pins. Staff roles are outside it
+        // because they already have the Project Manager's richer view on
+        // MilestonesController, and an Admin administers accounts rather than
+        // watching builds.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.ConstructionProgressController>("GetSummary"));
     }
 
     private static IEnumerable<MethodInfo> Endpoints() =>
@@ -85,8 +150,17 @@ public class EndpointRoleDeclarationTests
         action.GetCustomAttribute<AllowAnonymousAttribute>() is not null
         || action.DeclaringType!.GetCustomAttribute<AllowAnonymousAttribute>() is not null;
 
-    private static IReadOnlyList<string> RolesFor(string actionName) =>
-        DeclaredRoles(Endpoints().Single(action => action.Name == actionName));
+    /// <summary>
+    /// Roles declared on one action of one controller. Disambiguates action
+    /// names that appear on more than one controller — e.g. <c>List</c> lives
+    /// on both <c>MilestoneSetupsController</c> and <c>MilestonesController</c>.
+    /// </summary>
+    private static IReadOnlyList<string> RolesForActionOn<TController>(string actionName)
+        where TController : ControllerBase =>
+        DeclaredRoles(typeof(TController)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Single(method => method.Name == actionName
+                              && method.GetCustomAttributes<HttpMethodAttribute>().Any()));
 
     private static IReadOnlyList<string> Split(string roles) =>
         roles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

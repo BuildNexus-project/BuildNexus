@@ -75,6 +75,121 @@ public class ProjectStatusEndpointTests
         Assert.True(detail.StatusHistory[0].ChangedAt <= detail.StatusHistory[1].ChangedAt);
     }
 
+    // -------------------------------------------------------------- names ----
+
+    [Fact]
+    public async Task Names_everyone_in_the_history_and_on_the_team()
+    {
+        // The ids are what is stored; the names are what a person reads. Every
+        // role that may open the project sees them — the Client here included,
+        // who could not have looked the names up themselves.
+        var names = new FakeUserNameResolver();
+        names.Names[ClientId] = "Ayesha Rahman";
+        names.Names[ProjectManagerId] = "Kasun Jayawardena";
+        names.Names[ArchitectId] = "Nimali Fernando";
+        var (controller, _) = ControllerFor(ClientId, PlatformRoles.Client, names: names);
+
+        var detail = await Detail(controller.GetProject(ProjectId));
+
+        Assert.Equal("Ayesha Rahman", detail.StatusHistory[0].ChangedByName);
+        Assert.Equal("Kasun Jayawardena", detail.StatusHistory[1].ChangedByName);
+        Assert.Equal("Nimali Fernando", detail.AssignedArchitectName);
+        Assert.Equal("Kasun Jayawardena", detail.AssignedProjectManagerName);
+    }
+
+    [Fact]
+    public async Task Keeps_the_ids_beside_the_names()
+    {
+        // The frontend falls back to the id for a name it was not given, so the id
+        // must never be traded away for one.
+        var names = new FakeUserNameResolver();
+        names.Names[ClientId] = "Ayesha Rahman";
+        var (controller, _) = ControllerFor(ClientId, PlatformRoles.Client, names: names);
+
+        var detail = await Detail(controller.GetProject(ProjectId));
+
+        Assert.Equal(ClientId, detail.StatusHistory[0].ChangedByUserId);
+        Assert.Equal(ArchitectId, detail.AssignedArchitectId);
+        Assert.Equal(ProjectManagerId, detail.AssignedProjectManagerId);
+    }
+
+    [Fact]
+    public async Task Still_shows_the_project_when_no_name_could_be_found_out()
+    {
+        // The resolver knows nobody — the User Service was down, or the accounts
+        // have been removed. A page that cannot show a name still shows the
+        // project, so this is a null name and not a failed request.
+        var (controller, _) = ControllerFor(ClientId, PlatformRoles.Client);
+
+        var detail = await Detail(controller.GetProject(ProjectId));
+
+        Assert.All(detail.StatusHistory, change => Assert.Null(change.ChangedByName));
+        Assert.Null(detail.AssignedArchitectName);
+        Assert.Null(detail.AssignedProjectManagerName);
+        Assert.Equal("Designing", detail.Status);
+    }
+
+    [Fact]
+    public async Task Names_one_person_when_only_one_can_be_found()
+    {
+        // A partial answer is still used: the ones found are named, the rest fall
+        // back, and nobody is given somebody else's name.
+        var names = new FakeUserNameResolver();
+        names.Names[ArchitectId] = "Nimali Fernando";
+        var (controller, _) = ControllerFor(ClientId, PlatformRoles.Client, names: names);
+
+        var detail = await Detail(controller.GetProject(ProjectId));
+
+        Assert.Equal("Nimali Fernando", detail.AssignedArchitectName);
+        Assert.Null(detail.AssignedProjectManagerName);
+        Assert.Null(detail.StatusHistory[0].ChangedByName);
+    }
+
+    [Fact]
+    public async Task Asks_only_about_the_people_on_this_project()
+    {
+        // The history's authors and the two assignees. The Project Manager is
+        // both, so they are passed twice; collapsing that is the resolver's job.
+        var names = new FakeUserNameResolver();
+        var (controller, _) = ControllerFor(ClientId, PlatformRoles.Client, names: names);
+
+        await controller.GetProject(ProjectId);
+
+        Assert.Equal(1, names.Calls);
+        Assert.Equal(
+            new HashSet<Guid> { ClientId, ProjectManagerId, ArchitectId },
+            names.LastAsked.ToHashSet());
+    }
+
+    [Fact]
+    public async Task Does_not_ask_for_anyone_when_the_caller_may_not_open_the_project()
+    {
+        // Refused before any lookup: a caller with no business here is not a
+        // reason to call the User Service.
+        var names = new FakeUserNameResolver();
+        var (controller, _) = ControllerFor(OutsiderId, PlatformRoles.Client, names: names);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(await controller.GetProject(ProjectId)));
+
+        Assert.Equal(0, names.Calls);
+    }
+
+    [Fact]
+    public async Task Names_the_author_of_the_change_in_the_reply_to_making_it()
+    {
+        // The screen updates from this reply rather than refetching, so the new
+        // entry has to arrive already named.
+        var names = new FakeUserNameResolver();
+        names.Names[ArchitectId] = "Nimali Fernando";
+        var (controller, _) = ControllerFor(ArchitectId, PlatformRoles.Architect, names: names);
+
+        var detail = await Detail(controller.UpdateProjectStatus(ProjectId, Request("DesignApproved")));
+
+        var newest = detail.StatusHistory[^1];
+        Assert.Equal("DesignApproved", newest.ToStatus);
+        Assert.Equal("Nimali Fernando", newest.ChangedByName);
+    }
+
     [Fact]
     public async Task Tells_the_caller_which_statuses_the_project_may_move_to()
     {
@@ -339,7 +454,8 @@ public class ProjectStatusEndpointTests
     private static (ProjectsController Controller, FakeProjectRepository Repository) ControllerFor(
         Guid userId,
         string role,
-        string? subject = null)
+        string? subject = null,
+        FakeUserNameResolver? names = null)
     {
         var repository = new FakeProjectRepository();
         repository.Seed(SeedProject(), SeedHistory());
@@ -348,6 +464,7 @@ public class ProjectStatusEndpointTests
             repository,
             new FakeOutboxRepository(),
             new FakeUserDirectoryClient(),
+            names ?? new FakeUserNameResolver(),
             NullLogger<ProjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -528,6 +645,17 @@ public class ProjectStatusEndpointTests
             Guid projectManagerId,
             DateTime updatedAtUtc) =>
             Task.FromResult(false);
+        /// <summary>
+        /// Not part of this suite's story — US-24's payment reflection has its own coverage in
+        /// <c>PaymentEventsConsumerTests</c>. Throws rather than returning a value, so a change
+        /// that starts depending on it here cannot pass unnoticed.
+        /// </summary>
+        public Task<bool> UpdatePaymentStatusAsync(
+            Guid projectId,
+            ProjectPaymentStatus paymentStatus,
+            Guid sourceEventId,
+            DateTime occurredAtUtc) => throw new NotSupportedException();
+
     }
 
 }

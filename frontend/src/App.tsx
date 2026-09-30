@@ -3,20 +3,24 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import { RoleRoute } from '@/auth/RoleRoute'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
+import { ConstructionProgressPage } from '@/pages/ConstructionProgressPage'
+import { ConstructionPaymentReportPage } from '@/pages/ConstructionPaymentReportPage'
 import { DesignApprovalReportPage } from '@/pages/DesignApprovalReportPage'
 import { DesignDocumentsPage } from '@/pages/DesignDocumentsPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { HomePage } from '@/pages/HomePage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { MyProjectCostsPage } from '@/pages/MyProjectCostsPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, CLIENT_ROLES, PROJECT_STAFF_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES, REPORTING_ROLES } from '@/lib/roles'
 
 export default function App() {
   return (
@@ -88,11 +92,59 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        {/* Client-only, matching the Payment Service's own gate on the
+            ownership-scoped cost reads. Which project's costs a Client may see
+            is still the service's decision — it refuses one they do not own —
+            but the screen itself is meaningless to any other role, which has
+            the richer /projects/:id/costs view instead. */}
+        <Route
+          path="/my-costs"
+          element={
+            <RoleRoute allowedRoles={CLIENT_ROLES}>
+              <MyProjectCostsPage />
+            </RoleRoute>
+          }
+        />
+        {/* Project-Manager and Admin, matching the Payment Service's own gate on
+            generating a quotation and raising an invoice. An Architect designs
+            rather than prices, and a Client is told the figure rather than
+            setting it — they see their own costs through /my-costs instead. */}
+        <Route
+          path="/projects/:projectId/costs"
+          element={
+            <RoleRoute allowedRoles={COST_MANAGEMENT_ROLES}>
+              <ProjectCostsPage />
+            </RoleRoute>
+          }
+        />
+        {/* Client-only, matching the Construction Service's own gate on the
+            progress read. Which project's build a Client may watch is still the
+            service's decision — it refuses one they do not own — but the screen
+            itself is meaningless to any other role, which has the Project
+            Manager's richer milestone view instead. */}
+        <Route
+          path="/progress"
+          element={
+            <RoleRoute allowedRoles={CLIENT_ROLES}>
+              <ConstructionProgressPage />
+            </RoleRoute>
+          }
+        />
         <Route
           path="/admin/users"
           element={
             <RoleRoute allowedRoles={ADMIN_ROLES}>
               <AdminUsersPage />
+            </RoleRoute>
+          }
+        />
+        {/* Admin and Project Manager, so not under /admin: the combined report is as much
+            the PM's view of their builds and their billing as it is an admin one. */}
+        <Route
+          path="/reports/construction-payment"
+          element={
+            <RoleRoute allowedRoles={REPORTING_ROLES}>
+              <ConstructionPaymentReportPage />
             </RoleRoute>
           }
         />

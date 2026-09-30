@@ -80,6 +80,23 @@ public class Project
     /// </summary>
     public Guid? AssignedProjectManagerId { get; set; }
 
+    /// <summary>
+    /// Where the project stands financially, reflected from the Payment Service's
+    /// <c>PaymentReceived</c> events (US-24). <see cref="ProjectPaymentStatus.NotInvoiced"/>
+    /// until one arrives.
+    /// </summary>
+    public ProjectPaymentStatus PaymentStatus { get; set; }
+
+    /// <summary>When the payment status last moved, or <c>null</c> while it has never moved.</summary>
+    public DateTime? PaymentStatusUpdatedAt { get; set; }
+
+    /// <summary>
+    /// The <c>eventId</c> of the last <c>PaymentReceived</c> applied, or <c>null</c> if none has
+    /// been. Kafka delivers at least once, so this is what makes a redelivery a no-op rather
+    /// than a second write with a newer timestamp.
+    /// </summary>
+    public Guid? LastPaymentEventId { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }

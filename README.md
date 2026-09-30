@@ -8,6 +8,12 @@ Two frameworks, standardized across the whole codebase (US-29):
 - **Backend — xUnit.** Every .NET service that has any code has a matching `*-service-tests` project beside it (`services/user-service-tests`, `services/project-service-tests`, `services/design-service-tests`, `services/construction-service-tests`) plus `api-gateway-tests`. Run one with `dotnet test services/<name>/<Project>.csproj`; CI runs all of them on every push.
 - **Frontend — Vitest + React Testing Library.** Tests live beside the code they cover, as `*.test.ts` / `*.test.tsx`. Run with `npm test` from `frontend/`; CI runs the same command.
 
+  **Use the Node version in `.nvmrc` (`nvm use` from anywhere in the repo).** Node 25
+  ships an experimental Web Storage API whose `localStorage` replaces jsdom's on the
+  test global, and every frontend test then fails in `src/test/setup.ts` with
+  `localStorage.clear is not a function` — a local-only breakage, since CI reads the
+  same `.nvmrc`.
+
 Conventions used across both:
 
 - **Fakes over mocks** for anything a unit test stands in for — an `IProjectRepository`, an `IUserDirectoryClient`, an `ApiError` — so a test reads as "given this data" rather than "expect this call".

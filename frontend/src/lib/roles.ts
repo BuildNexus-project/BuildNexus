@@ -45,6 +45,29 @@ export const CLIENT_ROLES: readonly Role[] = ['Client']
  */
 export const STATUS_CHANGE_ROLES: readonly Role[] = ['Architect', 'ProjectManager', 'Admin']
 
+/**
+ * The roles that price a project, mirroring the Payment Service's own gate on
+ * generating a quotation and raising an invoice (US-15).
+ *
+ * An Architect is outside it: they design the building, they do not cost it. So
+ * is a Client — they are told what the build is expected to cost and what has
+ * been billed, but the figure is the company's word, not the customer's. The
+ * service still refuses them whatever this does.
+ */
+export const COST_MANAGEMENT_ROLES: readonly Role[] = ['ProjectManager', 'Admin']
+
+/**
+ * The roles that read the combined construction and payment report (US-19), mirroring the
+ * gate both reporting endpoints carry.
+ *
+ * The same pair as {@link COST_MANAGEMENT_ROLES} today, and deliberately its own constant
+ * rather than a reuse of it: that one is about who may *price* a project — a write — and
+ * narrowing it later should not silently narrow who may read a report. A Client sees their
+ * own project's progress and billing on their own pages; neither role here is about one
+ * project.
+ */
+export const REPORTING_ROLES: readonly Role[] = ['ProjectManager', 'Admin']
+
 /** Display names — the wire value `ProjectManager` reads badly in a UI. */
 export const ROLE_LABELS: Record<Role, string> = {
   Client: 'Client',

@@ -29,6 +29,17 @@ public class KafkaOptions
     public int MessageTimeoutMs { get; set; } = 5000;
 
     /// <summary>
+    /// The consumer group this service reads <c>construction-events</c> under.
+    /// </summary>
+    /// <remarks>
+    /// Added with US-14, the first story in which this service consumes as well as
+    /// publishes. One group means one logical reader: restarts and multiple replicas
+    /// share the partitions and the committed offset rather than each replaying the
+    /// topic and each moving the same project again.
+    /// </remarks>
+    public string ConsumerGroupId { get; set; } = "project-service";
+
+    /// <summary>
     /// How the producer connects to the broker, supplied as
     /// <c>Kafka__SecurityProtocol</c>: <c>SaslSsl</c> for Azure Event Hubs, left
     /// unset for the local broker.

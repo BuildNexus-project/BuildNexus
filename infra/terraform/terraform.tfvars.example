@@ -64,14 +64,23 @@ internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
 # jwt_issuer   = "BuildNexusAuth"
 # jwt_audience = "BuildNexusServices"
 
+# --- API Gateway -------------------------------------------------------------
+
+# Only needed if the default "buildnexus-api-gateway-2026" is already taken — the
+# name is global, and it becomes <name>.azurewebsites.net. The gateway needs no
+# secret of its own: it reuses jwt_signing_key above, which must be the same key
+# the User Service signs with.
+# api_gateway_app_name = "buildnexus-api-gateway-2026"
+
 # --- User Service ------------------------------------------------------------
 
 # Only needed if the default "buildnexus-user-service-2026" is already taken —
 # the name is global, and it becomes <name>.azurewebsites.net.
 # user_service_app_name = "buildnexus-user-service-2026"
 
-# Where the emailed password reset link points. Still the local dev server,
-# because the frontend has no deployed home yet.
+# Where the emailed password reset link points, and the one origin the API
+# Gateway's CORS policy allows. Still the local dev server, because the frontend
+# has no deployed home yet.
 # frontend_origin = "http://localhost:5173"
 
 # --- Project Service ---------------------------------------------------------
@@ -88,6 +97,20 @@ internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
 #   openssl rand -base64 32
 #
 project_service_db_password = "REPLACE-ME"
+
+# --- Design Service ----------------------------------------------------------
+
+# Only needed if the default "buildnexus-design-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# design_service_app_name = "buildnexus-design-service-2026"
+
+# Password for the Design Service's own MySQL user, which can reach
+# buildnexus_design_db and nothing else. Generate a fresh one, the same way and
+# under the same rules as project_service_db_password above:
+#
+#   openssl rand -base64 32
+#
+design_service_db_password = "REPLACE-ME"
 
 # --- Azure subscription ------------------------------------------------------
 

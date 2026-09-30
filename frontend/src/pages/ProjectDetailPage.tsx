@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useParams } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -26,6 +30,27 @@ import { Textarea } from '@/components/ui/textarea'
 import { ApiError, apiErrorMessage } from '@/lib/api'
 import { fetchAllUsers, type AdminUserSummary } from '@/lib/auth-api'
 import {
+  completeConstruction,
+  CONSTRUCTION_PHASE_STATUS_LABELS,
+  createMilestone,
+  createMilestonesFromTemplate,
+  fetchConstructionPhase,
+  fetchProjectMilestones,
+  handOverConstruction,
+  fetchProjectProgress,
+  isStaleStateRefusal,
+  MILESTONE_STATUS_LABELS,
+  MILESTONE_STATUSES,
+  startConstruction,
+  updateMilestoneStatus,
+  type ConstructionPhase,
+  type Milestone,
+  type MilestoneStatus,
+  type ProjectProgress,
+} from '@/lib/construction-api'
+import { createMilestoneSchema, type CreateMilestoneValues } from '@/lib/construction-schemas'
+import { applyApiErrorToForm } from '@/lib/form-errors'
+import {
   assignArchitect,
   assignProjectManager,
   cancelProject,
@@ -38,7 +63,7 @@ import {
 } from '@/lib/project-api'
 import { deliveryOf, needsAttention } from '@/lib/project-events'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
-import { ADMIN_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
+import { ADMIN_ROLES, COST_MANAGEMENT_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
 
 /** A date and time the service sent, as a reader would write it. */
 function formatMoment(iso: string): string {
@@ -204,6 +229,736 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 }
 
 /**
+ * The construction milestones for a project (US-12) — one row per milestone,
+ * with a Select to move each one along and a small form to add the next one.
+ * Above the table sits a live progress rollup: a percentage the service
+ * recomputes on every read from the milestones behind it, so what shows
+ * matches what is stored.
+ *
+ * Rendered only for a Project Manager: every endpoint behind this section is
+ * PM-only, and offering controls the service will refuse is worse than not
+ * showing them at all. A caller whose project has not yet had its design
+ * approved sees a short explanation of when the section will open rather than
+ * a failed request.
+ */
+function MilestonesSection({
+  projectId,
+  projectStatus,
+}: {
+  projectId: string
+  projectStatus: ProjectStatus
+}) {
+  const { authFetch } = useAuth()
+
+  const [milestones, setMilestones] = useState<Milestone[] | null>(null)
+  const [progress, setProgress] = useState<ProjectProgress | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [designNotReadyYet, setDesignNotReadyYet] = useState(false)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  // "Create from template" one-click flow: applyingTemplate flips true while
+  // the POST is in flight so the button can show a busy label and refuse a
+  // double-click. templateError surfaces the service's own reason (a design
+  // -not-approved 400, or anything else) next to the button.
+  const [applyingTemplate, setApplyingTemplate] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateMilestoneValues>({
+    resolver: zodResolver(createMilestoneSchema),
+    defaultValues: { name: '' },
+  })
+
+  // The service refuses milestone reads and writes for a project whose
+  // milestone_setups row has not been planted — Pending and Designing are
+  // exactly the statuses where that row does not yet exist. Not asking at
+  // all beats asking and rendering an error the caller cannot act on.
+  // Cancelled is left out on purpose: a closed-out project has no
+  // construction plan, so the section would only ever be read-only clutter.
+  const canHaveMilestones =
+    projectStatus === 'DesignApproved' ||
+    projectStatus === 'Construction' ||
+    projectStatus === 'Completed'
+
+  /**
+   * The load pass — extracted so the initial useEffect and the "Try again"
+   * button on the designNotReadyYet variant both run the same code. Wrapped
+   * in useCallback so the effect's dependency array stays stable; without
+   * that, the effect would refire on every render.
+   *
+   * Returns a `cancelled` guard the effect can flip during teardown, so a
+   * component that unmounts mid-fetch does not call setState on a dead
+   * instance. The retry button passes a fresh guard that never flips —
+   * the click is a foreground action, not a lifecycle race.
+   */
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
+      // Clear the recoverable states before the new attempt so the UI does
+      // not show a stale "try again" hint while the retry is in flight.
+      setDesignNotReadyYet(false)
+      setLoadError(null)
+
+      try {
+        // Both concurrent. Progress can 404 on a narrow race — the project
+        // moved to DesignApproved but the DesignApproved event has not been
+        // consumed by the Construction Service yet — so a 404 here becomes
+        // a short "try again" note rather than a red error.
+        const [milestonesResult, progressResult] = await Promise.all([
+          fetchProjectMilestones(authFetch, projectId),
+          fetchProjectProgress(authFetch, projectId).catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 404) {
+              return null
+            }
+            throw error
+          }),
+        ])
+
+        if (isCancelled()) {
+          return
+        }
+
+        setMilestones(milestonesResult)
+        setProgress(progressResult)
+        setDesignNotReadyYet(progressResult === null)
+      } catch (error) {
+        if (!isCancelled()) {
+          setLoadError(apiErrorMessage(error, 'Could not load milestones for this project.'))
+        }
+      }
+    },
+    [authFetch, projectId],
+  )
+
+  useEffect(() => {
+    if (!canHaveMilestones) {
+      return
+    }
+
+    let cancelled = false
+    void load(() => cancelled)
+
+    return () => {
+      cancelled = true
+    }
+  }, [canHaveMilestones, load])
+
+  /**
+   * Re-reads the progress rollup after something has changed the milestones.
+   *
+   * AC-3: the percentage is recomputed by the service on every read, so this
+   * is what makes the number on screen match the row the PM just moved. A
+   * 404 that only appears now — after the project used to answer — is the
+   * same race as on the initial load; the same friendly note is shown.
+   */
+  async function refreshProgress() {
+    try {
+      const fresh = await fetchProjectProgress(authFetch, projectId)
+      setProgress(fresh)
+      setDesignNotReadyYet(false)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        setProgress(null)
+        setDesignNotReadyYet(true)
+      }
+      // Any other error: leave the existing progress number in place rather
+      // than blank the value the PM is looking at. The status-change error
+      // banner already tells them the change itself failed.
+    }
+  }
+
+  async function onCreate(values: CreateMilestoneValues) {
+    setFormError(null)
+
+    try {
+      const created = await createMilestone(authFetch, projectId, { name: values.name })
+
+      // Append locally rather than refetch the list — the service ordered the
+      // rows oldest-first and this new one is the newest, so it belongs at
+      // the end. One fewer request, one less flicker for the PM.
+      setMilestones((previous) => (previous ? [...previous, created] : [created]))
+      reset({ name: '' })
+
+      await refreshProgress()
+    } catch (error) {
+      // A 400 detail from the service names the specific reason — the
+      // design has not yet been approved, or the name failed validation —
+      // and applyApiErrorToForm routes per-field messages to the form.
+      // A 409 (duplicate name) has no field to attach to, so its detail
+      // reads as the form-level message here.
+      setFormError(
+        applyApiErrorToForm(error, setError, 'Could not add this milestone. Please try again.'),
+      )
+    }
+  }
+
+  async function onStatusChange(milestone: Milestone, next: MilestoneStatus) {
+    if (next === milestone.status) {
+      return
+    }
+
+    setUpdateError(null)
+    setUpdatingId(milestone.id)
+
+    try {
+      const updated = await updateMilestoneStatus(authFetch, milestone.id, next)
+
+      setMilestones((previous) =>
+        previous ? previous.map((row) => (row.id === updated.id ? updated : row)) : null,
+      )
+
+      // AC-3: the percentage recalculates automatically on every status
+      // change. The PATCH reply carries the fresh milestone but not the
+      // rollup — that is a separate query — so the number below is re-read
+      // to keep it in step with the row that just moved.
+      await refreshProgress()
+    } catch (error) {
+      setUpdateError(apiErrorMessage(error, 'Could not update this milestone. Please try again.'))
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  /**
+   * Plants the seven canonical milestones on the project in one call.
+   *
+   * The service side is idempotent (names already on the project are
+   * silently skipped), so a race with the PM typing a milestone by hand in
+   * the same second, or a repeat click, is harmless — the response is the
+   * union of what was already there and what was just inserted, which we
+   * set as the whole list. The progress rollup then refreshes for AC-3.
+   */
+  async function applyTemplate() {
+    setTemplateError(null)
+    setApplyingTemplate(true)
+
+    try {
+      const result = await createMilestonesFromTemplate(authFetch, projectId)
+      // The response is the full template set (previously-present +
+      // newly-inserted) in canonical order — set it as the list rather
+      // than appending, since the template call is a state-setting
+      // operation from the PM's point of view: "make the project look
+      // like the template". Ordering is already correct on the wire.
+      setMilestones(result)
+      await refreshProgress()
+    } catch (error) {
+      setTemplateError(
+        apiErrorMessage(error, 'Could not apply the template. Please try again.'),
+      )
+    } finally {
+      setApplyingTemplate(false)
+    }
+  }
+
+  if (!canHaveMilestones) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          Milestones open once this project's design has been approved.
+        </p>
+      </section>
+    )
+  }
+
+  if (designNotReadyYet) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p className="text-muted-foreground text-sm">
+          This project's design approval hasn't reached the Construction Service yet. Try again in a
+          moment.
+        </p>
+        {/* Recoverable state → give the PM the action they need, so the
+            section is not a dead-end that forces a full-page reload. The
+            button re-runs the same load pass the effect ran on mount. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={() => {
+            void load(() => false)
+          }}
+        >
+          Try again
+        </Button>
+      </section>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p role="alert" className="text-destructive text-sm">
+          {loadError}
+        </p>
+      </section>
+    )
+  }
+
+  if (milestones === null || progress === null) {
+    return (
+      <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <p className="text-muted-foreground text-sm">Loading milestones…</p>
+      </section>
+    )
+  }
+
+  return (
+    <section aria-labelledby="milestones-heading" data-testid="milestones-panel" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="milestones-heading" className="text-sm font-medium">
+          Milestones
+        </h2>
+        <span className="text-muted-foreground text-xs">
+          {progress.completedMilestones} of {progress.totalMilestones} completed
+        </span>
+      </div>
+
+      {/* The rollup: a decimal-precise number and a bar. tabular-nums so the
+          two decimals do not shift the layout as the value moves. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between">
+          <span className="text-2xl font-semibold tabular-nums">
+            {progress.progressPercent.toFixed(2)}%
+          </span>
+          <span className="text-muted-foreground text-xs">
+            Recalculates automatically as milestones move.
+          </span>
+        </div>
+        <div
+          role="progressbar"
+          aria-valuenow={Math.round(progress.progressPercent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Project progress"
+          className="bg-muted h-2 w-full overflow-hidden rounded-full"
+        >
+          <div
+            className="bg-primary h-full transition-[width] duration-500 ease-out"
+            style={{ width: `${progress.progressPercent}%` }}
+          />
+        </div>
+      </div>
+
+      {milestones.length === 0 ? (
+        // Empty state — the one place the "Create from template" button
+        // lives. Once the PM has any milestone (template or hand-typed)
+        // the button disappears: the idempotent backend would tolerate a
+        // repeat click, but keeping the button visible after the template
+        // lands would invite confusion about what a second click would do.
+        <div className="flex flex-col gap-3">
+          <p className="text-muted-foreground text-sm">
+            No milestones defined yet. Add the first one below, or use the standard construction
+            template.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="self-start"
+              onClick={() => {
+                void applyTemplate()
+              }}
+              disabled={applyingTemplate}
+            >
+              {applyingTemplate ? 'Creating…' : 'Create from template'}
+            </Button>
+            <span className="text-muted-foreground text-xs">
+              Foundation, Walls, Roof, Electrical, Plumbing, Painting, Finishing.
+            </span>
+          </div>
+          {templateError && (
+            <p role="alert" className="text-destructive text-sm">
+              {templateError}
+            </p>
+          )}
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Milestone</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last updated</TableHead>
+            </TableRow>
+          </TableHeader>
+
+          <TableBody>
+            {milestones.map((milestone) => (
+              <TableRow key={milestone.id}>
+                <TableCell className="font-medium">{milestone.name}</TableCell>
+                <TableCell>
+                  <Select
+                    value={milestone.status}
+                    onValueChange={(value) => {
+                      if (value) {
+                        void onStatusChange(milestone, value as MilestoneStatus)
+                      }
+                    }}
+                    disabled={updatingId !== null}
+                  >
+                    <SelectTrigger
+                      className="w-full sm:w-40"
+                      aria-label={`Change status of ${milestone.name}`}
+                    >
+                      <SelectValue>
+                        {(value: MilestoneStatus | null) =>
+                          value ? MILESTONE_STATUS_LABELS[value] : '—'
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MILESTONE_STATUSES.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {MILESTONE_STATUS_LABELS[status]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs">
+                  {formatMoment(milestone.updatedAtUtc)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {updateError && (
+        <p role="alert" className="text-destructive text-sm">
+          {updateError}
+        </p>
+      )}
+
+      <form
+        onSubmit={handleSubmit(onCreate)}
+        noValidate
+        className="flex flex-col gap-3 sm:flex-row sm:items-end"
+      >
+        <Field className="flex-1">
+          <FieldLabel htmlFor="milestoneName">Add a milestone</FieldLabel>
+          <Input
+            id="milestoneName"
+            placeholder="e.g. Foundation poured"
+            aria-invalid={Boolean(errors.name)}
+            {...register('name')}
+          />
+          <FieldError errors={[errors.name]} />
+        </Field>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Adding…' : 'Add'}
+        </Button>
+      </form>
+
+      {formError && (
+        <p role="alert" className="text-destructive text-sm">
+          {formError}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
+ * A project's build phase, and the one transition the Project Manager can make
+ * next (US-14).
+ *
+ * Three gated transitions, and the whole point of this panel is that only the one
+ * that is actually available is offered: a build that has not started shows Start,
+ * one under way shows Mark complete, and a finished one shows where it stands.
+ *
+ * The preconditions themselves are deliberately not re-checked here. The service
+ * checks each one inside the transaction that writes and refuses anything out of
+ * order (AC-3) with a sentence written for the PM to read — "Define at least one
+ * construction milestone before starting the build" — which this panel renders
+ * verbatim. Mirroring those checks in the browser would mean a second copy of the
+ * rules that can disagree with the real one, and it would need the milestone
+ * rollup that {@link MilestonesSection} already loads: a second GET of the same
+ * data, and two numbers on one screen that can drift apart.
+ *
+ * Rendered only for a Project Manager, like {@link MilestonesSection}: every
+ * endpoint behind it is PM-only.
+ */
+function ConstructionPhaseSection({
+  projectId,
+  projectStatus,
+}: {
+  projectId: string
+  projectStatus: ProjectStatus
+}) {
+  const { authFetch } = useAuth()
+
+  // null means "construction has not started" — a real state, not missing data —
+  // so loading is tracked separately rather than inferred from the phase.
+  const [phase, setPhase] = useState<ConstructionPhase | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [transitioning, setTransitioning] = useState<'start' | 'complete' | 'handover' | null>(null)
+  const [transitionError, setTransitionError] = useState<string | null>(null)
+
+  // Same gate as the milestones section: before the design is approved there is no
+  // construction plan for the Construction Service to know about, so asking would
+  // only produce an error the PM cannot act on.
+  const canHavePhase =
+    projectStatus === 'DesignApproved' ||
+    projectStatus === 'Construction' ||
+    projectStatus === 'Completed'
+
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
+      setLoadError(null)
+
+      try {
+        const loaded = await fetchConstructionPhase(authFetch, projectId)
+
+        if (!isCancelled()) {
+          setPhase(loaded)
+        }
+      } catch (error) {
+        if (!isCancelled()) {
+          setLoadError(apiErrorMessage(error, 'Could not load this project’s build phase.'))
+        }
+      } finally {
+        if (!isCancelled()) {
+          setLoading(false)
+        }
+      }
+    },
+    [authFetch, projectId],
+  )
+
+  useEffect(() => {
+    if (!canHavePhase) {
+      // No setLoading here: the !canHavePhase branch renders before the loading
+      // one, so the flag is never read in this state — and setting state
+      // synchronously in an effect only costs an extra render.
+      return
+    }
+
+    let cancelled = false
+    void load(() => cancelled)
+
+    return () => {
+      cancelled = true
+    }
+  }, [canHavePhase, load])
+
+  /**
+   * Runs one transition and folds the answer back into the panel.
+   *
+   * A refusal the PM can act on — no milestones defined, a milestone unfinished —
+   * is shown as an error beside the button, in the service's own words. A refusal
+   * that only means this screen is out of date (the transition had already
+   * happened, in another tab or by another PM) is not: there is nothing for them
+   * to fix, so the phase is re-read and the buttons settle on their own. Telling
+   * somebody to correct a state that is already correct is worse than silence.
+   */
+  async function runTransition(
+    which: 'start' | 'complete' | 'handover',
+    action: () => Promise<ConstructionPhase>,
+  ) {
+    setTransitionError(null)
+    setTransitioning(which)
+
+    try {
+      setPhase(await action())
+    } catch (error) {
+      if (isStaleStateRefusal(error)) {
+        await load(() => false)
+      } else {
+        setTransitionError(
+          apiErrorMessage(error, 'Could not update the build phase. Please try again.'),
+        )
+      }
+    } finally {
+      setTransitioning(null)
+    }
+  }
+
+  if (!canHavePhase) {
+    return (
+      <PhasePanel>
+        <p className="text-muted-foreground text-sm">
+          Construction can be started once this project’s design has been approved.
+        </p>
+      </PhasePanel>
+    )
+  }
+
+  if (loading) {
+    return (
+      <PhasePanel>
+        <p className="text-muted-foreground text-sm">Loading build phase…</p>
+      </PhasePanel>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <PhasePanel>
+        <p role="alert" className="text-destructive text-sm">
+          {loadError}
+        </p>
+      </PhasePanel>
+    )
+  }
+
+  return (
+    <PhasePanel
+      status={
+        phase === null ? (
+          <Badge variant="outline">Not started</Badge>
+        ) : (
+          <Badge>{CONSTRUCTION_PHASE_STATUS_LABELS[phase.status]}</Badge>
+        )
+      }
+    >
+      {phase !== null && (
+        <dl className="text-muted-foreground grid gap-1 text-xs">
+          <div className="flex gap-2">
+            <dt>Started</dt>
+            <dd className="text-foreground">{formatMoment(phase.startedAtUtc)}</dd>
+          </div>
+          {phase.completedAtUtc !== null && (
+            <div className="flex gap-2">
+              <dt>Completed</dt>
+              <dd className="text-foreground">{formatMoment(phase.completedAtUtc)}</dd>
+            </div>
+          )}
+          {phase.handedOverAtUtc !== null && (
+            <div className="flex gap-2">
+              <dt>Handed over</dt>
+              <dd className="text-foreground">{formatMoment(phase.handedOverAtUtc)}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      {/* Exactly one action is offered, chosen by where the phase stands — a
+          transition the service would refuse is never on screen at all. */}
+      {phase === null && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('start', () => startConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'start' ? 'Starting…' : 'Start construction'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Needs an approved design and at least one milestone. Moves the project to
+            Construction.
+          </span>
+        </div>
+      )}
+
+      {phase?.status === 'Started' && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('complete', () => completeConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'complete' ? 'Completing…' : 'Mark construction complete'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Every milestone must be Completed first.
+          </span>
+        </div>
+      )}
+
+      {phase?.status === 'Completed' && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="self-start"
+            onClick={() => {
+              void runTransition('handover', () => handOverConstruction(authFetch, projectId))
+            }}
+            disabled={transitioning !== null}
+          >
+            {transitioning === 'handover' ? 'Handing over…' : 'Hand over to client'}
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Needs the final payment settled. This is the last step — a handed-over project
+            cannot be reopened.
+          </span>
+        </div>
+      )}
+
+      {phase?.status === 'HandedOver' && (
+        <p className="text-muted-foreground text-sm">
+          This project has been handed over to the client. Nothing follows this stage.
+        </p>
+      )}
+
+      {transitionError && (
+        <p role="alert" className="text-destructive text-sm">
+          {transitionError}
+        </p>
+      )}
+    </PhasePanel>
+  )
+}
+
+/**
+ * The panel chrome every state of {@link ConstructionPhaseSection} shares — the
+ * heading, its `aria-labelledby` wiring and the test hook — so each early return
+ * does not repeat them and cannot drift out of step.
+ */
+function PhasePanel({
+  status,
+  children,
+}: {
+  status?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section
+      aria-labelledby="construction-phase-heading"
+      data-testid="construction-phase-panel"
+      className="flex flex-col gap-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="construction-phase-heading" className="text-sm font-medium">
+          Build phase
+        </h2>
+        {status}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+/**
  * One project in full, with its status history, and the controls to move it
  * along (US-06).
  *
@@ -239,6 +994,14 @@ export function ProjectDetailPage() {
   // Client an error for something that is not theirs to see. Staff assignment
   // is Admin-only for the same reason.
   const isAdmin = user !== null && ADMIN_ROLES.includes(user.role)
+
+  // The Milestones section (US-12) is Project-Manager only, matching the
+  // service's own [Authorize] gate on the endpoints behind it. Offering a
+  // control the service will refuse is worse than not showing it at all.
+  const isProjectManager = user !== null && user.role === 'ProjectManager'
+  // The same pair /projects/:projectId/costs is gated on, so this link never offers a page
+  // the route would then refuse — a Project Manager or an Admin, not an Architect or a Client.
+  const canManageCosts = user !== null && COST_MANAGEMENT_ROLES.includes(user.role)
 
   useEffect(() => {
     if (!projectId) {
@@ -454,7 +1217,7 @@ export function ProjectDetailPage() {
 
   if (loadError) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
         <Card>
           <CardHeader>
             <CardTitle>This project is not available to you</CardTitle>
@@ -473,7 +1236,7 @@ export function ProjectDetailPage() {
 
   if (!project) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col justify-center gap-4 p-6">
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
         <p className="text-muted-foreground text-sm">Loading this project…</p>
       </main>
     )
@@ -495,12 +1258,12 @@ export function ProjectDetailPage() {
       project.status === 'DesignApproved')
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col justify-center gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center gap-3">
             {project.name}
-            <Badge variant="secondary">{PROJECT_STATUS_LABELS[project.status]}</Badge>
+            <StatusBadge status={project.status} />
           </CardTitle>
           <CardDescription>
             {project.location} · submitted {formatDate(project.createdAt)}
@@ -532,18 +1295,21 @@ export function ProjectDetailPage() {
           <section className="flex flex-col gap-3">
             <h2 className="text-sm font-medium">Team</h2>
 
-            {/* Ids rather than names: the accounts live in the User Service's
-                own database, and the Project Service holds no copy of them. */}
+            {/* Names come from the service, which asks the User Service for them
+                when the project is read. The id is only the fallback for a name
+                it could not find out. */}
             <div className="grid gap-4 sm:grid-cols-2">
               <Detail label="Architect">
-                {project.assignedArchitectId ?? (
-                  <span className="text-muted-foreground">Not yet assigned</span>
-                )}
+                {project.assignedArchitectName ??
+                  project.assignedArchitectId ?? (
+                    <span className="text-muted-foreground">Not yet assigned</span>
+                  )}
               </Detail>
               <Detail label="Project manager">
-                {project.assignedProjectManagerId ?? (
-                  <span className="text-muted-foreground">Not yet assigned</span>
-                )}
+                {project.assignedProjectManagerName ??
+                  project.assignedProjectManagerId ?? (
+                    <span className="text-muted-foreground">Not yet assigned</span>
+                  )}
               </Detail>
             </div>
 
@@ -609,9 +1375,16 @@ export function ProjectDetailPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <span className="block">{ROLE_LABELS[change.changedByRole]}</span>
+                      {/* The person, with the role they acted in beneath. Where the
+                          service could not find a name, the role leads and the id
+                          stands in for it. */}
+                      <span className="block">
+                        {change.changedByName ?? ROLE_LABELS[change.changedByRole]}
+                      </span>
                       <span className="text-muted-foreground block text-xs">
-                        {change.changedByUserId}
+                        {change.changedByName
+                          ? ROLE_LABELS[change.changedByRole]
+                          : change.changedByUserId}
                       </span>
                     </TableCell>
                     <TableCell>{formatMoment(change.changedAt)}</TableCell>
@@ -761,9 +1534,30 @@ export function ProjectDetailPage() {
             </>
           )}
 
+          {isProjectManager && (
+            <>
+              <Separator />
+              <ConstructionPhaseSection projectId={project.id} projectStatus={project.status} />
+              <Separator />
+              <MilestonesSection projectId={project.id} projectStatus={project.status} />
+            </>
+          )}
+
           <Button render={<Link to={`/projects/${project.id}/designs`} />} variant="outline" className="w-full">
             Design documents
           </Button>
+
+          {/* US-15's quotation and invoicing lived at /projects/:id/costs with nothing linking
+              to it, so a Project Manager had no way to reach it except by typing the URL. */}
+          {canManageCosts && (
+            <Button
+              render={<Link to={`/projects/${project.id}/costs`} />}
+              variant="outline"
+              className="w-full"
+            >
+              Quotation &amp; payments
+            </Button>
+          )}
 
           <p className="text-muted-foreground text-center text-sm">
             <Link to="/projects" className="text-foreground underline underline-offset-4">

@@ -6,6 +6,7 @@ namespace BuildNexus.ConstructionService.Tests;
 /// every column through <c>milestone_setups</c>.
 /// </summary>
 /// <remarks>Needs <c>construction-db</c> running — see <see cref="ConstructionDatabaseFixture"/>.</remarks>
+[Trait("Category", "Integration")]
 [Collection(ConstructionDatabaseCollection.Name)]
 public class MilestoneSetupRepositoryDatabaseTests
 {

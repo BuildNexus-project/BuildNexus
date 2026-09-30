@@ -85,7 +85,7 @@ provider "mysql" {
   # not know at plan time. Flexible Server always addresses a server as
   # <name>.mysql.database.azure.com, so the name alone is enough. The price is
   # that Terraform no longer infers the ordering, which is why the mysql
-  # resources in project-service.tf declare depends_on.
+  # resources in each service's file declare depends_on.
   endpoint = "${var.mysql_server_name}.mysql.database.azure.com:3306"
 
   username = var.mysql_administrator_login

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
-import { Badge } from '@/components/ui/badge'
+import { StatusBadge } from '@/components/StatusBadge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table,
@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/table'
 import { apiErrorMessage } from '@/lib/api'
 import { fetchProjects, type ProjectSummary } from '@/lib/project-api'
-import { PROJECT_STATUS_LABELS } from '@/lib/project-status'
 import { CLIENT_ROLES } from '@/lib/roles'
 
 /** A date the service sent, as a reader would write it. */
@@ -69,7 +68,7 @@ export function ProjectsPage() {
   const isClient = user !== null && CLIENT_ROLES.includes(user.role)
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col justify-center gap-4 p-6">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
       <Card>
         <CardHeader>
           <CardTitle>Projects</CardTitle>
@@ -133,7 +132,7 @@ export function ProjectsPage() {
                     </TableCell>
                     <TableCell>{project.location}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{PROJECT_STATUS_LABELS[project.status]}</Badge>
+                      <StatusBadge status={project.status} />
                     </TableCell>
                     <TableCell>{formatDate(project.createdAt)}</TableCell>
                   </TableRow>
