@@ -34,6 +34,14 @@ table in `appsettings.json` plus the token validation in `Program.cs`.
 it has been issued one. The User Service still decides for itself what it will
 serve without authentication.
 
+The role dashboards (US-21) needed no new route: each service's dashboard
+endpoints live under its own prefix above (`/api/projects/dashboard/*`,
+`/api/designs/dashboard/*`, `/api/construction/dashboard/*`,
+`/api/payments/dashboard/*`, `/api/users/dashboard/*`). The gateway does not
+aggregate them — a dashboard is several requests, one per service, joined by the
+page — and it still makes no authorization decision; each service gates its own
+endpoint to one role.
+
 A path matching no route is answered by the gateway — 404 for an authenticated
 caller, 401 for an anonymous one, since the deny-by-default fallback policy also
 covers requests that match no route. Nothing unrouted reaches a service.

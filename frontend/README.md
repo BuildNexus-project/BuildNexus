@@ -32,7 +32,7 @@ The User Service must be running — see `infra/README.md`.
 | `/forgot-password` | Anyone                                         |
 | `/reset-password`  | Anyone — needs a `?token=` from the reset email |
 | `/`            | Anyone — public landing page; signed-in users go to `/home` |
-| `/home`        | Signed-in users; others are redirected to `/login`  |
+| `/home`        | Signed-in users, each shown their own role's dashboard; others are redirected to `/login` |
 | `/profile`     | Signed-in users                                    |
 | `/projects/new` | Client                                            |
 | `/directory`   | Architect, Project Manager                         |
@@ -64,6 +64,65 @@ the product rather than a bare login form. A signed-in visitor has no use for
 it: `LandingPage` forwards them to `/home`, the authenticated landing page,
 which stays behind `ProtectedRoute` for anyone who reaches it without a session.
 `/register`, `/login` and the `ProtectedRoute` redirect are unchanged.
+
+## Role dashboards (US-21)
+
+`/home` shows each signed-in user the dashboard for their own role, under the
+welcome banner — never one generic dashboard for everyone to interpret for
+themselves. `HomePage` switches on the role and renders one of four components
+in `src/components/dashboard/`.
+
+**Why it is several requests.** A dashboard needs data from all five services,
+and each service's database is its own: nothing may join across two of them, and
+the gateway makes no decisions and holds no data. So there is no single
+"dashboard" endpoint. Every service exposes the slice it owns, under its own
+gateway prefix and gated to one role, and the page joins the slices on the
+project id. The fetchers and their types are all in `src/lib/dashboard-api.ts`.
+
+| Role           | Shows (acceptance criteria)                                      | Slices it loads |
+|----------------|------------------------------------------------------------------|-----------------|
+| Client         | Active projects, design status, build progress, payments due     | `/api/projects/dashboard/client`, `/api/designs/dashboard/client`, `/api/construction/dashboard/client`, `/api/payments/dashboard/client` |
+| Architect      | Assigned projects, pending revisions                             | `/api/projects/dashboard/architect`, `/api/designs/dashboard/architect` |
+| Project Manager | Active construction, milestones due                              | `/api/construction/dashboard/project-manager`, and `/api/projects` for names |
+| Admin          | System-wide counts: users, projects, and the reports             | `/api/users/dashboard/admin`, `/api/projects/dashboard/admin` |
+
+A role is only ever asked for its own slices, and `HomePage.test.tsx` pins that
+for all four. Each service refuses the wrong role anyway; this keeps the page
+from causing a `403` in the console on every visit.
+
+**Slices load and fail separately.** `useDashboardSlice` loads one slice and
+reports `loading`, `ready` or `error`, so a slow or failed service leaves a dash
+and an alert beside everything that did load, not a blank dashboard. A failed
+slice shows `—`, never `0`: a failure is not "nothing to report". The alert names
+the slice, followed by the reason the service gave when it gave one — the Design
+Service answers `502` with a reason when it cannot reach the Project Service, and
+that reaches the person.
+
+**The joins and sums are pure functions** in `src/lib/dashboard-view.ts`, tested
+without rendering anything: overall build progress is weighted by milestones (an
+average of percentages would let a 2-milestone project count as much as a
+10-milestone one), what is owed per project is summed in whole cents so a total
+cannot drift, and a project with no known name falls back to its short id rather
+than a blank.
+
+**Things a reader should know**
+
+- **"Milestones due" means outstanding.** Milestones have no due date — only
+  `NotStarted`, `InProgress` and `Completed` — so the figure is what is still to
+  finish, not what is late, and the tile says so.
+- **The Project Manager's view is portfolio-wide**, like the Build & payment
+  report: the Construction Service records who owns a project but not which
+  Project Manager runs it. Names come from `GET /api/projects`, which lists only
+  the projects a Project Manager is assigned to, so a build they are not assigned
+  to shows a short id and is not linked (the Project Service would refuse the
+  page). That name lookup is best-effort and raises no error if it fails.
+- **Reports have links, not a count.** Nothing stores a report — each is generated
+  on demand — so there is no number to read. The Admin dashboard links the three
+  report pages, taken from the Admin's own navigation.
+- **Design status is derived from each document's latest version**, in the order
+  most in need of the Client first: awaiting their review, then a revision they are
+  waiting on, then approved. A project nothing has been uploaded for is `No design
+  yet`, not blank.
 
 ## New project (US-05)
 

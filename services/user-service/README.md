@@ -79,6 +79,7 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 | GET    | `/api/users/directory`   | Architect, ProjectManager                |
 | GET    | `/api/users`             | Admin                                    |
 | GET    | `/api/users/{id}`        | Admin                                    |
+| GET    | `/api/users/dashboard/admin` | Admin                                |
 | GET    | `/health`                | Anonymous                                |
 
 `PUT /api/users/me` edits the caller's own full name, phone number and contact
@@ -101,6 +102,16 @@ Deactivated accounts are left out, since they cannot be given work.
 `GET /api/users` is the Admin roster and deliberately does the opposite: it
 lists every account, deactivated ones included, because that is the one view an
 administrator needs to see them in.
+
+`GET /api/users/dashboard/admin` is the user half of the Admin's dashboard
+(US-21): `{ totalUsers, activeUsers, inactiveUsers, roles[] }`, with one
+`{ role, count }` entry per platform role in the platform's order, **including
+roles nobody holds**. A deactivated account counts in the total — it is still an
+account an Admin administers — and is reported separately so the two numbers can
+be told apart. It is one `GROUP BY role, is_active` query
+(`UserDashboardRepository`), so every figure is a sum of its lines and the cost
+does not grow with the number of accounts. The project count on the same
+dashboard is the Project Service's data; the page joins the two.
 
 Self-service registration cannot create an `Admin`: the handler rejects that role
 with `400` before hashing anything. Role names must be sent in their exact
@@ -247,6 +258,13 @@ by reflection and fails if any endpoint neither declares its roles nor is
 explicitly `[AllowAnonymous]`, or names a role the platform does not have. An
 endpoint added in a later story is held to that rule without anyone having to
 remember this file.
+
+`AdminUserDashboardTests` walks the user counts over a stand-in query (totals,
+the active/inactive split, roles in platform order with zeros filled in, and an
+empty system), and `EndpointRoleDeclarationTests` pins the dashboard endpoint to
+Admin. `UserDashboardRepositoryDatabaseTests` proves the grouping against the
+real database, asserted as a difference before and after because the database
+also holds the seeded Admin and whatever else has been registered.
 
 `RegistrationRoleTests` and `RoleAccessTests` boot the real host and need the
 development database running (`cd ../../infra && docker compose up -d user-db`).
