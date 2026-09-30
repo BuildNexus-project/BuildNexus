@@ -35,10 +35,18 @@ import {
   projectReportFilterSchema,
   type ProjectReportFilterValues,
 } from '@/lib/project-report-schemas'
-import { PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/project-status'
+import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
 
 const LOAD_FAILED = 'Could not load the project report.'
 const EXPORT_FAILED = 'Could not export the report. Please try again.'
+
+/**
+ * How many projects a group lists before it offers "Show all". The service
+ * returns every matching project — the export needs them all — but a group of
+ * several hundred rows drowns the rest of the pipeline, and the count and budget
+ * beside each status already say how big it is.
+ */
+export const GROUP_PREVIEW_LIMIT = 50
 
 /** Money as a reader would write it — grouped, two decimals, no currency symbol invented. */
 function formatAmount(value: number): string {
@@ -93,6 +101,7 @@ export function ProjectStatusReportPage() {
   // filter they have only half changed.
   const [applied, setApplied] = useState<ProjectReportFilterValues>(EMPTY_PROJECT_REPORT_FILTER)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
+  const [expanded, setExpanded] = useState<ProjectStatus[]>([])
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
@@ -291,64 +300,89 @@ export function ProjectStatusReportPage() {
               )}
 
               <div className="flex flex-col gap-4">
-                {current.report.groups.map((group) => (
-                  <details
-                    key={group.status}
-                    open
-                    data-testid={`group-${group.status}`}
-                    className="rounded-lg border"
-                  >
-                    <summary className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3">
-                      <StatusBadge status={group.status} />
-                      <span className="text-sm font-medium">
-                        {group.count} {group.count === 1 ? 'project' : 'projects'}
-                      </span>
-                      <span className="text-muted-foreground text-sm">
-                        budget {formatAmount(group.totalBudget)}
-                      </span>
-                    </summary>
+                {current.report.groups.map((group) => {
+                  const showingAll =
+                    expanded.includes(group.status) || group.projects.length <= GROUP_PREVIEW_LIMIT
+                  const visible = showingAll
+                    ? group.projects
+                    : group.projects.slice(0, GROUP_PREVIEW_LIMIT)
 
-                    {group.projects.length === 0 ? (
-                      <p className="text-muted-foreground border-t px-4 py-3 text-sm">
-                        No projects in this status.
-                      </p>
-                    ) : (
-                      <div className="overflow-x-auto border-t">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Project</TableHead>
-                              <TableHead>Location</TableHead>
-                              <TableHead className="text-right">Budget</TableHead>
-                              <TableHead>Submitted</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {group.projects.map((project) => (
-                              <TableRow key={project.id}>
-                                <TableCell className="font-medium">
-                                  <Link
-                                    to={`/projects/${project.id}`}
-                                    className="text-foreground underline underline-offset-4"
-                                  >
-                                    {project.name}
-                                  </Link>
-                                </TableCell>
-                                <TableCell>{project.location}</TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {formatAmount(project.budget)}
-                                </TableCell>
-                                <TableCell className="tabular-nums">
-                                  {submittedDay(project.createdAt)}
-                                </TableCell>
+                  return (
+                    <details
+                      key={group.status}
+                      open
+                      data-testid={`group-${group.status}`}
+                      className="rounded-lg border"
+                    >
+                      <summary className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3">
+                        <StatusBadge status={group.status} />
+                        <span className="text-sm font-medium">
+                          {group.count} {group.count === 1 ? 'project' : 'projects'}
+                        </span>
+                        <span className="text-muted-foreground text-sm">
+                          budget {formatAmount(group.totalBudget)}
+                        </span>
+                      </summary>
+
+                      {group.projects.length === 0 ? (
+                        <p className="text-muted-foreground border-t px-4 py-3 text-sm">
+                          No projects in this status.
+                        </p>
+                      ) : (
+                        <div className="overflow-x-auto border-t">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Project</TableHead>
+                                <TableHead>Location</TableHead>
+                                <TableHead className="text-right">Budget</TableHead>
+                                <TableHead>Submitted</TableHead>
                               </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
-                  </details>
-                ))}
+                            </TableHeader>
+                            <TableBody>
+                              {visible.map((project) => (
+                                <TableRow key={project.id}>
+                                  <TableCell className="font-medium">
+                                    <Link
+                                      to={`/projects/${project.id}`}
+                                      className="text-foreground underline underline-offset-4"
+                                    >
+                                      {project.name}
+                                    </Link>
+                                  </TableCell>
+                                  <TableCell>{project.location}</TableCell>
+                                  <TableCell className="text-right tabular-nums">
+                                    {formatAmount(project.budget)}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums">
+                                    {submittedDay(project.createdAt)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+
+                      {!showingAll && (
+                        <div className="flex flex-wrap items-center gap-3 border-t px-4 py-3">
+                          <p className="text-muted-foreground text-sm">
+                            Showing the newest {GROUP_PREVIEW_LIMIT} of {group.count}. The export has
+                            all of them.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setExpanded((chosen) => [...chosen, group.status])}
+                          >
+                            Show all {group.count}
+                          </Button>
+                        </div>
+                      )}
+                    </details>
+                  )
+                })}
               </div>
             </>
           )}

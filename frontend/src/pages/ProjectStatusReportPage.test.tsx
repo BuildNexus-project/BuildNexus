@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from '@/App'
 import { AuthProvider } from '@/auth/AuthProvider'
-import { ProjectStatusReportPage } from '@/pages/ProjectStatusReportPage'
+import { GROUP_PREVIEW_LIMIT, ProjectStatusReportPage } from '@/pages/ProjectStatusReportPage'
 import type { ProjectStatusReport } from '@/lib/project-report-api'
 import type { Role } from '@/lib/roles'
 import { apiResponse, fileResponse } from '@/test/fake-fetch'
@@ -263,6 +263,89 @@ describe('ProjectStatusReportPage — grouped by status (AC-1)', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The database is down.')
     expect(screen.queryByTestId('group-Pending')).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectStatusReportPage — a very large group', () => {
+  /** `count` Pending projects, newest first, as the service returns them. */
+  function manyPending(count: number) {
+    return Array.from({ length: count }, (_, index) =>
+      row(
+        `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        `Project ${index + 1}`,
+        'Pending',
+        1_000_000,
+        '2026-09-02T09:00:00',
+      ),
+    )
+  }
+
+  it('lists only the newest projects of a large group, and says how many there are', async () => {
+    stubApi({ report: reportOf(manyPending(GROUP_PREVIEW_LIMIT + 30)) })
+
+    renderPage()
+
+    const pending = within(await screen.findByTestId('group-Pending'))
+    expect(pending.getAllByRole('row')).toHaveLength(GROUP_PREVIEW_LIMIT + 1) // + header
+    expect(pending.getByText(`${GROUP_PREVIEW_LIMIT + 30} projects`)).toBeInTheDocument()
+    expect(pending.getByRole('link', { name: 'Project 1' })).toBeInTheDocument()
+    expect(pending.queryByRole('link', { name: `Project ${GROUP_PREVIEW_LIMIT + 1}` })).not.toBeInTheDocument()
+    expect(
+      pending.getByText(new RegExp(`Showing the newest ${GROUP_PREVIEW_LIMIT} of ${GROUP_PREVIEW_LIMIT + 30}`)),
+    ).toBeInTheDocument()
+  })
+
+  it('shows every project once Show all is pressed', async () => {
+    const user = userEvent.setup()
+    stubApi({ report: reportOf(manyPending(GROUP_PREVIEW_LIMIT + 30)) })
+
+    renderPage()
+
+    const pending = within(await screen.findByTestId('group-Pending'))
+    await user.click(pending.getByRole('button', { name: `Show all ${GROUP_PREVIEW_LIMIT + 30}` }))
+
+    expect(pending.getAllByRole('row')).toHaveLength(GROUP_PREVIEW_LIMIT + 30 + 1)
+    expect(pending.getByRole('link', { name: `Project ${GROUP_PREVIEW_LIMIT + 30}` })).toBeInTheDocument()
+    expect(pending.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument()
+  })
+
+  it('does not offer Show all for a group that fits', async () => {
+    stubApi({ report: reportOf(manyPending(GROUP_PREVIEW_LIMIT)) })
+
+    renderPage()
+
+    const pending = within(await screen.findByTestId('group-Pending'))
+    expect(pending.getAllByRole('row')).toHaveLength(GROUP_PREVIEW_LIMIT + 1)
+    expect(pending.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument()
+  })
+
+  it('opens one group without opening another', async () => {
+    const user = userEvent.setup()
+    const cancelled = Array.from({ length: GROUP_PREVIEW_LIMIT + 5 }, (_, index) =>
+      row(
+        `11111111-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        `Cancelled ${index + 1}`,
+        'Cancelled',
+        1,
+        '2026-09-01T09:00:00',
+      ),
+    )
+    stubApi({ report: reportOf([...manyPending(GROUP_PREVIEW_LIMIT + 5), ...cancelled]) })
+
+    renderPage()
+
+    const pending = within(await screen.findByTestId('group-Pending'))
+    await user.click(pending.getByRole('button', { name: /Show all/ }))
+
+    expect(within(screen.getByTestId('group-Cancelled')).getByRole('button', { name: /Show all/ })).toBeInTheDocument()
+  })
+
+  it('counts the whole group in the totals, not just the rows shown', async () => {
+    stubApi({ report: reportOf(manyPending(GROUP_PREVIEW_LIMIT + 30)) })
+
+    renderPage()
+
+    expect(await screen.findByTestId('report-summary')).toHaveTextContent(`${GROUP_PREVIEW_LIMIT + 30} projects`)
   })
 })
 
