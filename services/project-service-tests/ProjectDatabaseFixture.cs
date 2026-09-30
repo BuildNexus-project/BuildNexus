@@ -49,6 +49,9 @@ public class ProjectDatabaseFixture : IAsyncLifetime
     /// </summary>
     public OutboxRepository Outbox { get; private set; } = null!;
 
+    /// <summary>The Admin status-report query over the same database (US-18).</summary>
+    public ProjectReportRepository ReportRepository { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         // The production migration path, not a hand-written schema: DbUp records
@@ -69,6 +72,7 @@ public class ProjectDatabaseFixture : IAsyncLifetime
 
         Repository = new ProjectRepository(connectionFactory);
         Outbox = new OutboxRepository(connectionFactory);
+        ReportRepository = new ProjectReportRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
