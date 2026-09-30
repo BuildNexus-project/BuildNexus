@@ -274,6 +274,24 @@ classes share `UserServiceCollection` so they never run at the same time — the
 factory's cleanup removes every `test-` account when it is disposed, which would
 otherwise delete accounts the other class is still signed in as.
 
+The database tests reach `user-db` on port **3306**, where the compose file
+publishes it and where CI finds it. If a native MySQL already holds 3306 on your
+machine and your git-ignored `infra/docker-compose.override.yml` moves `user-db`
+elsewhere, every database test fails at login — it is talking to the wrong MySQL.
+Tell the tests where it went with the `USER_DB_PORT` environment variable, or put
+it once in `user-service-tests/local.runsettings` (also git-ignored, picked up
+automatically by `dotnet test` and Visual Studio):
+
+```xml
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <USER_DB_PORT>3308</USER_DB_PORT>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>
+```
+
 Protected routes expect `Authorization: Bearer <token>`. Tokens are validated on
 issuer, audience, signature and lifetime with no clock skew, so an expired or
 malformed token is rejected with `401`.
