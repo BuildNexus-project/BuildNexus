@@ -283,10 +283,22 @@ docker exec -it buildnexus-kafka /opt/kafka/bin/kafka-console-consumer.sh \
 cd ../project-service-tests && dotnet test
 ```
 
-**Every test in this project runs without MySQL and without Kafka.** The
+**Most tests in this project run without MySQL and without Kafka.** The
 repository and the event publisher are stood in for, so nothing has to be
-started first — which is also why the CI job runs this project without bringing
-up a `project-db` container the tests would never connect to.
+started first. The exceptions are tagged `[Trait("Category", "Integration")]`
+and need the real thing: `ProjectRepositoryDatabaseTests`,
+`ProjectPaymentStatusDatabaseTests` and `ProjectReportRepositoryDatabaseTests`
+run SQL against `project-db`, and `ProjectKafkaIntegrationTests` does a real
+round trip through the broker. Start them with
+`cd infra && docker compose up -d --wait project-db kafka`.
+
+```bash
+dotnet test --filter "Category!=Integration"   # what needs nothing running
+dotnet test --filter "Category=Integration"    # what needs project-db and kafka
+```
+
+CI runs the two groups as separate stages: the unit stage with no containers,
+then the integration stage once its databases and broker are healthy.
 
 `CreateProjectRequestTests` covers the validation rules: the required fields,
 the column bounds mirrored from `001_create_projects_table.sql`, and the
