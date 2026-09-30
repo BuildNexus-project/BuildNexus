@@ -23,6 +23,13 @@ public class MilestoneResponse
     /// </summary>
     public MilestoneStatus Status { get; set; }
 
+    /// <summary>
+    /// The day it should be finished by, as <c>yyyy-MM-dd</c>, or <c>null</c> when none has
+    /// been set. A calendar day with no time or timezone: "due on the 5th" is the 5th wherever
+    /// it is read.
+    /// </summary>
+    public DateOnly? DueDate { get; set; }
+
     public DateTime CreatedAtUtc { get; set; }
 
     public DateTime UpdatedAtUtc { get; set; }
@@ -33,6 +40,7 @@ public class MilestoneResponse
         ProjectId = milestone.ProjectId,
         Name = milestone.Name,
         Status = milestone.Status,
+        DueDate = milestone.DueDate,
         CreatedAtUtc = milestone.CreatedAtUtc,
         UpdatedAtUtc = milestone.UpdatedAtUtc
     };

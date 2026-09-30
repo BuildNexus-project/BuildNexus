@@ -53,9 +53,33 @@ public interface IMilestoneRepository
     /// <c>(project_id, name)</c> pair is already taken.
     /// </para>
     /// </remarks>
+    /// <param name="dueDate">
+    /// The day the milestone should be finished by, or <c>null</c> for none. Optional: a
+    /// milestone without one is created exactly as US-12 defined it.
+    /// </param>
     Task<Milestone?> CreateAsync(
         Guid projectId,
         string name,
+        DateOnly? dueDate = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets, changes or clears a milestone's due date and stamps <c>updated_at</c>.
+    /// </summary>
+    /// <remarks>
+    /// Its own operation rather than part of <see cref="UpdateStatusAsync"/>: moving a
+    /// milestone through its states and deciding when it is due are different acts, and the
+    /// template's milestones — planted without a date — need somewhere to get theirs. Returns
+    /// the updated milestone, or <c>null</c> when no row has that id (the caller maps that to
+    /// <c>404 Not Found</c>). Passing <c>null</c> clears the date.
+    /// <para>
+    /// A completed milestone may still be given a date: it changes nothing about whether it is
+    /// outstanding, and refusing would only make a correction harder.
+    /// </para>
+    /// </remarks>
+    Task<Milestone?> SetDueDateAsync(
+        Guid milestoneId,
+        DateOnly? dueDate,
         CancellationToken cancellationToken = default);
 
     /// <summary>

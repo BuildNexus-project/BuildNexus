@@ -79,6 +79,8 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("UpdateStatus"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("GetProgress"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("CreateFromTemplate"));
+        // US-21: giving a milestone a due date is planning it, which is the Project Manager's.
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("SetDueDate"));
     }
 
     [Fact]

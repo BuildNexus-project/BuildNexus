@@ -5,10 +5,10 @@ namespace BuildNexus.ConstructionService.Models;
 /// Project Manager's dashboard (US-21 AC-3).
 /// </summary>
 /// <remarks>
-/// "Due" here means <em>outstanding</em>: milestones carry no due date (US-12
-/// defines only <c>NotStarted</c>, <c>InProgress</c> and <c>Completed</c>), so there
-/// is nothing to be late against. Adding one is a change to how milestones are
-/// created, which belongs to that story, not to a read-only dashboard.
+/// "Due" means <em>outstanding</em>: every milestone not yet <see cref="MilestoneStatus.Completed"/>
+/// on a build that has started. Where the Project Manager has also given the milestone a
+/// <see cref="DueDate"/>, it can additionally be late; one without a date never is, and is
+/// listed after the dated ones.
 /// </remarks>
 public class OutstandingMilestone
 {
@@ -21,6 +21,9 @@ public class OutstandingMilestone
 
     /// <summary>Either <see cref="MilestoneStatus.NotStarted"/> or <see cref="MilestoneStatus.InProgress"/>.</summary>
     public required MilestoneStatus Status { get; init; }
+
+    /// <summary>The day it should be finished by, or <c>null</c> when the Project Manager has not said.</summary>
+    public DateOnly? DueDate { get; init; }
 
     public required DateTime CreatedAtUtc { get; init; }
 }

@@ -32,8 +32,8 @@ public interface IConstructionDashboardRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// The builds that are under way: every project whose construction has started
-    /// and has not been handed over (US-21 AC-3).
+    /// Of the given projects, the builds that are under way: those whose construction has
+    /// started and has not been handed over (US-21 AC-3).
     /// </summary>
     /// <remarks>
     /// "Under way" is <c>Started</c> or <c>Completed</c> — a finished build still
@@ -41,16 +41,31 @@ public interface IConstructionDashboardRepository
     /// Narrower than the construction report's "active", which also lists planned
     /// builds nobody has started; a dashboard's "active construction" is the work
     /// actually in progress.
+    /// <para>
+    /// The projects are passed in rather than decided here: this service does not know which
+    /// Project Manager runs a project, so the caller asks the Project Service which projects
+    /// the Project Manager is assigned to and passes those. Most recently started first. An
+    /// empty list of projects answers empty without a query.
+    /// </para>
     /// </remarks>
     Task<IReadOnlyList<ConstructionProgressReportRow>> ListActiveBuildsAsync(
+        IReadOnlyCollection<Guid> projectIds,
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// The milestones still to finish on builds that are under way (US-21 AC-3),
-    /// with how many there are in all.
+    /// The milestones still to finish on the given projects' builds that are under way
+    /// (US-21 AC-3), with how many there are in all and how many of those are late.
     /// </summary>
-    /// <param name="limit">The most milestones to list. The total is unaffected by it.</param>
+    /// <param name="projectIds">The projects to look at — see <see cref="ListActiveBuildsAsync"/>.</param>
+    /// <param name="limit">The most milestones to list. The counts are unaffected by it.</param>
+    /// <param name="today">
+    /// The day "late" is judged against: a milestone is overdue when its due date is before
+    /// it. Passed in rather than read from the database clock, so the answer is for a day the
+    /// caller chose and a test can fix it.
+    /// </param>
     Task<OutstandingMilestones> GetOutstandingMilestonesAsync(
+        IReadOnlyCollection<Guid> projectIds,
         int limit,
+        DateOnly today,
         CancellationToken cancellationToken = default);
 }

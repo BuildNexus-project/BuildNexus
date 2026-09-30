@@ -2,6 +2,7 @@ using System.Security.Claims;
 using BuildNexus.ConstructionService.Authorization;
 using BuildNexus.ConstructionService.Contracts;
 using BuildNexus.ConstructionService.Data;
+using BuildNexus.ConstructionService.Projects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -43,10 +44,17 @@ public class DashboardController : ControllerBase
     public const int MilestonesDueListSize = 10;
 
     private readonly IConstructionDashboardRepository _dashboardRepository;
+    private readonly IProjectDirectoryClient _projectDirectory;
+    private readonly TimeProvider _clock;
 
-    public DashboardController(IConstructionDashboardRepository dashboardRepository)
+    public DashboardController(
+        IConstructionDashboardRepository dashboardRepository,
+        IProjectDirectoryClient projectDirectory,
+        TimeProvider clock)
     {
         _dashboardRepository = dashboardRepository;
+        _projectDirectory = projectDirectory;
+        _clock = clock;
     }
 
     /// <summary>
@@ -86,42 +94,95 @@ public class DashboardController : ControllerBase
     }
 
     /// <summary>
-    /// The builds under way and the milestones still to finish on them (US-21
-    /// AC-3). Allowed roles: ProjectManager.
+    /// The builds under way and the milestones still to finish on them, on the projects the
+    /// Project Manager is assigned to (US-21 AC-3). Allowed roles: ProjectManager.
     /// </summary>
     /// <remarks>
-    /// Portfolio-wide: this service holds who owns a project but not which Project
-    /// Manager runs it, so it cannot narrow to "your" builds — the same scope the
-    /// construction report has. "Under way" is a build that has been started and not
-    /// yet handed over. "Due" means outstanding, since milestones carry no due date:
-    /// the count is every milestone still to finish on those builds, and the list is
-    /// the first few — those already in progress, then those next in line.
+    /// This service holds who owns a project but not which Project Manager runs it, so it asks
+    /// the Project Service — forwarding the caller's own token — which projects they are
+    /// assigned to, and reads only those. The endpoint takes no project id, so a Project
+    /// Manager cannot widen their own dashboard by asking differently; and the same answer
+    /// names each project, so every build and milestone here says which one it is.
+    /// <para>
+    /// "Under way" is a build that has been started and not yet handed over. "Due" means
+    /// outstanding: the count is every milestone still to finish on those builds, the overdue
+    /// count is those whose due date — if the Project Manager set one — has passed, and the
+    /// list is the first ten: dated milestones first, soonest (most overdue) first, then
+    /// undated ones. A Project Manager with no project assigned gets an empty dashboard.
+    /// </para>
+    /// <para>
+    /// If the Project Service cannot be reached this answers 502, never an empty dashboard:
+    /// an outage must not read as "you have nothing under way".
+    /// </para>
     /// </remarks>
-    /// <response code="200">The active builds, and the outstanding milestones. Both empty when nothing has been started — a real answer, not an error.</response>
+    /// <response code="200">The active builds, and the outstanding milestones. Both empty when nothing is under way — a real answer, not an error.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid.</response>
     /// <response code="403">The caller is not a Project Manager.</response>
+    /// <response code="502">The Project Service could not be reached to list the caller's projects.</response>
     [HttpGet("project-manager")]
     [Authorize(Roles = PlatformRoles.ProjectManager)]
     [ProducesResponseType(typeof(ProjectManagerConstructionDashboardResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
     public async Task<IActionResult> GetProjectManagerDashboard(CancellationToken cancellationToken)
     {
-        var builds = await _dashboardRepository.ListActiveBuildsAsync(cancellationToken);
-        var due = await _dashboardRepository.GetOutstandingMilestonesAsync(MilestonesDueListSize, cancellationToken);
+        if (CallerBearerToken() is not { } token)
+        {
+            return Unauthorized();
+        }
+
+        var visible = await _projectDirectory.ListVisibleProjectsAsync(token, cancellationToken);
+
+        if (!visible.IsAvailable)
+        {
+            return Problem(
+                statusCode: StatusCodes.Status502BadGateway,
+                title: "Projects could not be listed",
+                detail: "Your projects could not be looked up right now, so your construction summary cannot be shown. "
+                        + "Try again in a moment.");
+        }
+
+        var projectIds = visible.Ids();
+        var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
+
+        var builds = await _dashboardRepository.ListActiveBuildsAsync(projectIds, cancellationToken);
+        var due = await _dashboardRepository.GetOutstandingMilestonesAsync(
+            projectIds, MilestonesDueListSize, today, cancellationToken);
 
         return Ok(new ProjectManagerConstructionDashboardResponse
         {
             ActiveBuildCount = builds.Count,
-            ActiveBuilds = builds.Select(ProjectManagerConstructionDashboardResponse.ActiveBuildResponse.From).ToList(),
+            ActiveBuilds = builds
+                .Select(build => ProjectManagerConstructionDashboardResponse.ActiveBuildResponse.From(
+                    build, visible.NameOf(build.ProjectId)))
+                .ToList(),
             MilestonesDue = new ProjectManagerConstructionDashboardResponse.MilestonesDueResponse
             {
                 TotalCount = due.TotalCount,
-                Milestones = due.Items.Select(ProjectManagerConstructionDashboardResponse.MilestoneDueResponse.From).ToList()
+                OverdueCount = due.OverdueCount,
+                Milestones = due.Items
+                    .Select(milestone => ProjectManagerConstructionDashboardResponse.MilestoneDueResponse.From(
+                        milestone, visible.NameOf(milestone.ProjectId), today))
+                    .ToList()
             }
         });
     }
 
     private bool TryGetCallerId(out Guid userId) =>
         Guid.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out userId);
+
+    /// <summary>
+    /// The raw access token from the <c>Authorization</c> header, without the <c>Bearer </c>
+    /// prefix — forwarded to the Project Service so it decides as if the caller asked it
+    /// directly.
+    /// </summary>
+    private string? CallerBearerToken()
+    {
+        var header = Request.Headers.Authorization.ToString();
+
+        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header["Bearer ".Length..].Trim() is { Length: > 0 } value ? value : null
+            : null;
+    }
 }
