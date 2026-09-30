@@ -111,6 +111,86 @@ through the API Gateway on `http://localhost:5000`, which validates the token
 and proxies it here unchanged. This service re-validates it and enforces its own
 role checks — the gateway makes no authorization decisions.
 
+## Project status report (US-18)
+
+An Admin-only view of the whole pipeline: every project grouped by its current
+status, with the count and budget total of each group.
+
+| Method | Route                                  | Allowed roles |
+|--------|----------------------------------------|---------------|
+| GET    | `/api/projects/reports/status`         | Admin         |
+| GET    | `/api/projects/reports/status/export`  | Admin         |
+
+Both take the same optional filters, which combine:
+
+| Query parameter | Meaning |
+|-----------------|---------|
+| `status`        | Only these statuses. Repeat it (`?status=Pending&status=Designing`) or comma-separate (`?status=Pending,Designing`). Names are not case-sensitive; a number is not a status. Omit it for every status. |
+| `from`, `to`    | First and last day to include, as `yyyy-MM-dd`. Both are inclusive whole days in UTC, so `from=to` is one day. Either may be left off. |
+
+The date range is on `created_at` — the day the Client submitted the project.
+`updated_at` moves with every status change, so a range over it would answer
+"what was touched" rather than "what came in".
+
+An unknown status, a date that is not a date, or a `from` after `to` is a `400`
+with the reason under `errors.filter`, never a quietly widened report: an Admin
+who misspells a status must not be handed the whole pipeline as if it were the
+slice they asked for.
+
+`GET /api/projects/reports/status` answers:
+
+```json
+{
+  "generatedAt": "2026-09-30T08:00:00Z",
+  "totalProjects": 3,
+  "totalBudget": 147500000.00,
+  "groups": [
+    {
+      "status": "Pending",
+      "count": 1,
+      "totalBudget": 18500000.00,
+      "projects": [
+        { "id": "…", "name": "Beachfront villa", "location": "Galle",
+          "status": "Pending", "budget": 18500000.00,
+          "createdAt": "2026-09-02T09:00:00", "updatedAt": "2026-09-02T09:00:00" }
+      ]
+    }
+  ]
+}
+```
+
+`groups` has one entry per status in scope, in lifecycle order (`Pending`,
+`Designing`, `DesignApproved`, `Construction`, `Completed`, `Cancelled`) — and a
+status with nothing in it is still there with `count: 0`, so the report keeps its
+shape from one week to the next. A `status` filter limits which groups appear.
+Projects inside a group are newest first, with `id` breaking a tie so two runs
+over unchanged data read the same.
+
+`GET /api/projects/reports/status/export` is the same report as a CSV download,
+`project-status-report-<yyyy-MM-dd>.csv`: one row per project, grouped in
+lifecycle order, with the columns `Status, Project ID, Name, Location, Budget,
+Created (UTC), Last updated (UTC)`. Three details are deliberate:
+
+- **Quoting.** A project name is whatever a Client typed, commas and quotes
+  included, so a field containing one is quoted with inner quotes doubled
+  (RFC 4180).
+- **Formulas.** An Admin opens the file in Excel, so text starting with `=`, `+`,
+  `-` or `@` is prefixed with an apostrophe and reads as plain text rather than
+  running.
+- **Encoding.** The file starts with a UTF-8 byte-order mark, so a spreadsheet
+  reads non-ASCII names correctly instead of guessing.
+
+Filtering is done by MySQL, with every value — including the status list — as a
+bound parameter; grouping and ordering are done in code
+(`ProjectStatusReportBuilder`), where they can be tested without a database. The
+query lives in its own `IProjectReportRepository`, apart from the one a request
+that writes goes through.
+
+The React screen is `/admin/reports/project-status`. It exports the filter that
+is *applied*, not one that has been ticked and not yet applied, so the file is
+always the report on screen. No gateway change is needed: the existing
+`/api/projects/{**catch-all}` route already covers these paths.
+
 ## Events published (Kafka)
 
 This service publishes to one topic, `project-events` — one topic per publishing
@@ -230,6 +310,20 @@ would fail at runtime in somebody else's service rather than here.
 any endpoint neither declares its roles nor is explicitly `[AllowAnonymous]`, or
 names a role the platform does not have. An endpoint added in a later story is
 held to that rule without anyone having to remember this file.
+
+The US-18 report is covered in layers. `ProjectStatusReportBuilderTests` and
+`ProjectReportFilterTests` check the grouping, the ordering and the filter rules
+(what is accepted, what is refused, where the date range's edges fall) with no
+database. `ProjectStatusReportCsvTests` pins the CSV — columns, quoting, the
+formula guard, culture-independent numbers. `ProjectStatusReportEndpointTests`
+walks the acceptance criteria over a stand-in query: grouped by status, the
+filters reach the query, a bad filter is a `400` before anything is read, and the
+export carries the same report. `EndpointRoleDeclarationTests` pins both
+endpoints to Admin only. The SQL itself — the status list and the inclusive date
+boundaries — is only provable against the real engine, so
+`ProjectReportRepositoryDatabaseTests` runs against `project-db` (the same
+integration category as `ProjectRepositoryDatabaseTests`): start it first with
+`cd infra && docker compose up -d --wait project-db`.
 
 `MigrationScriptTests` checks the scripts are embedded (DbUp silently skips one
 that is not), sort into the order they must run in, do not switch database, and
