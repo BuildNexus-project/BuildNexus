@@ -1,4 +1,5 @@
 import {
+  ChartBar,
   ChartColumn,
   ChartNoAxesCombined,
   FolderKanban,
@@ -72,6 +73,13 @@ const USERS: NavItem = {
   icon: UserCog,
 }
 
+const PROJECT_REPORT: NavItem = {
+  to: '/admin/reports/project-status',
+  label: 'Project report',
+  description: 'Every project grouped by status — the whole pipeline at a glance.',
+  icon: ChartBar,
+}
+
 const DESIGN_REPORT: NavItem = {
   to: '/admin/reports/design-approval',
   label: 'Design report',
@@ -97,7 +105,7 @@ export const NAV_ITEMS: Record<Role, readonly NavItem[]> = {
   Client: [PROJECTS, NEW_PROJECT, PROGRESS, MY_COSTS],
   Architect: [PROJECTS, TEAM],
   ProjectManager: [PROJECTS, TEAM, BUILD_PAYMENT_REPORT],
-  Admin: [PROJECTS, USERS, DESIGN_REPORT, BUILD_PAYMENT_REPORT],
+  Admin: [PROJECTS, USERS, PROJECT_REPORT, DESIGN_REPORT, BUILD_PAYMENT_REPORT],
 }
 
 /** What a role calls its own corner of the app, shown beside the breadcrumbs. */
@@ -170,6 +178,10 @@ const TRAILS: ReadonlyArray<{ path: string; trail: readonly Crumb[] }> = [
   {
     path: '/admin/reports/design-approval',
     trail: [{ label: 'Reports' }, { label: 'Design approval' }],
+  },
+  {
+    path: '/admin/reports/project-status',
+    trail: [{ label: 'Reports' }, { label: 'Project status' }],
   },
 ]
 

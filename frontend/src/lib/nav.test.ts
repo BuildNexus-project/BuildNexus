@@ -25,6 +25,7 @@ describe('NAV_ITEMS', () => {
     '/directory': PROJECT_STAFF_ROLES,
     '/admin/users': ADMIN_ROLES,
     '/admin/reports/design-approval': ADMIN_ROLES,
+    '/admin/reports/project-status': ADMIN_ROLES,
     '/reports/construction-payment': REPORTING_ROLES,
   }
 
@@ -142,6 +143,13 @@ describe('breadcrumbsFor', () => {
     expect(breadcrumbsFor('/reports/construction-payment')).toEqual([
       { label: 'Reports' },
       { label: 'Construction & payment' },
+    ])
+  })
+
+  it('leads to the project status report through Reports', () => {
+    expect(breadcrumbsFor('/admin/reports/project-status')).toEqual([
+      { label: 'Reports' },
+      { label: 'Project status' },
     ])
   })
 
