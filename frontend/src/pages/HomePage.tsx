@@ -1,15 +1,14 @@
 import { ArrowRight, ArrowUpRight, CircleUser } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { AdminDashboard } from '@/components/dashboard/AdminDashboard'
 import { ArchitectDashboard } from '@/components/dashboard/ArchitectDashboard'
 import { ClientDashboard } from '@/components/dashboard/ClientDashboard'
+import { ProjectManagerDashboard } from '@/components/dashboard/ProjectManagerDashboard'
 import { Button } from '@/components/ui/button'
-import { fetchProjects, type ProjectSummary as ProjectSummaryRow } from '@/lib/project-api'
 import { NAV_ITEMS, WORKSPACE_LABELS, type NavItem } from '@/lib/nav'
 import type { Role } from '@/lib/roles'
-import { cn } from '@/lib/utils'
 
 /** One line under the greeting, in the voice of what this role is here to do. */
 const ROLE_INTROS: Record<Role, string> = {
@@ -28,18 +27,10 @@ const PRIMARY_ACTION: Record<Role, string> = {
   Admin: '/admin/users',
 }
 
-/** What the summary tiles are called, since "your" is only true for some roles. */
-const SUMMARY_HEADINGS: Record<Role, string> = {
-  Client: 'Your projects at a glance',
-  Architect: 'Your assigned projects at a glance',
-  ProjectManager: 'Your assigned projects at a glance',
-  Admin: 'Every project at a glance',
-}
-
 /**
- * The dashboard for a role that has its own — the Client's and the Architect's read
- * several services and put them together (US-21). A role without one falls through to
- * the project summary below.
+ * The dashboard for a role (US-21). Each one reads from the several services that hold
+ * that role's data and puts them together, showing only what the role's own work is made
+ * of — never one generic dashboard for everyone to interpret for themselves.
  */
 function RoleDashboard({ role }: { role: Role }) {
   switch (role) {
@@ -47,72 +38,11 @@ function RoleDashboard({ role }: { role: Role }) {
       return <ClientDashboard />
     case 'Architect':
       return <ArchitectDashboard />
-    default:
-      return <ProjectSummary role={role} />
+    case 'ProjectManager':
+      return <ProjectManagerDashboard />
+    case 'Admin':
+      return <AdminDashboard />
   }
-}
-
-/** Where a project is, in three groups a reader can take in at once. */
-function summarise(projects: readonly ProjectSummaryRow[]) {
-  return {
-    total: projects.length,
-    design: projects.filter((p) => ['Pending', 'Designing', 'DesignApproved'].includes(p.status))
-      .length,
-    construction: projects.filter((p) => p.status === 'Construction').length,
-    completed: projects.filter((p) => p.status === 'Completed').length,
-  }
-}
-
-/**
- * Where a role without a dedicated dashboard sees its projects stand, in four tiles.
- *
- * A convenience and never the point of the page. It is read from the same list the
- * Projects page shows, so it cannot disagree with it, and if that request fails the
- * section is left out rather than shown wrong or showing an error on a page that
- * otherwise works.
- */
-function ProjectSummary({ role }: { role: Role }) {
-  const { authFetch } = useAuth()
-  const [projects, setProjects] = useState<ProjectSummaryRow[] | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    fetchProjects(authFetch)
-      .then((loaded) => {
-        if (!cancelled) {
-          setProjects(loaded)
-        }
-      })
-      // Deliberately quiet — see the component's note.
-      .catch(() => undefined)
-
-    // The effect can outlive the page if the user navigates away mid-request.
-    return () => {
-      cancelled = true
-    }
-  }, [authFetch])
-
-  if (!projects) {
-    return null
-  }
-
-  const summary = summarise(projects)
-
-  return (
-    <section aria-labelledby="summary-heading" className="flex flex-col gap-4">
-      <h2 id="summary-heading" className="font-heading text-lg font-semibold tracking-tight">
-        {SUMMARY_HEADINGS[role]}
-      </h2>
-
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Active projects" value={summary.total} />
-        <Stat label="In design" value={summary.design} dot="bg-sky-500" />
-        <Stat label="Under construction" value={summary.construction} dot="bg-orange-500" />
-        <Stat label="Completed" value={summary.completed} dot="bg-emerald-500" />
-      </div>
-    </section>
-  )
 }
 
 /**
@@ -195,21 +125,6 @@ export function HomePage() {
         </div>
       </section>
     </main>
-  )
-}
-
-function Stat({ label, value, dot }: { label: string; value: number; dot?: string }) {
-  return (
-    <Link
-      to="/projects"
-      className="rounded-xl bg-card p-5 ring-1 ring-foreground/10 transition-all hover:-translate-y-0.5 hover:ring-foreground/20"
-    >
-      <span className="flex items-center gap-2 text-sm text-muted-foreground">
-        {dot && <span aria-hidden className={cn('size-2 rounded-full', dot)} />}
-        {label}
-      </span>
-      <span className="mt-2 block font-heading text-4xl font-semibold tracking-tight">{value}</span>
-    </Link>
   )
 }
 

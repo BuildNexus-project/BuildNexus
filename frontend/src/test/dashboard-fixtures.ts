@@ -1,4 +1,6 @@
 import type {
+  AdminProjectsDashboard,
+  AdminUsersDashboard,
   ArchitectDesignDashboard,
   ArchitectProjectsDashboard,
   ClientConstructionDashboard,
@@ -6,6 +8,7 @@ import type {
   ClientPaymentsDashboard,
   ClientProjectsDashboard,
   DashboardProject,
+  ProjectManagerConstructionDashboard,
 } from '@/lib/dashboard-api'
 import { apiResponse } from '@/test/fake-fetch'
 
@@ -158,5 +161,133 @@ export function architectRoutes(
   return {
     [ARCHITECT_PATHS.projects]: overrides.projects ?? apiResponse(200, architectProjects()),
     [ARCHITECT_PATHS.design]: overrides.design ?? apiResponse(200, architectDesign()),
+  }
+}
+
+// ------------------------------------------------------- Project Manager slices ----
+
+/** A build the Project Manager is not assigned to — the Project Service would not list it for them. */
+export const STRANGER_ID = 'ffffffff-0000-4000-8000-000000000009'
+
+/**
+ * Two builds under way — the cottage, which the Project Manager is assigned to, and one they
+ * are not — and two milestones still to finish out of fourteen.
+ */
+export function pmConstruction(): ProjectManagerConstructionDashboard {
+  return {
+    activeBuildCount: 2,
+    activeBuilds: [
+      {
+        projectId: COTTAGE_ID,
+        phaseStatus: 'Started',
+        totalMilestones: 5,
+        completedMilestones: 2,
+        outstandingMilestones: 3,
+        progressPercent: 40,
+      },
+      {
+        projectId: STRANGER_ID,
+        phaseStatus: 'Completed',
+        totalMilestones: 3,
+        completedMilestones: 3,
+        outstandingMilestones: 0,
+        progressPercent: 100,
+      },
+    ],
+    milestonesDue: {
+      totalCount: 14,
+      milestones: [
+        {
+          id: 'eeeeeeee-0000-4000-8000-000000000001',
+          projectId: COTTAGE_ID,
+          name: 'Walls',
+          status: 'InProgress',
+          createdAt: '2026-08-10T09:00:00',
+        },
+        {
+          id: 'eeeeeeee-0000-4000-8000-000000000002',
+          projectId: COTTAGE_ID,
+          name: 'Roof',
+          status: 'NotStarted',
+          createdAt: '2026-08-10T09:05:00',
+        },
+      ],
+    },
+  }
+}
+
+/** What `GET /api/projects` gives the Project Manager: only the project they are assigned to. */
+export function pmProjectList() {
+  return [
+    {
+      id: COTTAGE_ID,
+      clientId: '6f9619ff-8b86-d011-b42d-00cf4fc964ff',
+      name: COTTAGE.name,
+      location: COTTAGE.location,
+      status: COTTAGE.status,
+      createdAt: '2026-08-01T09:00:00',
+      updatedAt: COTTAGE.updatedAt,
+    },
+  ]
+}
+
+export const PM_PATHS = {
+  construction: '/api/construction/dashboard/project-manager',
+  // The names, from the one endpoint that lists a person's own projects.
+  projects: '/api/projects',
+} as const
+
+export function pmRoutes(
+  overrides: Partial<Record<keyof typeof PM_PATHS, Response | Error>> = {},
+): Record<string, Response | Error> {
+  return {
+    [PM_PATHS.construction]: overrides.construction ?? apiResponse(200, pmConstruction()),
+    [PM_PATHS.projects]: overrides.projects ?? apiResponse(200, pmProjectList()),
+  }
+}
+
+// ------------------------------------------------------------------ Admin slices ----
+
+/** Ten accounts, nine of which can sign in. */
+export function adminUsers(): AdminUsersDashboard {
+  return {
+    totalUsers: 10,
+    activeUsers: 9,
+    inactiveUsers: 1,
+    roles: [
+      { role: 'Client', count: 6 },
+      { role: 'Architect', count: 2 },
+      { role: 'ProjectManager', count: 1 },
+      { role: 'Admin', count: 1 },
+    ],
+  }
+}
+
+/** Sixteen projects, ten of them still active (not completed and not cancelled). */
+export function adminProjects(): AdminProjectsDashboard {
+  return {
+    totalCount: 16,
+    groups: [
+      { status: 'Pending', count: 3 },
+      { status: 'Designing', count: 4 },
+      { status: 'DesignApproved', count: 1 },
+      { status: 'Construction', count: 2 },
+      { status: 'Completed', count: 5 },
+      { status: 'Cancelled', count: 1 },
+    ],
+  }
+}
+
+export const ADMIN_PATHS = {
+  users: '/api/users/dashboard/admin',
+  projects: '/api/projects/dashboard/admin',
+} as const
+
+export function adminRoutes(
+  overrides: Partial<Record<keyof typeof ADMIN_PATHS, Response | Error>> = {},
+): Record<string, Response | Error> {
+  return {
+    [ADMIN_PATHS.users]: overrides.users ?? apiResponse(200, adminUsers()),
+    [ADMIN_PATHS.projects]: overrides.projects ?? apiResponse(200, adminProjects()),
   }
 }
