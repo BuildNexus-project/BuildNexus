@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { ArchitectDashboard } from '@/components/dashboard/ArchitectDashboard'
+import { ClientDashboard } from '@/components/dashboard/ClientDashboard'
 import { Button } from '@/components/ui/button'
-import { fetchProjects, type ProjectSummary } from '@/lib/project-api'
+import { fetchProjects, type ProjectSummary as ProjectSummaryRow } from '@/lib/project-api'
 import { NAV_ITEMS, WORKSPACE_LABELS, type NavItem } from '@/lib/nav'
 import type { Role } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -34,8 +36,24 @@ const SUMMARY_HEADINGS: Record<Role, string> = {
   Admin: 'Every project at a glance',
 }
 
+/**
+ * The dashboard for a role that has its own — the Client's and the Architect's read
+ * several services and put them together (US-21). A role without one falls through to
+ * the project summary below.
+ */
+function RoleDashboard({ role }: { role: Role }) {
+  switch (role) {
+    case 'Client':
+      return <ClientDashboard />
+    case 'Architect':
+      return <ArchitectDashboard />
+    default:
+      return <ProjectSummary role={role} />
+  }
+}
+
 /** Where a project is, in three groups a reader can take in at once. */
-function summarise(projects: readonly ProjectSummary[]) {
+function summarise(projects: readonly ProjectSummaryRow[]) {
   return {
     total: projects.length,
     design: projects.filter((p) => ['Pending', 'Designing', 'DesignApproved'].includes(p.status))
@@ -46,18 +64,16 @@ function summarise(projects: readonly ProjectSummary[]) {
 }
 
 /**
- * The signed-in user's dashboard: a welcome in the BuildNexus black, where their
- * projects stand, and a card for everything their role can do — the same places
- * as the header, described.
+ * Where a role without a dedicated dashboard sees its projects stand, in four tiles.
  *
- * The summary is a convenience and never the point of the page. It is read from
- * the same list the Projects page shows, so it cannot disagree with it, and if
- * that request fails the section is left out rather than shown wrong or showing
- * an error on a page that otherwise works.
+ * A convenience and never the point of the page. It is read from the same list the
+ * Projects page shows, so it cannot disagree with it, and if that request fails the
+ * section is left out rather than shown wrong or showing an error on a page that
+ * otherwise works.
  */
-export function HomePage() {
-  const { user, authFetch } = useAuth()
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
+function ProjectSummary({ role }: { role: Role }) {
+  const { authFetch } = useAuth()
+  const [projects, setProjects] = useState<ProjectSummaryRow[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -77,6 +93,36 @@ export function HomePage() {
     }
   }, [authFetch])
 
+  if (!projects) {
+    return null
+  }
+
+  const summary = summarise(projects)
+
+  return (
+    <section aria-labelledby="summary-heading" className="flex flex-col gap-4">
+      <h2 id="summary-heading" className="font-heading text-lg font-semibold tracking-tight">
+        {SUMMARY_HEADINGS[role]}
+      </h2>
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Stat label="Active projects" value={summary.total} />
+        <Stat label="In design" value={summary.design} dot="bg-sky-500" />
+        <Stat label="Under construction" value={summary.construction} dot="bg-orange-500" />
+        <Stat label="Completed" value={summary.completed} dot="bg-emerald-500" />
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The signed-in user's dashboard: a welcome in the BuildNexus black, the summary of
+ * their own role's work, and a card for everything their role can do — the same places
+ * as the header, described.
+ */
+export function HomePage() {
+  const { user } = useAuth()
+
   if (!user) {
     return null
   }
@@ -84,7 +130,6 @@ export function HomePage() {
   const firstName = user.fullName.trim().split(/\s+/)[0]
   const items = NAV_ITEMS[user.role]
   const primary = items.find((item) => item.to === PRIMARY_ACTION[user.role]) ?? items[0]
-  const summary = projects ? summarise(projects) : null
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
@@ -128,20 +173,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {summary && (
-        <section aria-labelledby="summary-heading" className="flex flex-col gap-4">
-          <h2 id="summary-heading" className="font-heading text-lg font-semibold tracking-tight">
-            {SUMMARY_HEADINGS[user.role]}
-          </h2>
-
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Stat label="Active projects" value={summary.total} />
-            <Stat label="In design" value={summary.design} dot="bg-sky-500" />
-            <Stat label="Under construction" value={summary.construction} dot="bg-orange-500" />
-            <Stat label="Completed" value={summary.completed} dot="bg-emerald-500" />
-          </div>
-        </section>
-      )}
+      <RoleDashboard role={user.role} />
 
       <section aria-labelledby="go-heading" className="flex flex-col gap-4">
         <h2 id="go-heading" className="font-heading text-lg font-semibold tracking-tight">
