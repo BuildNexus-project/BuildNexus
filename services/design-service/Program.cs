@@ -53,6 +53,16 @@ builder.Services.AddHttpClient<IProjectAccessClient, HttpProjectAccessClient>((s
     client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
 });
 
+// The other question this service puts to the Project Service: which projects may
+// the caller see at all (US-21). Same address and timeout as the access check
+// above, so nothing new to configure or validate.
+builder.Services.AddHttpClient<IProjectDirectoryClient, HttpProjectDirectoryClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<ProjectServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
+
 // The User Service, asked over HTTP for a name and email to notify — see
 // HttpInternalUserClient. Same validation reasoning as ProjectServiceOptions.
 builder.Services.AddOptions<UserServiceOptions>()
