@@ -96,6 +96,9 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
     /// </summary>
     public ConstructionReportRepository ConstructionReportRepository { get; private set; } = null!;
 
+    /// <summary>The role-dashboard queries (US-21), over the same live database.</summary>
+    public ConstructionDashboardRepository ConstructionDashboardRepository { get; private set; } = null!;
+
     /// <summary>Builds a <c>project_id</c> in this run's namespace, so cleanup can find it.</summary>
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
@@ -146,6 +149,7 @@ public class ConstructionDatabaseFixture : IAsyncLifetime
         OutboxRepository = new OutboxRepository(connectionFactory);
         PaymentSettlementRepository = new PaymentSettlementRepository(connectionFactory);
         ConstructionReportRepository = new ConstructionReportRepository(connectionFactory);
+        ConstructionDashboardRepository = new ConstructionDashboardRepository(connectionFactory);
 
         return Task.CompletedTask;
     }

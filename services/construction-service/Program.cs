@@ -39,6 +39,7 @@ builder.Services.AddScoped<IConstructionPhaseRepository, ConstructionPhaseReposi
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 builder.Services.AddScoped<IPaymentSettlementRepository, PaymentSettlementRepository>();
 builder.Services.AddScoped<IConstructionReportRepository, ConstructionReportRepository>();
+builder.Services.AddScoped<IConstructionDashboardRepository, ConstructionDashboardRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.
