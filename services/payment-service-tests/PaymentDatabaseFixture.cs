@@ -105,6 +105,9 @@ public class PaymentDatabaseFixture : IAsyncLifetime
     /// </summary>
     public PaymentReportRepository PaymentReportRepository { get; private set; } = null!;
 
+    /// <summary>The Client dashboard's payments-due query (US-21), over the same live database.</summary>
+    public PaymentDashboardRepository PaymentDashboardRepository { get; private set; } = null!;
+
     public Guid ProjectId(string suffix) => Guid.Parse($"{RunId}-0000-4000-8000-{suffix.PadLeft(12, '0')}");
 
     public Task InitializeAsync()
@@ -129,6 +132,7 @@ public class PaymentDatabaseFixture : IAsyncLifetime
         OutboxRepository = new OutboxRepository(connectionFactory);
         PaymentHistoryRepository = new PaymentHistoryRepository(connectionFactory);
         PaymentReportRepository = new PaymentReportRepository(connectionFactory);
+        PaymentDashboardRepository = new PaymentDashboardRepository(connectionFactory);
         ConstructionCompletionRepository = new ConstructionCompletionRepository(connectionFactory);
 
         return Task.CompletedTask;
