@@ -100,7 +100,7 @@ describe('the header navigation', () => {
     ['Client', ['Dashboard', 'Projects', 'New project', 'Progress', 'My costs']],
     ['Architect', ['Dashboard', 'Projects', 'Project team']],
     ['ProjectManager', ['Dashboard', 'Projects', 'Project team', 'Build & payment']],
-    ['Admin', ['Dashboard', 'Projects', 'Users', 'Design report', 'Build & payment']],
+    ['Admin', ['Dashboard', 'Projects', 'Users', 'Project report', 'Design report', 'Build & payment']],
   ])('shows a %s their own pages', (role, expected) => {
     signInAs(role)
 
@@ -195,6 +195,7 @@ describe('the footer', () => {
       'Dashboard',
       'Projects',
       'Users',
+      'Project report',
       'Design report',
       'Build & payment',
     ])

@@ -16,6 +16,7 @@ import { NewProjectPage } from '@/pages/NewProjectPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
+import { ProjectStatusReportPage } from '@/pages/ProjectStatusReportPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
@@ -153,6 +154,14 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={ADMIN_ROLES}>
               <DesignApprovalReportPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/admin/reports/project-status"
+          element={
+            <RoleRoute allowedRoles={ADMIN_ROLES}>
+              <ProjectStatusReportPage />
             </RoleRoute>
           }
         />
