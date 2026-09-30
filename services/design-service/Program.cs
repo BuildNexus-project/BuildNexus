@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IDesignDocumentRepository, DesignDocumentRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 builder.Services.AddScoped<IDesignReportRepository, DesignReportRepository>();
+builder.Services.AddScoped<IDesignDashboardRepository, DesignDashboardRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
 // background threads and a connection pool, so one per request would spend more
