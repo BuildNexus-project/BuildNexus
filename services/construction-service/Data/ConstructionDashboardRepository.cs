@@ -161,22 +161,12 @@ public class ConstructionDashboardRepository : IConstructionDashboardRepository
                 CompletedMilestones = completed,
                 InProgressMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("in_progress_milestones"))),
                 NotStartedMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("not_started_milestones"))),
-                ProgressPercent = CalculatePercent(completed, total)
+                ProgressPercent = ProgressPercentage.Of(completed, total)
             });
         }
 
         return rows;
     }
-
-    /// <summary>
-    /// The same calculation <see cref="MilestoneRepository"/> and
-    /// <see cref="ConstructionReportRepository"/> use, so a project's percentage on a
-    /// dashboard and on its own progress screen cannot disagree. Computed here rather
-    /// than in SQL for that reason alone. The zero guard matters for
-    /// <see cref="ListActiveBuildsAsync"/>, where a started build may have no milestones.
-    /// </summary>
-    private static decimal CalculatePercent(int completed, int total) =>
-        total == 0 ? 0m : Math.Round((decimal)completed / total * 100m, 2);
 
     private static void AddParameter(DbCommand command, string name, object value)
     {

@@ -398,17 +398,9 @@ public class MilestoneRepository : IMilestoneRepository
             ProjectId = projectId,
             TotalMilestones = total,
             CompletedMilestones = completed,
-            ProgressPercent = CalculatePercent(completed, total)
+            ProgressPercent = ProgressPercentage.Of(completed, total)
         };
     }
-
-    /// <summary>
-    /// AC-3's percentage, rounded to two decimals. Zero when the project has
-    /// no milestones — the alternative, dividing by zero, is a real bug the
-    /// callers should not have to guard against.
-    /// </summary>
-    private static decimal CalculatePercent(int completed, int total) =>
-        total == 0 ? 0m : Math.Round((decimal)completed / total * 100m, 2);
 
     /// <summary>
     /// Does this project have a <c>milestone_setups</c> row — the local
