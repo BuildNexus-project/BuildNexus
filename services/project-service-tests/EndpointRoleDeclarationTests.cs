@@ -105,6 +105,17 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Client, PlatformRoles.Admin], RolesFor("CancelProject"));
     }
 
+    [Fact]
+    public void The_project_status_report_and_its_export_are_the_admins_alone()
+    {
+        // US-18: the whole pipeline is an Admin's view. A Client sees their own
+        // projects, and staff see the ones they are assigned to — neither sees
+        // every project at once. Pinned rather than left to whoever edits the
+        // controller next.
+        Assert.Equal([PlatformRoles.Admin], RolesFor("GetStatusReport"));
+        Assert.Equal([PlatformRoles.Admin], RolesFor("ExportStatusReport"));
+    }
+
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
