@@ -113,6 +113,14 @@ variable "internal_service_api_key" {
   }
 }
 
+# --- API Gateway -------------------------------------------------------------
+
+variable "api_gateway_app_name" {
+  description = "Name of the API Gateway App Service. Must be globally unique across Azure, since it becomes <name>.azurewebsites.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-api-gateway-2026"
+}
+
 # --- User Service ------------------------------------------------------------
 
 variable "user_service_app_name" {
@@ -122,7 +130,7 @@ variable "user_service_app_name" {
 }
 
 variable "frontend_origin" {
-  description = "Origin the React app is served from, used to build the password reset link that is emailed to a user. Still the local dev server: the frontend has no deployed home until its own story lands."
+  description = "Origin the React app is served from. Used to build the password reset link that is emailed to a user, and as the one origin the API Gateway's CORS policy allows. Still the local dev server: the frontend has no deployed home until its own story lands."
   type        = string
   default     = "http://localhost:5173"
 }

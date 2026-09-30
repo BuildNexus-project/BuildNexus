@@ -7,13 +7,13 @@ Captured from a real run of `project-performance-test-plan.jmx` — see
 
 | | |
 |---|---|
-| Date | 2026-09-27 |
-| Target | Local `docker compose` stack (`infra/docker-compose.yml`), via the API Gateway at `http://localhost:5000` — all 5 services, all 5 MySQL containers, and Kafka running, containers already warm (up 35 hours / 3 days, not a cold start) |
+| Date | 2026-09-29 |
+| Target | Local `docker compose` stack (`infra/docker-compose.yml`) — after the SCRUM-45 host-split refactor, User/Project/Design Service are hit directly (`auth_*`/`project_*`/`design_*`, all defaulting to `http://localhost:5000`, same as the Gateway's local port) rather than through one shared Gateway host. All 5 services, all 5 MySQL containers, and Kafka running; containers up between 10 hours and 5 days, not a cold start. |
 | Docker host | 16 CPUs, ~7.6 GB RAM allocated to Docker Desktop |
 | JMeter | 5.6.3, non-GUI mode |
 | Load | Defaults: 20 Client threads × 10 loops (200 `Create Project` requests, 10s ramp-up); 10 Architect threads × 5 loops (50 `Upload Design Document` requests, 10s ramp-up) |
 | Total samples | 360 (setup calls + the two measured endpoints) |
-| Total errors | 2 (0.56%) — both on `Upload Design Document`, see [Finding](#finding-deadlocks-under-concurrent-design-uploads) below |
+| Total errors | 0 |
 
 ## Project creation — `POST /api/projects`
 
@@ -21,76 +21,71 @@ Captured from a real run of `project-performance-test-plan.jmx` — see
 
 | Metric | Value |
 |---|---|
-| Throughput | 20.9 req/s |
-| Mean response time | 28 ms |
-| Median | 26 ms |
-| Min / Max | 18 ms / 58 ms |
-| p90 | 39 ms |
-| p95 | 42 ms |
-| p99 | 50 ms |
+| Throughput | 21.0 req/s |
+| Mean response time | 17 ms |
+| Median | 15 ms |
+| Min / Max | 10 ms / 53 ms |
+| p90 | 24 ms |
+| p95 | 28 ms |
+| p99 | 39 ms |
 
 Fast and stable under this load — no errors, and even the slowest 1% of
-requests stayed under 50 ms.
+requests stayed under 40 ms.
 
 ## Design upload — `POST /api/designs/projects/{id}/documents`
 
-50 requests, 10 concurrent Architect users, 2 errors (4%).
+50 requests, 10 concurrent Architect users, 0 errors.
 
 | Metric | Value |
 |---|---|
-| Throughput | 1.68 req/s |
-| Mean response time | 4,201 ms |
-| Median | 4,157 ms |
-| Min / Max | 1,866 ms / 5,009 ms |
-| p90 | 4,748 ms |
-| p95 | 4,866 ms |
-| p99 | 5,009 ms |
+| Throughput | 5.6 req/s |
+| Mean response time | 24 ms |
+| Median | 21 ms |
+| Min / Max | 14 ms / 39 ms |
+| p90 | 34 ms |
+| p95 | 35 ms |
+| p99 | 39 ms |
 
-Two orders of magnitude slower than project creation under concurrent load,
-and not just for the requests that failed — every sample in this batch,
-successful or not, took at least 1.9 seconds. See the finding below.
+In the same ballpark as project creation this time — no errors, and nothing
+close to the multi-second stalls seen previously. See the note below.
 
-### Finding: deadlocks under concurrent design uploads
+### Note: the deadlock finding from earlier runs is not reproducing
 
-Both failures came back `500 Internal Server Error`. The Design Service's
-own logs show why:
+An earlier run captured here (2026-09-27, superseded by this one) hit 2
+`500 Internal Server Error` deadlocks out of 50 `Upload Design Document`
+requests, with every sample in that batch — successful or not — taking at
+least 1.9 seconds. The Design Service's logs at the time pointed at
+`DesignDocumentRepository.InsertDocumentAsync`/`TryAddVersionAsync`
+(`MySqlConnector.MySqlException: Deadlock found when trying to get lock; try
+restarting transaction`), with contention plausibly from the outbox insert
+riding along in the same transaction (US-23), serializing writes across
+unrelated uploads even though each Architect uploaded to their own project.
 
-```
-MySqlConnector.MySqlException (0x80004005): Deadlock found when trying to get lock; try restarting transaction
-   at ... DesignDocumentRepository.InsertDocumentAsync(...) in .../Data/DesignDocumentRepository.cs:line 261
-   at ... DesignDocumentRepository.InsertDocumentAsync(...) in .../Data/DesignDocumentRepository.cs:line 263
-   at ... DesignDocumentRepository.TryAddVersionAsync(...) in .../Data/DesignDocumentRepository.cs:line 71
-   at ... DesignsController.Upload(...) in .../Controllers/DesignsController.cs:line 110
-```
-
-The repeated `InsertDocumentAsync` frame suggests the repository already
-retries once on a deadlock; here both the original attempt and the retry lost
-the race. This reproduced with only 10 concurrent Architects, each uploading
-to their **own** project, so the contention is not two threads fighting over
-the same document row — something shared (plausibly the outbox insert that
-rides along in the same transaction, per US-23) is serializing writes across
-unrelated uploads.
-
-This is an application-code finding, not an infrastructure one, so it has not
-been touched here — this role's scope is `/infra` and `/.github/workflows`.
-Worth a follow-up story: the 4-second-plus response times on file uploads
-that didn't even error suggest lock contention is costing every concurrent
-upload, not only the 4% that surfaced as a hard failure.
+Two consecutive local runs on 2026-09-29 (this one and one immediately
+before it, same load, same stack) both came back with 0 errors and
+sub-40ms uploads — no sign of the deadlock. Nothing was changed here to fix
+it; this role's scope is `/infra` and `/.github/workflows`, not the
+repository code. Worth carrying forward rather than treating as closed: the
+condition may be data- or timing-dependent (accumulated table state, a code
+fix that landed elsewhere, warmer connections) rather than gone for good, so
+a load test before a release should still watch for it recurring, and the
+1.9-second-floor-even-on-success symptom from the original run is worth
+keeping in mind if it does.
 
 ## Setup-call overhead (for context, not part of the two target endpoints)
 
 Register/login calls run once per thread to obtain a real JWT; not what this
 story measures, but included so the two tables above aren't read in
-isolation. All well under 150 ms even at these concurrency levels.
+isolation. All well under 120 ms even at these concurrency levels.
 
 | Sampler | Requests | Mean | p95 |
 |---|---|---|---|
-| Register Client | 30 | 92 ms | 117 ms |
-| Login Client | 30 | 71 ms | 79 ms |
-| Register Architect | 10 | 84 ms | 103 ms |
-| Login Architect | 10 | 70 ms | 78 ms |
-| Admin Login | 10 | 73 ms | 79 ms |
-| Assign Architect To Project | 10 | 31 ms | 57 ms |
+| Register Client | 30 | 79 ms | 112 ms |
+| Login Client | 30 | 63 ms | 86 ms |
+| Register Architect | 10 | 77 ms | 99 ms |
+| Login Architect | 10 | 64 ms | 70 ms |
+| Admin Login | 10 | 62 ms | 75 ms |
+| Assign Architect To Project | 10 | 23 ms | 40 ms |
 
 ## Reproducing this run
 
@@ -100,7 +95,11 @@ docker compose -f ../docker-compose.yml up -d   # if the stack isn't already run
 ./run-performance-tests.sh
 ```
 
-The full HTML dashboard (per-endpoint response-time distribution graphs,
-response codes over time) is regenerated at `results/report/index.html` on
-every run — not committed here since it's derived from `results/results.jtl`,
-which any re-run reproduces.
+No `-Jenv_label` needed: this run's numbers came from the default, `local`,
+which is also where a bare `./run-performance-tests.sh` writes. The full HTML
+dashboard (per-endpoint response-time distribution graphs, response codes
+over time) is regenerated at `results/local/report/index.html` on every run —
+not committed here since it's derived from `results/local/results.jtl`, which
+any re-run reproduces. See [AZURE-RESULTS.md](AZURE-RESULTS.md) for the
+equivalent run against Azure, kept in its own file so neither overwrites the
+other.

@@ -6,7 +6,19 @@
 #
 # Usage:
 #   ./run-performance-tests.sh                                   # local docker-compose stack, defaults
-#   ./run-performance-tests.sh -Jhost=my-gateway.example.com -Jproject_threads=50
+#   ./run-performance-tests.sh -Jproject_host=my-project-service.example.com -Jproject_threads=50
+#   ./run-performance-tests.sh -Jenv_label=azure -Jauth_protocol=https -Jauth_host=... [...]
+#
+# There is no single target host/port/protocol: the Gateway and frontend
+# aren't deployed yet, so this plan points at User, Project and Design
+# Service directly, each with its own auth_*/project_*/design_* protocol,
+# host and port triple - see the property table in README.md.
+#
+# -Jenv_label (default "local") picks results/<env_label>/ as the output
+# directory, so a run against Azure writes to results/azure/ instead of
+# overwriting the local baseline in results/local/ - see AZURE-RESULTS.md
+# and RESULTS.md, which are transcribed from those two directories
+# respectively and never from each other's.
 #
 # JMeter itself is not vendored in this repository (its binary distribution is
 # ~80 MB) - install it and put it on PATH, or point JMETER_CMD at the jmeter
@@ -32,15 +44,32 @@ if ! "$JMETER_CMD" --version >/dev/null 2>&1; then
   exit 1
 fi
 
-RESULTS_DIR="results"
+# Parsed out of "$@" rather than left to JMeter alone: this decides where the
+# *shell script* writes results, and JMeter has no way to hand that back out
+# to the script that invoked it. Still passed through to jmeter unchanged
+# below, so it's also available inside the plan as ${__P(env_label,local)} if
+# a later story wants it (e.g. tagged into a sampler label).
+ENV_LABEL="local"
+for arg in "$@"; do
+  case "$arg" in
+    -Jenv_label=*)
+      ENV_LABEL="${arg#-Jenv_label=}"
+      ;;
+  esac
+done
+
+RESULTS_DIR="results/$ENV_LABEL"
 REPORT_DIR="$RESULTS_DIR/report"
 RESULTS_FILE="$RESULTS_DIR/results.jtl"
 
-# jmeter -e -o refuses to write into a report directory that already exists.
+# jmeter -e -o refuses to write into a report directory that already exists,
+# and -l refuses to write into a results file that already has data in it -
+# both from a previous run with this same env_label.
 rm -rf "$REPORT_DIR"
+rm -f "$RESULTS_FILE"
 mkdir -p "$RESULTS_DIR"
 
-echo "Running JMeter test plan (target defaults to http://localhost:5000 unless -Jhost/-Jport/-Jprotocol override it)..."
+echo "Running JMeter test plan for env_label=$ENV_LABEL (auth/project/design targets default to http://localhost:5000 unless -Jauth_host/-Jproject_host/-Jdesign_host, etc. override them)..."
 
 "$JMETER_CMD" -n -t project-performance-test-plan.jmx \
   -l "$RESULTS_FILE" \

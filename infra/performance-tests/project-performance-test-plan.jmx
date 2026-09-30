@@ -2,27 +2,57 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="BuildNexus Performance Test Plan (SCRUM-45)" enabled="true">
-      <stringProp name="TestPlan.comments">US-32 / SCRUM-45. Load-tests the project-creation and design-upload endpoints through the API Gateway. Run from this directory in non-GUI mode:
+      <stringProp name="TestPlan.comments">US-32 / SCRUM-45. Load-tests the project-creation and design-upload endpoints. The Gateway and frontend aren't deployed yet, so this targets User Service, Project Service and Design Service directly, one protocol/host/port set per service. Run from this directory in non-GUI mode:
 jmeter -n -t project-performance-test-plan.jmx -l results/results.jtl -e -o results/report
-Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproject_threads=50</stringProp>
+Override target/load with -J, e.g. -Jproject_host=buildnexus-project-service-2026.azurewebsites.net -Jproject_threads=50</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
         <collectionProp name="Arguments.arguments">
-          <elementProp name="PROTOCOL" elementType="Argument">
-            <stringProp name="Argument.name">PROTOCOL</stringProp>
-            <stringProp name="Argument.value">${__P(protocol,http)}</stringProp>
+          <elementProp name="AUTH_PROTOCOL" elementType="Argument">
+            <stringProp name="Argument.name">AUTH_PROTOCOL</stringProp>
+            <stringProp name="Argument.value">${__P(auth_protocol,http)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
-          <elementProp name="HOST" elementType="Argument">
-            <stringProp name="Argument.name">HOST</stringProp>
-            <stringProp name="Argument.value">${__P(host,localhost)}</stringProp>
+          <elementProp name="AUTH_HOST" elementType="Argument">
+            <stringProp name="Argument.name">AUTH_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(auth_host,localhost)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
-          <elementProp name="PORT" elementType="Argument">
-            <stringProp name="Argument.name">PORT</stringProp>
-            <stringProp name="Argument.value">${__P(port,5000)}</stringProp>
+          <elementProp name="AUTH_PORT" elementType="Argument">
+            <stringProp name="Argument.name">AUTH_PORT</stringProp>
+            <stringProp name="Argument.value">${__P(auth_port,5000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PROJECT_PROTOCOL" elementType="Argument">
+            <stringProp name="Argument.name">PROJECT_PROTOCOL</stringProp>
+            <stringProp name="Argument.value">${__P(project_protocol,http)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PROJECT_HOST" elementType="Argument">
+            <stringProp name="Argument.name">PROJECT_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(project_host,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PROJECT_PORT" elementType="Argument">
+            <stringProp name="Argument.name">PROJECT_PORT</stringProp>
+            <stringProp name="Argument.value">${__P(project_port,5000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DESIGN_PROTOCOL" elementType="Argument">
+            <stringProp name="Argument.name">DESIGN_PROTOCOL</stringProp>
+            <stringProp name="Argument.value">${__P(design_protocol,http)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DESIGN_HOST" elementType="Argument">
+            <stringProp name="Argument.name">DESIGN_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(design_host,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DESIGN_PORT" elementType="Argument">
+            <stringProp name="Argument.name">DESIGN_PORT</stringProp>
+            <stringProp name="Argument.value">${__P(design_port,5000)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="RUN_ID" elementType="Argument">
@@ -47,9 +77,10 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
     <hashTree>
 
       <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
-        <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
-        <stringProp name="HTTPSampler.port">${PORT}</stringProp>
-        <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+        <!-- No domain/port/protocol here: User, Project and Design Service are three
+             separate hosts once the Gateway isn't in the path, so each sampler below
+             sets its own via AUTH_*/PROJECT_*/DESIGN_*. Only the fields every
+             request shares regardless of target host stay here. -->
         <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
         <stringProp name="HTTPSampler.path"></stringProp>
         <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
@@ -88,6 +119,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/register</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -127,6 +161,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -178,6 +215,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
                 </elementProp>
               </collectionProp>
             </elementProp>
+            <stringProp name="HTTPSampler.domain">${PROJECT_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${PROJECT_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">${PROJECT_PROTOCOL}</stringProp>
             <stringProp name="HTTPSampler.path">/api/projects</stringProp>
             <stringProp name="HTTPSampler.method">POST</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -241,6 +281,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/register</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -280,6 +323,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -325,6 +371,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/register</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -364,6 +413,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -415,6 +467,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${PROJECT_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${PROJECT_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROJECT_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/projects</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -464,6 +519,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${AUTH_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -509,6 +567,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
               </elementProp>
             </collectionProp>
           </elementProp>
+          <stringProp name="HTTPSampler.domain">${PROJECT_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${PROJECT_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROJECT_PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/projects/${projectId}/architect</stringProp>
           <stringProp name="HTTPSampler.method">PUT</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -576,6 +637,9 @@ Override target/load with -J, e.g. -Jhost=buildnexus-user-service-2026... -Jproj
                 </elementProp>
               </collectionProp>
             </elementProp>
+            <stringProp name="HTTPSampler.domain">${DESIGN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${DESIGN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">${DESIGN_PROTOCOL}</stringProp>
             <stringProp name="HTTPSampler.path">/api/designs/projects/${projectId}/documents</stringProp>
             <stringProp name="HTTPSampler.method">POST</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>

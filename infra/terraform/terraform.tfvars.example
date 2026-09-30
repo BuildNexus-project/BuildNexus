@@ -64,14 +64,23 @@ internal_service_api_key = "REPLACE-ME-at-least-32-bytes"
 # jwt_issuer   = "BuildNexusAuth"
 # jwt_audience = "BuildNexusServices"
 
+# --- API Gateway -------------------------------------------------------------
+
+# Only needed if the default "buildnexus-api-gateway-2026" is already taken — the
+# name is global, and it becomes <name>.azurewebsites.net. The gateway needs no
+# secret of its own: it reuses jwt_signing_key above, which must be the same key
+# the User Service signs with.
+# api_gateway_app_name = "buildnexus-api-gateway-2026"
+
 # --- User Service ------------------------------------------------------------
 
 # Only needed if the default "buildnexus-user-service-2026" is already taken —
 # the name is global, and it becomes <name>.azurewebsites.net.
 # user_service_app_name = "buildnexus-user-service-2026"
 
-# Where the emailed password reset link points. Still the local dev server,
-# because the frontend has no deployed home yet.
+# Where the emailed password reset link points, and the one origin the API
+# Gateway's CORS policy allows. Still the local dev server, because the frontend
+# has no deployed home yet.
 # frontend_origin = "http://localhost:5173"
 
 # --- Project Service ---------------------------------------------------------
