@@ -2,3 +2,8 @@
 # DesignFileValidator's %PDF- magic-byte check saw when it was tested - never
 # let checkout/commit line-ending conversion touch it.
 infra/performance-tests/fixtures/*.pdf binary
+
+# Shell scripts always check out with LF, regardless of core.autocrlf on the
+# checking-out machine - a CRLF-mangled shebang line makes bash fail with
+# "$'\r': command not found" before the script's own logic ever runs.
+*.sh text eol=lf

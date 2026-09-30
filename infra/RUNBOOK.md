@@ -24,6 +24,7 @@ local run.
 | Design Service | `buildnexus-design-service-2026` | <https://buildnexus-design-service-2026.azurewebsites.net> |
 | Design Service database | `buildnexus_design_db` | On the shared server above. Connects as its own `design_service` MySQL user, scoped to this one database. Also holds every uploaded design document — see "Where uploaded design documents are stored" below. |
 | Event Hub `design-events` | `design-events` | Inside the shared namespace above — the Kafka topic Design Service publishes to, and Construction Service reads. |
+| API Gateway | `buildnexus-api-gateway-2026` | <https://buildnexus-api-gateway-2026.azurewebsites.net> — the one host the frontend calls. No database and no Event Hub; it proxies to the services above. |
 | Log Analytics workspace | `buildnexus-logs` | Backs the Application Insights resource below. Capped at `daily_quota_gb = 1`. |
 | Application Insights | `buildnexus-appinsights` | Workspace-based. Wired into the User Service only, as SCRUM-47's proof of concept — see "Application settings" below. |
 
@@ -103,8 +104,8 @@ MySQL elsewhere while the App Service stayed in centralindia would cross a regio
 boundary on every query.
 
 The location is written out as a literal on every resource in `terraform/main.tf`,
-`terraform/user-service.tf`, `terraform/project-service.tf` and
-`terraform/design-service.tf` so it cannot be overridden back to a region that
+`terraform/user-service.tf`, `terraform/project-service.tf`,
+`terraform/design-service.tf` and `terraform/api-gateway.tf` so it cannot be overridden back to a region that
 fails.
 
 ## Why there is no Service Principal, and no infra.yml
@@ -584,9 +585,10 @@ these are gone and must be redone:
 3. **Each service's publish profile.** App Service regenerates its deployment
    credentials when it is recreated, so `AZURE_WEBAPP_PUBLISH_PROFILE_USER_SERVICE`,
    `AZURE_WEBAPP_PUBLISH_PROFILE_PROJECT_SERVICE` and
-   `AZURE_WEBAPP_PUBLISH_PROFILE_DESIGN_SERVICE` are all stale, and the matching
+   `AZURE_WEBAPP_PUBLISH_PROFILE_DESIGN_SERVICE` and
+   `AZURE_WEBAPP_PUBLISH_PROFILE_API_GATEWAY` are all stale, and the matching
    deploy job fails with a 401 that does not explain itself. Refresh each one —
-   and create the Design Service's the first time, since the secret does not
+   and create the API Gateway's the first time, since the secret does not
    exist until someone adds it:
 
    ```
@@ -596,8 +598,8 @@ these are gone and must be redone:
      --xml > publish-profile.xml
    ```
 
-   using `buildnexus-user-service-2026`, `buildnexus-project-service-2026` or
-   `buildnexus-design-service-2026` for `<app-name>`. Paste the whole file into GitHub → Settings → Secrets and
+   using `buildnexus-user-service-2026`, `buildnexus-project-service-2026`,
+   `buildnexus-design-service-2026` or `buildnexus-api-gateway-2026` for `<app-name>`. Paste the whole file into GitHub → Settings → Secrets and
    variables → Actions → the matching secret name above, then delete the local
    copy each time. It is a credential, and `*.xml` is not git-ignored.
 
@@ -811,6 +813,102 @@ line or a logged Kafka exception in its place.
 asks the deployed Project Service whether the caller is party to the project,
 and answers `502` if it cannot get a reply. A Design Service that is healthy on
 `/health` but 502s on every document call is usually a stopped Project Service.
+
+## Redeploying API Gateway
+
+### The normal path
+
+Push a change under `api-gateway/**` to `main`. The `deploy-api-gateway` job in
+`.github/workflows/ci.yml` runs after the unit and integration test stages,
+publishes that one project, pushes it to its own App Service with its own publish
+profile, and polls `/health` until it answers 200. Same shape as the service
+deploy jobs, in its own job and its own concurrency group, so a gateway deploy
+never rebuilds, restarts, or waits behind a service's, and the reverse.
+
+A change to a *service* does not redeploy the gateway, and does not need to: it
+holds only their addresses, which do not change on a redeploy.
+
+### First deployment
+
+The App Service has to exist before the deploy job can push to it, and the job
+needs its publish profile. In order:
+
+1. `terraform apply` from `infra/terraform` — see "Apply" above. It adds only the
+   gateway's App Service; the gateway needs no new variable, since it reuses
+   `jwt_signing_key`.
+2. Create the `AZURE_WEBAPP_PUBLISH_PROFILE_API_GATEWAY` repository secret, using
+   the `az webapp deployment list-publishing-profiles` command in "What destroy
+   takes with it" above, with `buildnexus-api-gateway-2026` as the app name.
+3. Push a change under `api-gateway/**` to `main`, or deploy by hand as below.
+
+### Forcing a redeploy without a code change
+
+```
+dotnet publish api-gateway/BuildNexus.ApiGateway.csproj -c Release -o ./publish
+cd publish && zip -r ../api-gateway.zip . && cd ..
+
+az webapp deploy --resource-group buildnexus-rg \
+  --name buildnexus-api-gateway-2026 \
+  --src-path api-gateway.zip --type zip
+```
+
+To restart the process without deploying anything at all:
+
+```
+az webapp restart --resource-group buildnexus-rg --name buildnexus-api-gateway-2026
+```
+
+### Rolling back
+
+Same constraints and the same three options as the User Service: revert the
+commit and push, re-run the last green deploy job as a stopgap, or deploy an
+older commit by hand in an emergency and follow it with a revert.
+
+### Verifying it end to end
+
+`/health` answers from the gateway itself and calls nothing downstream, so a 200
+proves only that the gateway started. To prove the routing, go through it:
+
+```
+GW=https://buildnexus-api-gateway-2026.azurewebsites.net
+
+curl $GW/health                                   # 200 — the gateway itself
+curl -i -X POST $GW/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"someone@example.invalid","password":"wrong-password"}'
+                                                  # 401 from the User Service, proxied
+curl -i $GW/api/projects                          # 401 from the gateway — no token
+```
+
+The login call is the useful one: an anonymous route that reaches the deployed
+User Service and comes back with *its* answer. A `502` there means the gateway
+cannot reach the User Service — check `ReverseProxy__Clusters__user__…` in the
+gateway's application settings. With a real token, `GET $GW/api/projects` should
+reach the Project Service and `GET $GW/api/designs/...` the Design Service.
+
+### When a deploy goes green but the gateway does not answer
+
+```
+az webapp log tail --resource-group buildnexus-rg --name buildnexus-api-gateway-2026
+```
+
+The gateway refuses to start on a missing or weak `Jwt__SigningKey` (under 32
+bytes), or a missing `Jwt__Issuer` or `Jwt__Audience`. That surfaces here as a
+startup exception rather than as a failing request.
+
+**Every request through the gateway answering 401** is not a startup problem: it
+is the signing key, issuer or audience differing from the User Service's. All
+three come from the same Terraform variables, so this means one of them was
+changed by hand in the portal, or the gateway was not redeployed after a
+`terraform apply` changed them.
+
+**`/api/construction/*` and `/api/payments/*` answer `502`.** Expected: neither
+service is deployed, so those two clusters keep their `localhost` default. See
+`terraform/api-gateway.tf`.
+
+**CORS errors in the browser.** `Cors__AllowedOrigins__0` is `var.frontend_origin`,
+still the local dev server. A frontend served from anywhere else is refused until
+that variable is set to its origin and Terraform is applied.
 
 ## Health checks across services (SCRUM-47)
 
@@ -1095,6 +1193,22 @@ accident. Mailpit is local-only and is not deployed.
 `Email__SmtpHost` is deliberately unset, for the same reason as on the User
 Service: revision-request emails go to the log stream rather than to real
 addresses.
+
+### API Gateway (`terraform/api-gateway.tf`)
+
+| Setting | Source |
+|---|---|
+| `Jwt__SigningKey` / `Jwt__Issuer` / `Jwt__Audience` | The same shared variables as every other service. The gateway checks the signature before it proxies, so these must match the User Service's exactly. |
+| `Cors__AllowedOrigins__0` | `var.frontend_origin`. The one origin a browser may call the gateway from. |
+| `ReverseProxy__Clusters__user__Destinations__primary__Address` | The deployed User Service's URL, HTTPS, trailing slash. |
+| `ReverseProxy__Clusters__project__Destinations__primary__Address` | The deployed Project Service's URL. |
+| `ReverseProxy__Clusters__design__Destinations__primary__Address` | The deployed Design Service's URL. |
+| `ASPNETCORE_ENVIRONMENT` | `Production`. |
+
+The `construction` and `payment` cluster addresses are deliberately unset — those
+services are not deployed — so their routes answer `502`. There is no connection
+string, Kafka setting or `InternalService__ApiKey`: the gateway has no database,
+publishes no events, and calls no `/api/internal` endpoint.
 
 ## Known issue: TLS interception breaks the Terraform plugin handshake
 
