@@ -187,6 +187,18 @@ describe('ArchitectDashboard', () => {
       expect(screen.getByText('Nothing sent back')).toBeInTheDocument()
     })
 
+    it('says a revision asked for today was asked for today, not that it has waited 0 days', async () => {
+      const design = architectDesign()
+      design.revisions[0].requestedAt = new Date().toISOString().replace('Z', '')
+      renderDashboard(architectRoutes({ design: apiResponse(200, design) }))
+
+      await screen.findByText('GroundFloorPlan · version 1')
+
+      const line = within(revision('GroundFloorPlan · version 1')).getByText(/Requested /)
+      expect(line).toHaveTextContent('asked for today')
+      expect(line).not.toHaveTextContent('0 days')
+    })
+
     it('writes one day as a day, not as days', async () => {
       const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString().replace('Z', '')
       const design = architectDesign()

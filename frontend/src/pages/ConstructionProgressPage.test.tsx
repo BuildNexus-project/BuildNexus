@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AuthProvider } from '@/auth/AuthProvider'
 import { ConstructionProgressPage } from '@/pages/ConstructionProgressPage'
+import { formatDay } from '@/lib/milestone-dates'
 import { apiResponse, stubFetch, type RecordedRequest } from '@/test/fake-fetch'
 import type { Role } from '@/lib/roles'
 
@@ -43,12 +44,13 @@ function projects() {
   ]
 }
 
-function milestone(name: string, status: string, id = crypto.randomUUID()) {
+function milestone(name: string, status: string, id = crypto.randomUUID(), dueDate: string | null = null) {
   return {
     id,
     projectId: BUILDING_ID,
     name,
     status,
+    dueDate,
     createdAtUtc: '2026-08-01T09:00:00Z',
     updatedAtUtc: '2026-08-04T09:00:00Z',
   }
@@ -153,6 +155,37 @@ describe('ConstructionProgressPage', () => {
 
     const bar = within(card).getByRole('progressbar')
     expect(bar).toHaveAttribute('aria-valuenow', '33')
+  })
+
+  it('shows a milestone’s due date, and says plainly when it has passed without being done', async () => {
+    // The Project Manager may give a milestone a day to be finished by. The Client is shown
+    // it beside the milestone — and told when it has slipped, not left to work it out.
+    renderPage(
+      apiResponse(200, projects()),
+      apiResponse(
+        200,
+        summary(1, 25, [
+          milestone('Foundation', 'Completed', undefined, '2020-01-01'),
+          milestone('Walls', 'InProgress', undefined, '2020-02-03'),
+          milestone('Roof', 'NotStarted', undefined, '2999-05-06'),
+          milestone('Finishing', 'NotStarted', undefined, null),
+        ]),
+      ),
+    )
+
+    const card = await screen.findByTestId(`progress-${BUILDING_ID}`)
+    const row = (name: string) => within(card).getByText(name).closest('li') as HTMLElement
+
+    // Finished: it got done, so an old date is not a slip.
+    expect(row('Foundation')).toHaveTextContent(`Due ${formatDay('2020-01-01')}`)
+    expect(row('Foundation')).not.toHaveTextContent('Was due')
+    // Not finished, and past: a slip, said so.
+    expect(row('Walls')).toHaveTextContent(`Was due ${formatDay('2020-02-03')}`)
+    // Not finished, in the future: simply when it is due.
+    expect(row('Roof')).toHaveTextContent(`Due ${formatDay('2999-05-06')}`)
+    expect(row('Roof')).not.toHaveTextContent('Was due')
+    // No date: nothing is said about one.
+    expect(row('Finishing')).not.toHaveTextContent(/Due|Was due/)
   })
 
   it('only asks for progress on projects that have reached construction', async () => {

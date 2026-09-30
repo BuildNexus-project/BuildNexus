@@ -96,6 +96,15 @@ export function ArchitectDashboard() {
   )
 }
 
+/** How long a revision has been waiting, as a person would say it: "today", "1 day", "5 days". */
+function waiting(days: number): string {
+  if (days === 0) {
+    return 'asked for today'
+  }
+
+  return `waiting ${days} ${days === 1 ? 'day' : 'days'}`
+}
+
 function PendingRevisions({
   design,
   projects,
@@ -142,8 +151,7 @@ function PendingRevisions({
             )}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-muted-foreground text-xs">
-                Requested {formatDate(revision.requestedAt)} · waiting {daysSince(revision.requestedAt)}{' '}
-                {daysSince(revision.requestedAt) === 1 ? 'day' : 'days'}
+                Requested {formatDate(revision.requestedAt)} · {waiting(daysSince(revision.requestedAt))}
               </span>
               <Link
                 to={`/projects/${revision.projectId}/designs`}

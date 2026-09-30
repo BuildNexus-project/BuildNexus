@@ -166,12 +166,13 @@ export function architectRoutes(
 
 // ------------------------------------------------------- Project Manager slices ----
 
-/** A build the Project Manager is not assigned to — the Project Service would not list it for them. */
-export const STRANGER_ID = 'ffffffff-0000-4000-8000-000000000009'
-
 /**
- * Two builds under way — the cottage, which the Project Manager is assigned to, and one they
- * are not — and two milestones still to finish out of fourteen.
+ * Two builds under way on the Project Manager's projects — the cottage, started, and the
+ * villa, finished and awaiting handover — and three milestones still to finish out of
+ * fourteen, one of them overdue.
+ *
+ * The Construction Service names every project itself (from the Project Service's answer),
+ * so there is no separate list of names: this is the whole of what the page is given.
  */
 export function pmConstruction(): ProjectManagerConstructionDashboard {
   return {
@@ -179,6 +180,7 @@ export function pmConstruction(): ProjectManagerConstructionDashboard {
     activeBuilds: [
       {
         projectId: COTTAGE_ID,
+        projectName: COTTAGE.name,
         phaseStatus: 'Started',
         totalMilestones: 5,
         completedMilestones: 2,
@@ -186,7 +188,8 @@ export function pmConstruction(): ProjectManagerConstructionDashboard {
         progressPercent: 40,
       },
       {
-        projectId: STRANGER_ID,
+        projectId: VILLA_ID,
+        projectName: VILLA.name,
         phaseStatus: 'Completed',
         totalMilestones: 3,
         completedMilestones: 3,
@@ -196,45 +199,45 @@ export function pmConstruction(): ProjectManagerConstructionDashboard {
     ],
     milestonesDue: {
       totalCount: 14,
+      overdueCount: 1,
       milestones: [
         {
           id: 'eeeeeeee-0000-4000-8000-000000000001',
           projectId: COTTAGE_ID,
+          projectName: COTTAGE.name,
           name: 'Walls',
           status: 'InProgress',
+          dueDate: '2026-09-20',
+          isOverdue: true,
           createdAt: '2026-08-10T09:00:00',
         },
         {
           id: 'eeeeeeee-0000-4000-8000-000000000002',
           projectId: COTTAGE_ID,
+          projectName: COTTAGE.name,
           name: 'Roof',
           status: 'NotStarted',
+          dueDate: '2026-11-03',
+          isOverdue: false,
           createdAt: '2026-08-10T09:05:00',
+        },
+        {
+          id: 'eeeeeeee-0000-4000-8000-000000000003',
+          projectId: VILLA_ID,
+          projectName: VILLA.name,
+          name: 'Painting',
+          status: 'NotStarted',
+          dueDate: null,
+          isOverdue: false,
+          createdAt: '2026-08-11T09:00:00',
         },
       ],
     },
   }
 }
 
-/** What `GET /api/projects` gives the Project Manager: only the project they are assigned to. */
-export function pmProjectList() {
-  return [
-    {
-      id: COTTAGE_ID,
-      clientId: '6f9619ff-8b86-d011-b42d-00cf4fc964ff',
-      name: COTTAGE.name,
-      location: COTTAGE.location,
-      status: COTTAGE.status,
-      createdAt: '2026-08-01T09:00:00',
-      updatedAt: COTTAGE.updatedAt,
-    },
-  ]
-}
-
 export const PM_PATHS = {
   construction: '/api/construction/dashboard/project-manager',
-  // The names, from the one endpoint that lists a person's own projects.
-  projects: '/api/projects',
 } as const
 
 export function pmRoutes(
@@ -242,7 +245,6 @@ export function pmRoutes(
 ): Record<string, Response | Error> {
   return {
     [PM_PATHS.construction]: overrides.construction ?? apiResponse(200, pmConstruction()),
-    [PM_PATHS.projects]: overrides.projects ?? apiResponse(200, pmProjectList()),
   }
 }
 

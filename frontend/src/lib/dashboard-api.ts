@@ -188,6 +188,8 @@ export type ClientConstructionDashboard = {
 /** One build under way. */
 export type ActiveBuild = {
   projectId: string
+  /** The project's name, as the Project Service gave it; `null` only if it somehow did not. */
+  projectName: string | null
   /** `Started`, or `Completed` while it awaits handover. */
   phaseStatus: ConstructionPhaseStatus | null
   totalMilestones: number
@@ -201,20 +203,31 @@ export type ActiveBuild = {
 export type MilestoneDue = {
   id: string
   projectId: string
+  /** The project's name, as the Project Service gave it. */
+  projectName: string | null
   name: string
   /** Either `NotStarted` or `InProgress`. */
   status: MilestoneStatus
+  /** The day it should be finished by, as `yyyy-MM-dd`, or `null` when none was set. */
+  dueDate: string | null
+  /** Whether `dueDate` is before today — the service's own judgement. `false` for no date. */
+  isOverdue: boolean
   /** ISO-8601. */
   createdAt: string
 }
 
 /**
- * A Project Manager's dashboard (AC-3): the builds under way, and the milestones still
- * to finish on them.
+ * A Project Manager's dashboard (AC-3): the builds under way on the projects they are
+ * assigned to, and the milestones still to finish on them.
  *
- * Portfolio-wide, like the construction report — the service records who owns a project
- * but not which Project Manager runs it. "Due" means outstanding: milestones carry no due
- * date, so this is what is still to finish, not what is late.
+ * Scoped to the Project Manager's own projects. The Construction Service does not know who
+ * runs a project, so it asks the Project Service — with the caller's own token — for the
+ * projects they are assigned to; that same answer names them, so every build and milestone
+ * says which project it is and no second request is needed. If the Project Service cannot be
+ * reached this fails with a 502 rather than reporting "nothing under way".
+ *
+ * "Due" means outstanding: every milestone not yet completed. Where the Project Manager gave
+ * a milestone a due date it can also be overdue; one with no date never is.
  */
 export type ProjectManagerConstructionDashboard = {
   /** The length of `activeBuilds`. */
@@ -224,7 +237,9 @@ export type ProjectManagerConstructionDashboard = {
   milestonesDue: {
     /** Every outstanding milestone on a running build — not the length of `milestones`. */
     totalCount: number
-    /** The first few: in progress first, then those not started, each in planning order. */
+    /** How many of `totalCount` have a due date that has passed. Never counts an undated one. */
+    overdueCount: number
+    /** The first few: dated ones first, soonest (most overdue) first, then undated ones. */
     milestones: MilestoneDue[]
   }
 }

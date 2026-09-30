@@ -22,6 +22,25 @@ actually been billed against it (US-15).
 Run it locally with `dotnet run` (port 5005) or through
 `infra/docker-compose.yml`.
 
+## Endpoints
+
+| Method | Route                                                  | Allowed roles         |
+|--------|--------------------------------------------------------|-----------------------|
+| POST   | `/api/payments/projects/{projectId}/quotations`         | ProjectManager, Admin |
+| GET    | `/api/payments/projects/{projectId}/quotations`         | ProjectManager, Admin |
+| POST   | `/api/payments/projects/{projectId}/invoices`           | ProjectManager, Admin |
+| GET    | `/api/payments/projects/{projectId}/invoices`           | ProjectManager, Admin |
+| GET    | `/api/payments/my-projects/{projectId}/quotations`      | Client (own project)  |
+| GET    | `/api/payments/my-projects/{projectId}/invoices`        | Client (own project)  |
+| GET    | `/api/payments/my-projects/{projectId}/history`         | Client (own project)  |
+| POST   | `/api/payments/invoices/{invoiceId}/payments`           | Client                |
+| GET    | `/api/payments/reports/summary`                         | ProjectManager, Admin |
+| GET    | `/api/payments/dashboard/client`                        | Client                |
+
+Staff price a project (a quotation, then invoices) and a Client pays invoices down,
+part by part; an invoice is settled when its payments reach its amount. The Client
+reads are scoped to projects they own by this service's own `project_owners` record.
+
 ## Client dashboard (US-21)
 
 The payments slice of the Client's dashboard: what they still owe. The other

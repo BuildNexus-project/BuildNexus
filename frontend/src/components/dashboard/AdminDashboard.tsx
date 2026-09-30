@@ -33,9 +33,10 @@ const REPORT_LINKS = NAV_ITEMS.Admin.filter((item) => item.to.includes('reports'
  * Service's — and they load and fail separately, so an outage in one leaves the other's
  * counts on screen.
  *
- * Reports get links and no number. Nothing stores a report: each of the three is
- * generated on demand from other data, so there is no count of them to read, and inventing
- * one would be a figure that answers to nothing.
+ * Reports are counted as what they are: the pages an Admin can open. Nothing stores a
+ * report — each is generated on demand from other data — so there is no number of "reports
+ * made" to read, and the tile says "available" and "not stored" rather than pretend. It is
+ * taken from the Admin's own navigation, so it cannot drift from the links beneath it.
  */
 export function AdminDashboard() {
   const users = useDashboardSlice(fetchAdminUsersDashboard, 'User counts could not be loaded right now.')
@@ -53,7 +54,7 @@ export function AdminDashboard() {
 
         <SliceProblems slices={[users, projects]} />
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           <StatTile
             label="Users"
             value={figureOf(users, (data) => data.totalUsers)}
@@ -71,6 +72,12 @@ export function AdminDashboard() {
             hint={projects.status === 'ready' ? `${activeProjects(projects.data)} still active` : undefined}
             dot="bg-orange-500"
             to="/admin/reports/project-status"
+          />
+          <StatTile
+            label="Reports available"
+            value={REPORT_LINKS.length}
+            hint="Generated on demand, not stored"
+            dot="bg-violet-500"
           />
         </div>
       </section>

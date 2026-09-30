@@ -21,39 +21,37 @@ import {
   fetchProjectManagerConstructionDashboard,
   type ProjectManagerConstructionDashboard,
 } from '@/lib/dashboard-api'
-import { figureOf, projectNamer } from '@/lib/dashboard-view'
-import { fetchProjects } from '@/lib/project-api'
+import { figureOf, shortId } from '@/lib/dashboard-view'
+import { formatDay } from '@/lib/milestone-dates'
 import { useDashboardSlice, type SliceState } from '@/lib/use-dashboard-slice'
+import { cn } from '@/lib/utils'
 
-/** Where the Project Manager reads build progress and billing across the portfolio. */
+/** Where the Project Manager reads build progress and billing across their projects. */
 const BUILD_REPORT = '/reports/construction-payment'
+
+/** A project's name as the service gave it, or its short id in the unlikely case it gave none. */
+function nameOf(projectId: string, projectName: string | null): string {
+  return projectName ?? shortId(projectId)
+}
 
 /**
  * The Project Manager's dashboard (US-21 AC-3): the builds under way, and the milestones
- * still to finish on them.
+ * still to finish on them — on the projects they are assigned to.
  *
- * The figures come from the Construction Service, and they are portfolio-wide: that
- * service records who owns a project but not which Project Manager runs it, so it cannot
- * narrow to "your" builds — the same scope the Build & payment report has.
+ * One request. The Construction Service does not know which Project Manager runs a project,
+ * so it asks the Project Service, with the caller's own token, which projects are theirs and
+ * reads only those; the same answer names them, so every build and milestone here says which
+ * project it is without the page asking a second service.
  *
- * "Due" means outstanding. Milestones carry no due date, only NotStarted, InProgress and
- * Completed, so there is nothing to be late against; this is what is still to finish.
- *
- * Project names are a second, separate request to the Project Service, and best-effort:
- * a name belongs to that service, which lists only the projects this Project Manager is
- * assigned to. A build it cannot name is shown by its short id rather than hidden, and a
- * failed name lookup is not a reason to put an error on a dashboard whose figures loaded.
+ * "Due" means outstanding: every milestone not yet completed. Where the Project Manager gave
+ * a milestone a due date it can also be overdue, and the dated ones lead the list, most
+ * overdue first. A milestone with no date is outstanding and never late.
  */
 export function ProjectManagerDashboard() {
   const construction = useDashboardSlice(
     fetchProjectManagerConstructionDashboard,
     'Active construction could not be loaded right now.',
   )
-  const projects = useDashboardSlice(fetchProjects)
-
-  const nameOf = projectNamer(projects.status === 'ready' ? projects.data : [])
-  // Only a project the Project Service listed is one this person may open.
-  const openable = new Set(projects.status === 'ready' ? projects.data.map((project) => project.id) : [])
 
   return (
     <div className="flex flex-col gap-10">
@@ -75,7 +73,17 @@ export function ProjectManagerDashboard() {
           <StatTile
             label="Milestones due"
             value={figureOf(construction, (data) => data.milestonesDue.totalCount)}
-            hint="Not yet completed, on active builds"
+            hint={
+              <>
+                Not yet completed, on active builds
+                {construction.status === 'ready' && construction.data.milestonesDue.overdueCount > 0 && (
+                  <span className="text-destructive font-medium">
+                    {' · '}
+                    {construction.data.milestonesDue.overdueCount} overdue
+                  </span>
+                )}
+              </>
+            }
             dot="bg-amber-500"
             to={BUILD_REPORT}
           />
@@ -87,7 +95,7 @@ export function ProjectManagerDashboard() {
           Active construction
         </h2>
 
-        <ActiveBuilds construction={construction} nameOf={nameOf} openable={openable} />
+        <ActiveBuilds construction={construction} />
       </section>
 
       <section aria-labelledby="due-heading" className="flex flex-col gap-4">
@@ -95,21 +103,13 @@ export function ProjectManagerDashboard() {
           Milestones due
         </h2>
 
-        <MilestonesDue construction={construction} nameOf={nameOf} />
+        <MilestonesDue construction={construction} />
       </section>
     </div>
   )
 }
 
-function ActiveBuilds({
-  construction,
-  nameOf,
-  openable,
-}: {
-  construction: SliceState<ProjectManagerConstructionDashboard>
-  nameOf: (projectId: string) => string
-  openable: ReadonlySet<string>
-}) {
+function ActiveBuilds({ construction }: { construction: SliceState<ProjectManagerConstructionDashboard> }) {
   if (construction.status === 'loading') {
     return <p className="text-muted-foreground text-sm">Loading active construction…</p>
   }
@@ -123,8 +123,8 @@ function ActiveBuilds({
     return (
       <DashboardPanel title="No builds under way">
         <p className="text-muted-foreground text-sm">
-          Nothing has been started. A build appears here once construction is started on a project,
-          and leaves it when the project is handed over.
+          Nothing has been started on the projects assigned to you. A build appears here once
+          construction is started on one of them, and leaves it when the project is handed over.
         </p>
       </DashboardPanel>
     )
@@ -144,7 +144,9 @@ function ActiveBuilds({
         {construction.data.activeBuilds.map((build) => (
           <TableRow key={build.projectId}>
             <TableCell className="font-medium">
-              <ProjectLabel projectId={build.projectId} nameOf={nameOf} openable={openable} />
+              <Link to={`/projects/${build.projectId}`} className="underline underline-offset-4">
+                {nameOf(build.projectId, build.projectName)}
+              </Link>
             </TableCell>
             <TableCell>
               {build.phaseStatus ? (
@@ -157,7 +159,7 @@ function ActiveBuilds({
               <div className="flex flex-col gap-1">
                 <ProgressBar
                   percent={build.progressPercent}
-                  label={`${nameOf(build.projectId)} construction progress`}
+                  label={`${nameOf(build.projectId, build.projectName)} construction progress`}
                 />
                 <span className="text-muted-foreground text-xs">
                   {build.completedMilestones} of {build.totalMilestones} milestones
@@ -172,13 +174,7 @@ function ActiveBuilds({
   )
 }
 
-function MilestonesDue({
-  construction,
-  nameOf,
-}: {
-  construction: SliceState<ProjectManagerConstructionDashboard>
-  nameOf: (projectId: string) => string
-}) {
+function MilestonesDue({ construction }: { construction: SliceState<ProjectManagerConstructionDashboard> }) {
   if (construction.status === 'loading') {
     return <p className="text-muted-foreground text-sm">Loading milestones…</p>
   }
@@ -187,7 +183,7 @@ function MilestonesDue({
     return null
   }
 
-  const { totalCount, milestones } = construction.data.milestonesDue
+  const { totalCount, overdueCount, milestones } = construction.data.milestonesDue
 
   if (milestones.length === 0) {
     return (
@@ -199,21 +195,31 @@ function MilestonesDue({
     )
   }
 
+  const order = 'Dated ones first, soonest first, then the rest — those in progress ahead of those not started.'
+
   return (
     <DashboardPanel
       title="Still to finish"
-      description={
-        totalCount > milestones.length
-          ? `Showing ${milestones.length} of ${totalCount} — those in progress first, then the next in line.`
-          : 'Those in progress first, then the next in line.'
-      }
+      description={totalCount > milestones.length ? `Showing ${milestones.length} of ${totalCount}. ${order}` : order}
     >
+      {overdueCount > 0 && (
+        <p className="text-destructive text-sm font-medium">
+          {overdueCount} overdue {overdueCount === 1 ? 'milestone' : 'milestones'}
+        </p>
+      )}
       <ul className="flex flex-col divide-y">
         {milestones.map((milestone) => (
           <li key={milestone.id} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
             <div className="flex flex-col">
               <span className="text-sm font-medium">{milestone.name}</span>
-              <span className="text-muted-foreground text-xs">{nameOf(milestone.projectId)}</span>
+              <span className="text-muted-foreground text-xs">
+                {nameOf(milestone.projectId, milestone.projectName)}
+              </span>
+              {milestone.dueDate && (
+                <span className={cn('text-xs', milestone.isOverdue ? 'text-destructive font-medium' : 'text-muted-foreground')}>
+                  {milestone.isOverdue ? 'Overdue — was due' : 'Due'} {formatDay(milestone.dueDate)}
+                </span>
+              )}
             </div>
             <Badge variant={milestone.status === 'InProgress' ? 'default' : 'secondary'}>
               {MILESTONE_STATUS_LABELS[milestone.status]}
@@ -222,26 +228,5 @@ function MilestonesDue({
         ))}
       </ul>
     </DashboardPanel>
-  )
-}
-
-/** A project's name, as a link when the Project Manager may open it and as plain text when not. */
-function ProjectLabel({
-  projectId,
-  nameOf,
-  openable,
-}: {
-  projectId: string
-  nameOf: (projectId: string) => string
-  openable: ReadonlySet<string>
-}) {
-  if (!openable.has(projectId)) {
-    return <span>{nameOf(projectId)}</span>
-  }
-
-  return (
-    <Link to={`/projects/${projectId}`} className="underline underline-offset-4">
-      {nameOf(projectId)}
-    </Link>
   )
 }

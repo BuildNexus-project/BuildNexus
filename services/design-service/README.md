@@ -60,9 +60,18 @@ container per schema.
 | POST   | `/api/designs/projects/{projectId}/documents`     | Architect                           |
 | GET    | `/api/designs/projects/{projectId}/documents`     | Client, Architect, ProjectManager, Admin |
 | GET    | `/api/designs/versions/{versionId}/file`          | Client, Architect, ProjectManager, Admin |
+| POST   | `/api/designs/versions/{versionId}/approve`       | Client                              |
+| POST   | `/api/designs/versions/{versionId}/request-revision` | Client                           |
+| GET    | `/api/designs/reports/approval`                   | Admin                               |
 | GET    | `/api/designs/dashboard/client`                   | Client                              |
 | GET    | `/api/designs/dashboard/architect`                | Architect                           |
 | GET    | `/health`                                         | Anonymous                           |
+
+A Client reviews a version by approving it or sending it back with a comment
+(`approve`, `request-revision` — US-11); either decision is recorded with who made
+it and when, and announced as `DesignApproved` or `DesignRevisionRequested`. The
+approval report (US-20) is an Admin-only rollup of how long approval takes, project
+by project.
 
 Every `/api/designs` call goes through the API Gateway on
 `http://localhost:5000`, which validates the token and proxies it here

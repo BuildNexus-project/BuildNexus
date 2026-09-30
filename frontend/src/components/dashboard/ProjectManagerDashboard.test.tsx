@@ -4,20 +4,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AuthProvider } from '@/auth/AuthProvider'
 import { ProjectManagerDashboard } from '@/components/dashboard/ProjectManagerDashboard'
+import { formatDay } from '@/lib/milestone-dates'
 import { apiResponse, stubRoutes } from '@/test/fake-fetch'
 import {
   COTTAGE_ID,
   PM_PATHS,
-  STRANGER_ID,
+  VILLA_ID,
   pmConstruction,
   pmRoutes,
 } from '@/test/dashboard-fixtures'
 import { signInAs } from '@/test/sign-in'
 
 /**
- * The Project Manager's dashboard (US-21 AC-3): the builds under way and the milestones
- * still to finish. The figures are one service's; the project names are another's, asked
- * for separately and best-effort.
+ * The Project Manager's dashboard (US-21 AC-3): the builds under way and the milestones still
+ * to finish, on the projects they are assigned to. One request — the Construction Service asks
+ * the Project Service who the projects are, and names them in its own answer.
  */
 function renderDashboard(routes: Record<string, Response | Error> = pmRoutes()) {
   signInAs('ProjectManager')
@@ -41,11 +42,16 @@ function tile(label: string): HTMLElement {
     .closest('a') as HTMLElement
 }
 
-/** The row for one build in the active construction table, by the project text in its first cell. */
+/** The row for one build in the active construction table. */
 function buildRow(project: string): HTMLElement {
   return within(screen.getByRole('region', { name: 'Active construction' }))
     .getByText(project)
     .closest('tr') as HTMLElement
+}
+
+/** One milestone's entry in the milestones due list, by its name. */
+function milestone(name: string): HTMLElement {
+  return within(screen.getByRole('region', { name: 'Milestones due' })).getByText(name).closest('li') as HTMLElement
 }
 
 afterEach(() => {
@@ -53,12 +59,12 @@ afterEach(() => {
 })
 
 describe('ProjectManagerDashboard', () => {
-  it('asks the Construction Service for the figures and the Project Service for the names', async () => {
+  it('asks the Construction Service once, and nothing else', async () => {
     const requests = renderDashboard()
 
     await screen.findByRole('link', { name: 'Hilltop cottage' })
 
-    expect(requests.map((request) => request.path).sort()).toEqual(Object.values(PM_PATHS).sort())
+    expect(requests.map((request) => request.path)).toEqual(Object.values(PM_PATHS))
   })
 
   describe('active construction', () => {
@@ -70,7 +76,7 @@ describe('ProjectManagerDashboard', () => {
       expect(tile('Active builds')).toHaveTextContent('2')
     })
 
-    it('lists each build with its phase, progress and what is left', async () => {
+    it('lists each build by name with its phase, progress and what is left', async () => {
       renderDashboard()
 
       await screen.findByRole('link', { name: 'Hilltop cottage' })
@@ -88,44 +94,35 @@ describe('ProjectManagerDashboard', () => {
     it('shows a finished build awaiting handover as complete, with nothing left', async () => {
       renderDashboard()
 
-      await screen.findByRole('link', { name: 'Hilltop cottage' })
-      const stranger = buildRow(STRANGER_ID.slice(0, 8))
+      await screen.findByRole('link', { name: 'Beachfront villa' })
+      const villa = buildRow('Beachfront villa')
 
-      expect(within(stranger).getByText('Construction Complete')).toBeInTheDocument()
-      expect(within(stranger).getAllByRole('cell').at(-1)).toHaveTextContent('0')
+      expect(within(villa).getByText('Construction Complete')).toBeInTheDocument()
+      expect(within(villa).getAllByRole('cell').at(-1)).toHaveTextContent('0')
     })
 
-    it('links a build to its project only when the Project Manager may open it', async () => {
+    it('links every build to its project, because every one is the Project Managers own', async () => {
       renderDashboard()
 
       await screen.findByRole('link', { name: 'Hilltop cottage' })
 
-      // Assigned: a link. Not assigned: the Project Service would refuse the page, so plain text.
-      expect(within(buildRow('Hilltop cottage')).getByRole('link', { name: 'Hilltop cottage' })).toHaveAttribute(
-        'href',
-        `/projects/${COTTAGE_ID}`,
-      )
-      expect(within(buildRow(STRANGER_ID.slice(0, 8))).queryByRole('link')).not.toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Hilltop cottage' })).toHaveAttribute('href', `/projects/${COTTAGE_ID}`)
+      expect(screen.getByRole('link', { name: 'Beachfront villa' })).toHaveAttribute('href', `/projects/${VILLA_ID}`)
     })
 
-    it('names a build the Project Manager is not assigned to by a short id, rather than hiding it', async () => {
-      renderDashboard()
-
-      expect(await screen.findByText(STRANGER_ID.slice(0, 8))).toBeInTheDocument()
-    })
-
-    it('says so when nothing has been started', async () => {
+    it('says so, and says why, when nothing has been started on their projects', async () => {
       renderDashboard(
         pmRoutes({
           construction: apiResponse(200, {
             activeBuildCount: 0,
             activeBuilds: [],
-            milestonesDue: { totalCount: 0, milestones: [] },
+            milestonesDue: { totalCount: 0, overdueCount: 0, milestones: [] },
           }),
         }),
       )
 
       expect(await screen.findByText('No builds under way')).toBeInTheDocument()
+      expect(screen.getByText(/assigned to you/)).toBeInTheDocument()
       expect(tile('Active builds')).toHaveTextContent('0')
     })
   })
@@ -139,26 +136,95 @@ describe('ProjectManagerDashboard', () => {
       expect(tile('Milestones due')).toHaveTextContent('14')
     })
 
-    it('lists the first few with the project each belongs to and where it stands', async () => {
+    it('says in the tile how many are overdue', async () => {
       renderDashboard()
 
       await screen.findByText('Walls')
-      const due = within(screen.getByRole('region', { name: 'Milestones due' }))
 
-      expect(due.getByText('Walls').closest('li')).toHaveTextContent('In Progress')
-      expect(due.getByText('Roof').closest('li')).toHaveTextContent('Not Started')
-      expect(due.getByText('Walls').closest('li')).toHaveTextContent('Hilltop cottage')
+      expect(tile('Milestones due')).toHaveTextContent('1 overdue')
+    })
+
+    it('does not mention overdue in the tile when nothing is', async () => {
+      const construction = pmConstruction()
+      construction.milestonesDue.overdueCount = 0
+      renderDashboard(pmRoutes({ construction: apiResponse(200, construction) }))
+
+      await screen.findByText('Walls')
+
+      expect(tile('Milestones due')).not.toHaveTextContent('overdue')
+    })
+
+    it('still explains in the tile that due means not yet completed', async () => {
+      renderDashboard()
+
+      expect(await screen.findByText(/Not yet completed, on active builds/)).toBeInTheDocument()
+    })
+
+    it('lists each milestone with its project and where it stands', async () => {
+      renderDashboard()
+
+      await screen.findByText('Walls')
+
+      expect(milestone('Walls')).toHaveTextContent('In Progress')
+      expect(milestone('Walls')).toHaveTextContent('Hilltop cottage')
+      expect(milestone('Painting')).toHaveTextContent('Not Started')
+      expect(milestone('Painting')).toHaveTextContent('Beachfront villa')
+    })
+
+    it('says a late milestone is overdue, with the day it was due', async () => {
+      renderDashboard()
+
+      await screen.findByText('Walls')
+
+      expect(milestone('Walls')).toHaveTextContent(`Overdue — was due ${formatDay('2026-09-20')}`)
+    })
+
+    it('shows a dated milestone that is not late as simply due, without the overdue wording', async () => {
+      renderDashboard()
+
+      await screen.findByText('Roof')
+
+      expect(milestone('Roof')).toHaveTextContent(`Due ${formatDay('2026-11-03')}`)
+      expect(milestone('Roof')).not.toHaveTextContent('Overdue')
+    })
+
+    it('shows nothing about a date for a milestone that has none', async () => {
+      renderDashboard()
+
+      await screen.findByText('Painting')
+
+      expect(milestone('Painting')).not.toHaveTextContent(/Due|Overdue/)
+    })
+
+    it('leads the list with how many are overdue', async () => {
+      renderDashboard()
+
+      await screen.findByText('Walls')
+
+      expect(within(screen.getByRole('region', { name: 'Milestones due' })).getByText('1 overdue milestone')).toBeInTheDocument()
+    })
+
+    it('keeps the order the service gave: dated first, soonest first', async () => {
+      renderDashboard()
+
+      await screen.findByText('Walls')
+
+      const names = within(screen.getByRole('region', { name: 'Milestones due' }))
+        .getAllByRole('listitem')
+        .map((item) => item.querySelector('span')?.textContent)
+
+      expect(names).toEqual(['Walls', 'Roof', 'Painting'])
     })
 
     it('says how many of the total are shown when there are more than the list holds', async () => {
       renderDashboard()
 
-      expect(await screen.findByText(/Showing 2 of 14/)).toBeInTheDocument()
+      expect(await screen.findByText(/Showing 3 of 14/)).toBeInTheDocument()
     })
 
     it('does not claim a partial list when it is the whole of it', async () => {
       const construction = pmConstruction()
-      construction.milestonesDue.totalCount = 2
+      construction.milestonesDue.totalCount = 3
       renderDashboard(pmRoutes({ construction: apiResponse(200, construction) }))
 
       await screen.findByText('Walls')
@@ -168,23 +234,16 @@ describe('ProjectManagerDashboard', () => {
 
     it('says so when everything on the running builds is done', async () => {
       const construction = pmConstruction()
-      construction.milestonesDue = { totalCount: 0, milestones: [] }
+      construction.milestonesDue = { totalCount: 0, overdueCount: 0, milestones: [] }
       renderDashboard(pmRoutes({ construction: apiResponse(200, construction) }))
 
       expect(await screen.findByText('Nothing outstanding')).toBeInTheDocument()
       expect(tile('Milestones due')).toHaveTextContent('0')
     })
-
-    it('explains in the tile that due means not yet completed', async () => {
-      // Milestones carry no due date, so the figure must not read as "overdue".
-      renderDashboard()
-
-      expect(await screen.findByText('Not yet completed, on active builds')).toBeInTheDocument()
-    })
   })
 
-  describe('when a service cannot answer', () => {
-    it('says so, and shows dashes rather than zeros, when the figures cannot be read', async () => {
+  describe('when the service cannot answer', () => {
+    it('says so, and shows dashes rather than zeros', async () => {
       renderDashboard(pmRoutes({ construction: apiResponse(500, { title: 'Boom' }) }))
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Active construction could not be loaded right now.')
@@ -192,15 +251,19 @@ describe('ProjectManagerDashboard', () => {
       expect(tile('Milestones due')).toHaveTextContent('—')
     })
 
-    it('shows every build by its short id, without an error, when only the names cannot be read', async () => {
-      // A name is a convenience: a dashboard whose figures loaded is not made wrong by it.
-      renderDashboard(pmRoutes({ projects: apiResponse(500, { title: 'Boom' }) }))
+    it('shows the reason when the Construction Service cannot reach the Project Service', async () => {
+      // An outage there must never read as "nothing under way" — it is a 502 with a reason.
+      renderDashboard(
+        pmRoutes({
+          construction: apiResponse(502, {
+            title: 'Projects could not be listed',
+            detail: 'Your projects could not be looked up right now, so your construction summary cannot be shown.',
+          }),
+        }),
+      )
 
-      // The assigned cottage is also named in the milestones list, so it appears more than once.
-      expect((await screen.findAllByText(COTTAGE_ID.slice(0, 8))).length).toBeGreaterThan(0)
-      expect(screen.getByText(STRANGER_ID.slice(0, 8))).toBeInTheDocument()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(tile('Active builds')).toHaveTextContent('2')
+      expect(await screen.findByRole('alert')).toHaveTextContent('so your construction summary cannot be shown')
+      expect(tile('Active builds')).toHaveTextContent('—')
     })
   })
 

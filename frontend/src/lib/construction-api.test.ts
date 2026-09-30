@@ -4,8 +4,10 @@ import { ApiError, apiFetch } from './api'
 import {
   completeConstruction,
   fetchConstructionPhase,
+  createMilestone,
   handOverConstruction,
   isStaleStateRefusal,
+  setMilestoneDueDate,
   startConstruction,
   type ConstructionPhase,
 } from './construction-api'
@@ -269,5 +271,79 @@ describe('isStaleStateRefusal', () => {
   it('is false for something that is not an ApiError', () => {
     // A dropped connection has no reason to read.
     expect(isStaleStateRefusal(new Error('network down'))).toBe(false)
+  })
+})
+
+describe('createMilestone', () => {
+  const milestoneReply = {
+    id: 'a1000000-0000-4000-8000-000000000001',
+    projectId,
+    name: 'Foundation poured',
+    status: 'NotStarted',
+    dueDate: '2026-11-03',
+    createdAtUtc: '2026-03-02T10:00:00Z',
+    updatedAtUtc: '2026-03-02T10:00:00Z',
+  }
+
+  it('sends the due date when there is one', async () => {
+    const requests = stubFetch(apiResponse(201, milestoneReply))
+
+    const created = await createMilestone(authFetch, projectId, {
+      name: 'Foundation poured',
+      dueDate: '2026-11-03',
+    })
+
+    expect(requests[0].path).toBe(`/api/construction/projects/${projectId}/milestones`)
+    expect(requests[0].method).toBe('POST')
+    expect(requests[0].body).toEqual({ name: 'Foundation poured', dueDate: '2026-11-03' })
+    expect(created.dueDate).toBe('2026-11-03')
+  })
+
+  it('sends only the name when there is no date, exactly as before dates existed', async () => {
+    const requests = stubFetch(apiResponse(201, { ...milestoneReply, dueDate: null }))
+
+    await createMilestone(authFetch, projectId, { name: 'Foundation poured' })
+
+    expect(requests[0].body).toEqual({ name: 'Foundation poured' })
+  })
+})
+
+describe('setMilestoneDueDate', () => {
+  const milestoneId = 'a1000000-0000-4000-8000-000000000001'
+
+  const milestoneReply = (dueDate: string | null) => ({
+    id: milestoneId,
+    projectId,
+    name: 'Foundation poured',
+    status: 'InProgress',
+    dueDate,
+    createdAtUtc: '2026-03-02T10:00:00Z',
+    updatedAtUtc: '2026-03-02T10:00:00Z',
+  })
+
+  it('puts the date to the milestone’s own due-date endpoint and returns the milestone', async () => {
+    const requests = stubFetch(apiResponse(200, milestoneReply('2026-12-01')))
+
+    const updated = await setMilestoneDueDate(authFetch, milestoneId, '2026-12-01')
+
+    expect(requests[0].path).toBe(`/api/construction/milestones/${milestoneId}/due-date`)
+    expect(requests[0].method).toBe('PUT')
+    expect(requests[0].body).toEqual({ dueDate: '2026-12-01' })
+    expect(updated.dueDate).toBe('2026-12-01')
+  })
+
+  it('clears the date by sending null, which is not the same as leaving it out', async () => {
+    const requests = stubFetch(apiResponse(200, milestoneReply(null)))
+
+    const updated = await setMilestoneDueDate(authFetch, milestoneId, null)
+
+    expect(requests[0].body).toEqual({ dueDate: null })
+    expect(updated.dueDate).toBeNull()
+  })
+
+  it('carries a refusal to the caller as an ApiError', async () => {
+    stubFetch(apiResponse(404, { title: 'Not Found' }))
+
+    await expect(setMilestoneDueDate(authFetch, milestoneId, '2026-12-01')).rejects.toBeInstanceOf(ApiError)
   })
 })

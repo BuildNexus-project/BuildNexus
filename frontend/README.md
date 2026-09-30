@@ -83,8 +83,8 @@ project id. The fetchers and their types are all in `src/lib/dashboard-api.ts`.
 |----------------|------------------------------------------------------------------|-----------------|
 | Client         | Active projects, design status, build progress, payments due     | `/api/projects/dashboard/client`, `/api/designs/dashboard/client`, `/api/construction/dashboard/client`, `/api/payments/dashboard/client` |
 | Architect      | Assigned projects, pending revisions                             | `/api/projects/dashboard/architect`, `/api/designs/dashboard/architect` |
-| Project Manager | Active construction, milestones due                              | `/api/construction/dashboard/project-manager`, and `/api/projects` for names |
-| Admin          | System-wide counts: users, projects, and the reports             | `/api/users/dashboard/admin`, `/api/projects/dashboard/admin` |
+| Project Manager | Active construction, milestones due                              | `/api/construction/dashboard/project-manager` |
+| Admin          | System-wide counts: users, projects, and the reports available   | `/api/users/dashboard/admin`, `/api/projects/dashboard/admin` |
 
 A role is only ever asked for its own slices, and `HomePage.test.tsx` pins that
 for all four. Each service refuses the wrong role anyway; this keeps the page
@@ -107,22 +107,37 @@ than a blank.
 
 **Things a reader should know**
 
-- **"Milestones due" means outstanding.** Milestones have no due date — only
-  `NotStarted`, `InProgress` and `Completed` — so the figure is what is still to
-  finish, not what is late, and the tile says so.
-- **The Project Manager's view is portfolio-wide**, like the Build & payment
-  report: the Construction Service records who owns a project but not which
-  Project Manager runs it. Names come from `GET /api/projects`, which lists only
-  the projects a Project Manager is assigned to, so a build they are not assigned
-  to shows a short id and is not linked (the Project Service would refuse the
-  page). That name lookup is best-effort and raises no error if it fails.
-- **Reports have links, not a count.** Nothing stores a report — each is generated
-  on demand — so there is no number to read. The Admin dashboard links the three
-  report pages, taken from the Admin's own navigation.
+- **"Milestones due" means outstanding, and overdue where there is a date.** A Project
+  Manager may give a milestone a due date — optionally, when they add it, or afterwards in
+  the Due column of the project page's milestones table, which saves as soon as the date
+  is changed and clears when it is emptied. The dashboard counts every milestone not yet
+  completed, says how many of those are overdue, and lists the dated ones first, soonest
+  first. A milestone with no date is outstanding and never late; a completed one is never
+  late however old its date. Dates are handled as `yyyy-MM-dd` strings
+  (`src/lib/milestone-dates.ts`), never as `Date` objects, so no timezone can shift the day
+  — `new Date('2026-10-05')` is the 4th anywhere west of Greenwich. The Client sees the
+  same date beside each milestone on the Progress page, and is told "Was due …" when it has
+  passed without the milestone being done.
+- **The Project Manager's dashboard is their own projects.** The Construction Service does
+  not know which Project Manager runs a project, so it asks the Project Service, with the
+  caller's own token, which ones are theirs, and answers for those. That answer also names
+  each project, so the dashboard is one request with no separate lookup, and every build
+  is a link the Project Manager may open. If the Project Service cannot be reached the
+  dashboard shows the reason and a dash — it does not say "nothing under way".
+- **Reports are counted as the pages available.** Nothing stores a report — each is
+  generated on demand — so there is no number of "reports made". The Admin dashboard's
+  tile counts the report pages the Admin can open, says so ("Generated on demand, not
+  stored"), and is taken from the Admin's own navigation so it cannot drift from the links
+  in the panel beneath it.
 - **Design status is derived from each document's latest version**, in the order
   most in need of the Client first: awaiting their review, then a revision they are
   waiting on, then approved. A project nothing has been uploaded for is `No design
   yet`, not blank.
+- **A long figure shrinks to fit its tile.** An amount such as `LKR 4,810,000.00` is set
+  smaller than a count, and the non-breaking space the currency formatter puts after
+  `LKR` is made an ordinary one so the amount wraps at the space instead of through the
+  digits. A phone's two-column grid otherwise made the tile wider than the screen. The
+  tests cannot see this; a real browser can.
 
 ## New project (US-05)
 

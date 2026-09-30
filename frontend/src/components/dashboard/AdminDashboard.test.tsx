@@ -153,15 +153,36 @@ describe('AdminDashboard', () => {
       )
     })
 
-    it('gives the reports no count, because nothing stores a report to count', async () => {
+    it('counts the report pages available, and says reports are not stored', async () => {
       renderDashboard()
 
       await screen.findByText('10 still active')
 
-      // Two tiles, Users and Projects; no third tile pretending to count reports.
+      // What the count is of: the pages the Admin can open. Nothing stores a report, so the
+      // tile says "available" and "not stored" rather than pretend to count reports made.
+      const summary = within(screen.getByRole('region', { name: 'The whole platform at a glance' }))
+      expect(summary.getByText('Reports available').closest('div')).toHaveTextContent('3')
+      expect(summary.getByText('Generated on demand, not stored')).toBeInTheDocument()
+    })
+
+    it('matches the count to the links beneath it, so the two cannot drift', async () => {
+      renderDashboard()
+
+      await screen.findByText('10 still active')
+
+      const linked = within(panel('Reports')).getAllByRole('link')
+      const summary = within(screen.getByRole('region', { name: 'The whole platform at a glance' }))
+      expect(summary.getByText('Reports available').closest('div')).toHaveTextContent(String(linked.length))
+    })
+
+    it('leaves the reports tile as a plain readout, because the links are in the panel', async () => {
+      renderDashboard()
+
+      await screen.findByText('10 still active')
+
+      // Two linked tiles, Users and Projects; the reports tile is not a link.
       const summary = within(screen.getByRole('region', { name: 'The whole platform at a glance' }))
       expect(summary.getAllByRole('link')).toHaveLength(2)
-      expect(summary.queryByText('Reports')).not.toBeInTheDocument()
     })
 
     it('shows the reports even while the counts are still loading, since they need no data', () => {

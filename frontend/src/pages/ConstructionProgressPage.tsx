@@ -14,9 +14,11 @@ import {
   type MilestoneStatus,
   type ProjectProgressSummary,
 } from '@/lib/construction-api'
+import { formatDay, isMilestoneOverdue } from '@/lib/milestone-dates'
 import { fetchProjects, type ProjectSummary } from '@/lib/project-api'
 import type { ProjectStatus } from '@/lib/project-status'
 import { useAutoRefresh } from '@/lib/use-auto-refresh'
+import { cn } from '@/lib/utils'
 
 /**
  * The statuses a project can have construction progress under.
@@ -180,7 +182,19 @@ function ProjectProgressCard({ entry }: { entry: ProjectProgressEntry }) {
                     key={milestone.id}
                     className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 last:border-b-0 last:pb-0"
                   >
-                    <span className="text-sm font-medium">{milestone.name}</span>
+                    <span className="flex flex-col">
+                      <span className="text-sm font-medium">{milestone.name}</span>
+                      {milestone.dueDate && (
+                        <span
+                          className={cn(
+                            'text-xs',
+                            isMilestoneOverdue(milestone) ? 'text-destructive' : 'text-muted-foreground',
+                          )}
+                        >
+                          {isMilestoneOverdue(milestone) ? 'Was due' : 'Due'} {formatDay(milestone.dueDate)}
+                        </span>
+                      )}
+                    </span>
                     <span className="flex items-center gap-2">
                       <span className="text-muted-foreground text-xs">
                         Updated {formatTime(milestone.updatedAtUtc)}
