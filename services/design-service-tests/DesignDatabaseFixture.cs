@@ -48,6 +48,9 @@ public class DesignDatabaseFixture : IAsyncLifetime
     /// <summary>The aggregate report queries (US-20), over the same live database.</summary>
     public DesignReportRepository Reports { get; private set; } = null!;
 
+    /// <summary>The role-dashboard queries (US-21), over the same live database.</summary>
+    public DesignDashboardRepository Dashboard { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         // The production migration path, not a hand-written schema: DbUp records
@@ -66,6 +69,7 @@ public class DesignDatabaseFixture : IAsyncLifetime
         Repository = new DesignDocumentRepository(connectionFactory);
         Outbox = new OutboxRepository(connectionFactory);
         Reports = new DesignReportRepository(connectionFactory);
+        Dashboard = new DesignDashboardRepository(connectionFactory);
 
         return Task.CompletedTask;
     }

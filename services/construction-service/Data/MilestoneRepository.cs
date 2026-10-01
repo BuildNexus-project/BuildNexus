@@ -16,7 +16,7 @@ public class MilestoneRepository : IMilestoneRepository
     private const int DuplicateKeyErrorNumber = 1062;
 
     private const string SelectColumns =
-        "id, project_id, name, status, created_at, updated_at";
+        "id, project_id, name, status, due_date, created_at, updated_at";
 
     private readonly IDbConnectionFactory _connectionFactory;
 
@@ -28,6 +28,7 @@ public class MilestoneRepository : IMilestoneRepository
     public async Task<Milestone?> CreateAsync(
         Guid projectId,
         string name,
+        DateOnly? dueDate = null,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await _connectionFactory.OpenConnectionAsync();
@@ -55,13 +56,14 @@ public class MilestoneRepository : IMilestoneRepository
                 ProjectId = projectId,
                 Name = name,
                 Status = MilestoneStatus.NotStarted,
+                DueDate = dueDate,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
             };
 
             const string insertSql = $@"
                 INSERT INTO construction_milestones ({SelectColumns})
-                VALUES (@id, @projectId, @name, @status, @createdAt, @updatedAt);";
+                VALUES (@id, @projectId, @name, @status, @dueDate, @createdAt, @updatedAt);";
 
             await using (var command = connection.CreateCommand())
             {
@@ -71,6 +73,7 @@ public class MilestoneRepository : IMilestoneRepository
                 AddParameter(command, "@projectId", milestone.ProjectId);
                 AddParameter(command, "@name", milestone.Name);
                 AddParameter(command, "@status", milestone.Status.ToString());
+                AddDueDateParameter(command, milestone.DueDate);
                 AddParameter(command, "@createdAt", milestone.CreatedAtUtc);
                 AddParameter(command, "@updatedAt", milestone.UpdatedAtUtc);
 
@@ -167,6 +170,46 @@ public class MilestoneRepository : IMilestoneRepository
 
         await transaction.CommitAsync(cancellationToken);
         return milestone;
+    }
+
+    public async Task<Milestone?> SetDueDateAsync(
+        Guid milestoneId,
+        DateOnly? dueDate,
+        CancellationToken cancellationToken = default)
+    {
+        // One UPDATE and a read-back on one connection. The UPDATE's affected-row count is
+        // not used to tell "no such milestone" from "nothing changed": updated_at moves on
+        // every call so it would usually say one, but the read-back is the honest answer —
+        // it finds the row or it does not, and returns exactly what is now stored.
+        const string updateSql = @"
+            UPDATE construction_milestones
+            SET due_date = @dueDate, updated_at = @updatedAt
+            WHERE id = @id;";
+
+        const string selectSql = $@"
+            SELECT {SelectColumns}
+            FROM construction_milestones
+            WHERE id = @id;";
+
+        await using var connection = await _connectionFactory.OpenConnectionAsync();
+
+        await using (var update = connection.CreateCommand())
+        {
+            update.CommandText = updateSql;
+            AddDueDateParameter(update, dueDate);
+            AddParameter(update, "@updatedAt", DateTime.UtcNow);
+            AddParameter(update, "@id", milestoneId);
+
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var select = connection.CreateCommand();
+        select.CommandText = selectSql;
+        AddParameter(select, "@id", milestoneId);
+
+        await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? Map(reader) : null;
     }
 
     /// <summary>
@@ -398,17 +441,9 @@ public class MilestoneRepository : IMilestoneRepository
             ProjectId = projectId,
             TotalMilestones = total,
             CompletedMilestones = completed,
-            ProgressPercent = CalculatePercent(completed, total)
+            ProgressPercent = ProgressPercentage.Of(completed, total)
         };
     }
-
-    /// <summary>
-    /// AC-3's percentage, rounded to two decimals. Zero when the project has
-    /// no milestones — the alternative, dividing by zero, is a real bug the
-    /// callers should not have to guard against.
-    /// </summary>
-    private static decimal CalculatePercent(int completed, int total) =>
-        total == 0 ? 0m : Math.Round((decimal)completed / total * 100m, 2);
 
     /// <summary>
     /// Does this project have a <c>milestone_setups</c> row — the local
@@ -444,6 +479,25 @@ public class MilestoneRepository : IMilestoneRepository
         command.Parameters.Add(parameter);
     }
 
+    /// <summary>
+    /// Binds <c>@dueDate</c>: the day as a <c>DATE</c>, or a real <c>NULL</c> for no date. A
+    /// <see cref="DateOnly"/> is handed over as a <see cref="DateTime"/> at midnight, which the
+    /// <c>DATE</c> column keeps as the day alone — so no time of day or timezone can creep in.
+    /// </summary>
+    private static void AddDueDateParameter(DbCommand command, DateOnly? dueDate) =>
+        AddParameter(
+            command,
+            "@dueDate",
+            dueDate is { } day ? day.ToDateTime(TimeOnly.MinValue) : DBNull.Value);
+
+    /// <summary>The <c>due_date</c> column as a day, or <c>null</c> for a milestone with none.</summary>
+    private static DateOnly? ReadDueDate(DbDataReader reader)
+    {
+        var ordinal = reader.GetOrdinal("due_date");
+
+        return reader.IsDBNull(ordinal) ? null : DateOnly.FromDateTime(reader.GetDateTime(ordinal));
+    }
+
     private static Milestone Map(DbDataReader reader) => new()
     {
         Id = reader.GetGuid(reader.GetOrdinal("id")),
@@ -452,6 +506,7 @@ public class MilestoneRepository : IMilestoneRepository
         // Persisted as its own name for legibility, so the round trip is a
         // plain enum parse — no int-to-name mapping to keep in sync.
         Status = Enum.Parse<MilestoneStatus>(reader.GetString(reader.GetOrdinal("status"))),
+        DueDate = ReadDueDate(reader),
         // MySQL's DATETIME type has no timezone attached, so MySqlConnector
         // reads the value back as DateTimeKind.Unspecified — it cannot know
         // the column stores UTC. System.Text.Json then serializes that

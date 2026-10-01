@@ -79,6 +79,7 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 | GET    | `/api/users/directory`   | Architect, ProjectManager                |
 | GET    | `/api/users`             | Admin                                    |
 | GET    | `/api/users/{id}`        | Admin                                    |
+| GET    | `/api/users/dashboard/admin` | Admin                                |
 | GET    | `/health`                | Anonymous                                |
 
 `PUT /api/users/me` edits the caller's own full name, phone number and contact
@@ -101,6 +102,16 @@ Deactivated accounts are left out, since they cannot be given work.
 `GET /api/users` is the Admin roster and deliberately does the opposite: it
 lists every account, deactivated ones included, because that is the one view an
 administrator needs to see them in.
+
+`GET /api/users/dashboard/admin` is the user half of the Admin's dashboard
+(US-21): `{ totalUsers, activeUsers, inactiveUsers, roles[] }`, with one
+`{ role, count }` entry per platform role in the platform's order, **including
+roles nobody holds**. A deactivated account counts in the total — it is still an
+account an Admin administers — and is reported separately so the two numbers can
+be told apart. It is one `GROUP BY role, is_active` query
+(`UserDashboardRepository`), so every figure is a sum of its lines and the cost
+does not grow with the number of accounts. The project count on the same
+dashboard is the Project Service's data; the page joins the two.
 
 Self-service registration cannot create an `Admin`: the handler rejects that role
 with `400` before hashing anything. Role names must be sent in their exact
@@ -248,6 +259,13 @@ explicitly `[AllowAnonymous]`, or names a role the platform does not have. An
 endpoint added in a later story is held to that rule without anyone having to
 remember this file.
 
+`AdminUserDashboardTests` walks the user counts over a stand-in query (totals,
+the active/inactive split, roles in platform order with zeros filled in, and an
+empty system), and `EndpointRoleDeclarationTests` pins the dashboard endpoint to
+Admin. `UserDashboardRepositoryDatabaseTests` proves the grouping against the
+real database, asserted as a difference before and after because the database
+also holds the seeded Admin and whatever else has been registered.
+
 `RegistrationRoleTests` and `RoleAccessTests` boot the real host and need the
 development database running (`cd ../../infra && docker compose up -d user-db`).
 `RoleAccessTests` is the US-03 matrix: for each of the four roles it signs in for
@@ -255,6 +273,24 @@ real and checks both an action the role is allowed and an action it is not. Both
 classes share `UserServiceCollection` so they never run at the same time — the
 factory's cleanup removes every `test-` account when it is disposed, which would
 otherwise delete accounts the other class is still signed in as.
+
+The database tests reach `user-db` on port **3306**, where the compose file
+publishes it and where CI finds it. If a native MySQL already holds 3306 on your
+machine and your git-ignored `infra/docker-compose.override.yml` moves `user-db`
+elsewhere, every database test fails at login — it is talking to the wrong MySQL.
+Tell the tests where it went with the `USER_DB_PORT` environment variable, or put
+it once in `user-service-tests/local.runsettings` (also git-ignored, picked up
+automatically by `dotnet test` and Visual Studio):
+
+```xml
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <USER_DB_PORT>3308</USER_DB_PORT>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>
+```
 
 Protected routes expect `Authorization: Bearer <token>`. Tokens are validated on
 issuer, audience, signature and lifetime with no clock skew, so an expired or

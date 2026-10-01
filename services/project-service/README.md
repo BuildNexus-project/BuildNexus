@@ -191,6 +191,44 @@ is *applied*, not one that has been ticked and not yet applied, so the file is
 always the report on screen. No gateway change is needed: the existing
 `/api/projects/{**catch-all}` route already covers these paths.
 
+## Role dashboards (US-21)
+
+The Project Service's slice of each role's dashboard — the part only it knows:
+which projects a Client submitted, which an Architect is assigned to, and how
+many projects the system holds in each status. The other slices of the same
+dashboards come from the other services; the page joins them on the project id
+(see `frontend/README.md`, *Role dashboards*).
+
+| Method | Route                               | Allowed roles |
+|--------|-------------------------------------|---------------|
+| GET    | `/api/projects/dashboard/client`    | Client        |
+| GET    | `/api/projects/dashboard/architect` | Architect     |
+| GET    | `/api/projects/dashboard/admin`     | Admin         |
+
+One endpoint per role rather than one that switches on the caller's role, so
+each response shape is declared, gated and documented on its own. Each is gated
+to exactly its own role, and `EndpointRoleDeclarationTests` pins that.
+
+- **Client** — `{ activeCount, projects[] }`: the projects the caller submitted.
+- **Architect** — `{ assignedCount, projects[] }`: the projects they are assigned to.
+- **Admin** — `{ totalCount, groups[] }`: every project, and one `{ status, count }`
+  entry per status in lifecycle order, **including statuses nothing is in**, so
+  the shape does not change with the data.
+
+**Active** means neither `Completed` nor `Cancelled`. The two per-person lists
+are active projects only, most recently moved first (`updated_at`). The Admin
+total counts every project, whatever its status.
+
+None of these takes an id. Who is asking decides what comes back, and it is
+always the token's own `sub` — a Client cannot ask for another Client's
+dashboard because there is nowhere to say whose. A Client with nothing under
+way gets an empty list and a count of `0`, which is the truthful answer rather
+than a refusal.
+
+All three are ADO.NET reads in `ProjectDashboardRepository`, kept apart from
+`IProjectRepository` the way the report query is. The Admin counts are a single
+`GROUP BY status`, so the cost does not grow with the pipeline.
+
 ## Events published (Kafka)
 
 This service publishes to one topic, `project-events` — one topic per publishing
@@ -287,10 +325,10 @@ cd ../project-service-tests && dotnet test
 repository and the event publisher are stood in for, so nothing has to be
 started first. The exceptions are tagged `[Trait("Category", "Integration")]`
 and need the real thing: `ProjectRepositoryDatabaseTests`,
-`ProjectPaymentStatusDatabaseTests` and `ProjectReportRepositoryDatabaseTests`
-run SQL against `project-db`, and `ProjectKafkaIntegrationTests` does a real
-round trip through the broker. Start them with
-`cd infra && docker compose up -d --wait project-db kafka`.
+`ProjectPaymentStatusDatabaseTests`, `ProjectReportRepositoryDatabaseTests` and
+`ProjectDashboardRepositoryDatabaseTests` run SQL against `project-db`, and
+`ProjectKafkaIntegrationTests` does a real round trip through the broker. Start
+them with `cd infra && docker compose up -d --wait project-db kafka`.
 
 ```bash
 dotnet test --filter "Category!=Integration"   # what needs nothing running
@@ -336,6 +374,16 @@ boundaries — is only provable against the real engine, so
 `ProjectReportRepositoryDatabaseTests` runs against `project-db` (the same
 integration category as `ProjectRepositoryDatabaseTests`): start it first with
 `cd infra && docker compose up -d --wait project-db`.
+
+The US-21 dashboards are covered the same way. `ProjectDashboardEndpointTests`
+walks each role's dashboard over a stand-in query: what comes back, that an empty
+result is an empty dashboard and not an error, that the query is for the caller
+named in the token and not anyone else, and that a token with no usable `sub` is
+refused before anything is read. `ProjectDashboardRepositoryDatabaseTests` proves
+the SQL against `project-db` — ownership scoping, that completed and cancelled
+projects are left out, the newest-moved-first order, and the per-status count
+(asserted as a difference before and after, since the development database holds
+other projects).
 
 `MigrationScriptTests` checks the scripts are embedded (DbUp silently skips one
 that is not), sort into the order they must run in, do not switch database, and

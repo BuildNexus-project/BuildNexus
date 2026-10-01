@@ -60,7 +60,18 @@ container per schema.
 | POST   | `/api/designs/projects/{projectId}/documents`     | Architect                           |
 | GET    | `/api/designs/projects/{projectId}/documents`     | Client, Architect, ProjectManager, Admin |
 | GET    | `/api/designs/versions/{versionId}/file`          | Client, Architect, ProjectManager, Admin |
+| POST   | `/api/designs/versions/{versionId}/approve`       | Client                              |
+| POST   | `/api/designs/versions/{versionId}/request-revision` | Client                           |
+| GET    | `/api/designs/reports/approval`                   | Admin                               |
+| GET    | `/api/designs/dashboard/client`                   | Client                              |
+| GET    | `/api/designs/dashboard/architect`                | Architect                           |
 | GET    | `/health`                                         | Anonymous                           |
+
+A Client reviews a version by approving it or sending it back with a comment
+(`approve`, `request-revision` — US-11); either decision is recorded with who made
+it and when, and announced as `DesignApproved` or `DesignRevisionRequested`. The
+approval report (US-20) is an Admin-only rollup of how long approval takes, project
+by project.
 
 Every `/api/designs` call goes through the API Gateway on
 `http://localhost:5000`, which validates the token and proxies it here
@@ -71,6 +82,37 @@ gateway makes no authorization decisions.
 decides, and this service does not own that fact. It asks the Project Service
 (`GET /api/projects/{projectId}`) with the caller's own token: a `200` means the
 caller is party to the project, a `403` or `404` is relayed as-is.
+
+## Role dashboards (US-21)
+
+The design slice of the Client's and the Architect's dashboards. The other
+slices come from the other services; the page joins them on the project id (see
+`frontend/README.md`, *Role dashboards*).
+
+- **Client** — `{ projects[] }`: one entry per *active* project the Client has,
+  each `{ projectId, state, documentCount, awaitingReviewCount,
+  revisionRequestedCount, approvedCount }`. `state` is `NoDesign`,
+  `AwaitingReview`, `RevisionRequested` or `Approved`, and a project nothing has
+  been uploaded for is reported as `NoDesign` rather than left out.
+- **Architect** — `{ pendingRevisionCount, revisions[] }`: the revisions a Client
+  has asked for that the Architect has not yet answered, longest waiting first,
+  each with the document, version, the Client's comment and when it was asked.
+
+Both are read from each document's **latest** version only. A revision the
+Architect has since answered with a newer upload is no longer pending, whatever
+became of the newer version. A project is `AwaitingReview` (something is waiting
+on the Client) before `RevisionRequested` (the Client is waiting on the
+Architect) before `Approved` (every document is signed off).
+
+**This service does not know whose a project is**, and must not grow a copy of
+it. So each action first asks the Project Service which projects the caller may
+see (`GET /api/projects`, forwarding the caller's own token — the same
+arrangement as the per-project access check above) and looks only at those,
+excluding `Completed` and `Cancelled`. Neither endpoint takes a project id, so a
+caller cannot widen their own dashboard by asking differently.
+
+If the Project Service cannot be reached, both answer **`502`** with a reason,
+never an empty dashboard: an outage must not read as "you have no projects".
 
 ## Configuration
 - `ConnectionStrings:DesignDb` — MySQL connection string

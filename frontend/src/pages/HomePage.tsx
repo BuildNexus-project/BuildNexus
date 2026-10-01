@@ -1,13 +1,14 @@
 import { ArrowRight, ArrowUpRight, CircleUser } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { AdminDashboard } from '@/components/dashboard/AdminDashboard'
+import { ArchitectDashboard } from '@/components/dashboard/ArchitectDashboard'
+import { ClientDashboard } from '@/components/dashboard/ClientDashboard'
+import { ProjectManagerDashboard } from '@/components/dashboard/ProjectManagerDashboard'
 import { Button } from '@/components/ui/button'
-import { fetchProjects, type ProjectSummary } from '@/lib/project-api'
 import { NAV_ITEMS, WORKSPACE_LABELS, type NavItem } from '@/lib/nav'
 import type { Role } from '@/lib/roles'
-import { cn } from '@/lib/utils'
 
 /** One line under the greeting, in the voice of what this role is here to do. */
 const ROLE_INTROS: Record<Role, string> = {
@@ -26,56 +27,31 @@ const PRIMARY_ACTION: Record<Role, string> = {
   Admin: '/admin/users',
 }
 
-/** What the summary tiles are called, since "your" is only true for some roles. */
-const SUMMARY_HEADINGS: Record<Role, string> = {
-  Client: 'Your projects at a glance',
-  Architect: 'Your assigned projects at a glance',
-  ProjectManager: 'Your assigned projects at a glance',
-  Admin: 'Every project at a glance',
-}
-
-/** Where a project is, in three groups a reader can take in at once. */
-function summarise(projects: readonly ProjectSummary[]) {
-  return {
-    total: projects.length,
-    design: projects.filter((p) => ['Pending', 'Designing', 'DesignApproved'].includes(p.status))
-      .length,
-    construction: projects.filter((p) => p.status === 'Construction').length,
-    completed: projects.filter((p) => p.status === 'Completed').length,
+/**
+ * The dashboard for a role (US-21). Each one reads from the several services that hold
+ * that role's data and puts them together, showing only what the role's own work is made
+ * of — never one generic dashboard for everyone to interpret for themselves.
+ */
+function RoleDashboard({ role }: { role: Role }) {
+  switch (role) {
+    case 'Client':
+      return <ClientDashboard />
+    case 'Architect':
+      return <ArchitectDashboard />
+    case 'ProjectManager':
+      return <ProjectManagerDashboard />
+    case 'Admin':
+      return <AdminDashboard />
   }
 }
 
 /**
- * The signed-in user's dashboard: a welcome in the BuildNexus black, where their
- * projects stand, and a card for everything their role can do — the same places
+ * The signed-in user's dashboard: a welcome in the BuildNexus black, the summary of
+ * their own role's work, and a card for everything their role can do — the same places
  * as the header, described.
- *
- * The summary is a convenience and never the point of the page. It is read from
- * the same list the Projects page shows, so it cannot disagree with it, and if
- * that request fails the section is left out rather than shown wrong or showing
- * an error on a page that otherwise works.
  */
 export function HomePage() {
-  const { user, authFetch } = useAuth()
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    fetchProjects(authFetch)
-      .then((loaded) => {
-        if (!cancelled) {
-          setProjects(loaded)
-        }
-      })
-      // Deliberately quiet — see the component's note.
-      .catch(() => undefined)
-
-    // The effect can outlive the page if the user navigates away mid-request.
-    return () => {
-      cancelled = true
-    }
-  }, [authFetch])
+  const { user } = useAuth()
 
   if (!user) {
     return null
@@ -84,7 +60,6 @@ export function HomePage() {
   const firstName = user.fullName.trim().split(/\s+/)[0]
   const items = NAV_ITEMS[user.role]
   const primary = items.find((item) => item.to === PRIMARY_ACTION[user.role]) ?? items[0]
-  const summary = projects ? summarise(projects) : null
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
@@ -128,20 +103,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {summary && (
-        <section aria-labelledby="summary-heading" className="flex flex-col gap-4">
-          <h2 id="summary-heading" className="font-heading text-lg font-semibold tracking-tight">
-            {SUMMARY_HEADINGS[user.role]}
-          </h2>
-
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Stat label="Active projects" value={summary.total} />
-            <Stat label="In design" value={summary.design} dot="bg-sky-500" />
-            <Stat label="Under construction" value={summary.construction} dot="bg-orange-500" />
-            <Stat label="Completed" value={summary.completed} dot="bg-emerald-500" />
-          </div>
-        </section>
-      )}
+      <RoleDashboard role={user.role} />
 
       <section aria-labelledby="go-heading" className="flex flex-col gap-4">
         <h2 id="go-heading" className="font-heading text-lg font-semibold tracking-tight">
@@ -163,21 +125,6 @@ export function HomePage() {
         </div>
       </section>
     </main>
-  )
-}
-
-function Stat({ label, value, dot }: { label: string; value: number; dot?: string }) {
-  return (
-    <Link
-      to="/projects"
-      className="rounded-xl bg-card p-5 ring-1 ring-foreground/10 transition-all hover:-translate-y-0.5 hover:ring-foreground/20"
-    >
-      <span className="flex items-center gap-2 text-sm text-muted-foreground">
-        {dot && <span aria-hidden className={cn('size-2 rounded-full', dot)} />}
-        {label}
-      </span>
-      <span className="mt-2 block font-heading text-4xl font-semibold tracking-tight">{value}</span>
-    </Link>
   )
 }
 

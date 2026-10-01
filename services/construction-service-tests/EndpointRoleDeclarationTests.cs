@@ -79,6 +79,8 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("UpdateStatus"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("GetProgress"));
         Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("CreateFromTemplate"));
+        // US-21: giving a milestone a due date is planning it, which is the Project Manager's.
+        Assert.Equal([PlatformRoles.ProjectManager], RolesForActionOn<Controllers.MilestonesController>("SetDueDate"));
     }
 
     [Fact]
@@ -128,6 +130,21 @@ public class EndpointRoleDeclarationTests
         Assert.Equal(
             [PlatformRoles.Client],
             RolesForActionOn<Controllers.ConstructionProgressController>("GetSummary"));
+    }
+
+    [Fact]
+    public void Each_dashboard_endpoint_is_gated_to_exactly_its_own_role()
+    {
+        // US-21: a dashboard is the view of one role's own work. A Client's build
+        // progress is theirs alone, and the builds under way and milestones still to
+        // finish are the Project Manager's. Pinned rather than left to whoever edits
+        // the controller next.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.DashboardController>("GetClientDashboard"));
+        Assert.Equal(
+            [PlatformRoles.ProjectManager],
+            RolesForActionOn<Controllers.DashboardController>("GetProjectManagerDashboard"));
     }
 
     private static IEnumerable<MethodInfo> Endpoints() =>

@@ -108,6 +108,17 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Admin], RolesFor("SetUserActive"));
     }
 
+    [Fact]
+    public void The_dashboard_user_counts_are_the_admins_alone()
+    {
+        // US-21 AC-4: how many accounts exist, and what roles they hold, is the
+        // Admin's view of the whole platform. Pinned rather than left to whoever
+        // edits the controller next.
+        var action = Endpoints().Single(a => a.DeclaringType == typeof(DashboardController) && a.Name == "GetAdminDashboard");
+
+        Assert.Equal([PlatformRoles.Admin], DeclaredRoles(action));
+    }
+
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()

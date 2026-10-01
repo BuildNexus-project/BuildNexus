@@ -36,6 +36,7 @@ builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IPaymentHistoryRepository, PaymentHistoryRepository>();
 builder.Services.AddScoped<IPaymentReportRepository, PaymentReportRepository>();
+builder.Services.AddScoped<IPaymentDashboardRepository, PaymentDashboardRepository>();
 builder.Services.AddScoped<IConstructionCompletionRepository, ConstructionCompletionRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 

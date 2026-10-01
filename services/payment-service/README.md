@@ -21,3 +21,55 @@ actually been billed against it (US-15).
 
 Run it locally with `dotnet run` (port 5005) or through
 `infra/docker-compose.yml`.
+
+## Endpoints
+
+| Method | Route                                                  | Allowed roles         |
+|--------|--------------------------------------------------------|-----------------------|
+| POST   | `/api/payments/projects/{projectId}/quotations`         | ProjectManager, Admin |
+| GET    | `/api/payments/projects/{projectId}/quotations`         | ProjectManager, Admin |
+| POST   | `/api/payments/projects/{projectId}/invoices`           | ProjectManager, Admin |
+| GET    | `/api/payments/projects/{projectId}/invoices`           | ProjectManager, Admin |
+| GET    | `/api/payments/my-projects/{projectId}/quotations`      | Client (own project)  |
+| GET    | `/api/payments/my-projects/{projectId}/invoices`        | Client (own project)  |
+| GET    | `/api/payments/my-projects/{projectId}/history`         | Client (own project)  |
+| POST   | `/api/payments/invoices/{invoiceId}/payments`           | Client                |
+| GET    | `/api/payments/reports/summary`                         | ProjectManager, Admin |
+| GET    | `/api/payments/dashboard/client`                        | Client                |
+
+Staff price a project (a quotation, then invoices) and a Client pays invoices down,
+part by part; an invoice is settled when its payments reach its amount. The Client
+reads are scoped to projects they own by this service's own `project_owners` record.
+
+## Client dashboard (US-21)
+
+The payments slice of the Client's dashboard: what they still owe. The other
+slices come from the other services; the page joins them on the project id (see
+`frontend/README.md`, *Role dashboards*).
+
+| Method | Route                            | Allowed roles |
+|--------|----------------------------------|---------------|
+| GET    | `/api/payments/dashboard/client` | Client        |
+
+Answers `{ totalDue, invoiceCount, invoices[] }`. Each invoice is
+`{ invoiceId, projectId, amount, amountPaid, outstandingAmount, raisedAt }`,
+oldest first. Only `Pending` invoices on projects the caller owns are listed — a
+settled invoice is not due — and `totalDue` is the sum of what is still
+**outstanding** on them, not what was billed.
+
+Ownership is this service's own `project_owners` record, and the endpoint takes
+no id, so a Client cannot ask for another Client's dashboard. An invoice on a
+project with no recorded owner is shown to nobody.
+
+"Outstanding" is the same definition US-16 uses when it accepts a payment and
+US-17 uses on the billing view — the invoice's amount minus the sum of its
+payments — so a figure on the dashboard is one the pay endpoint will accept. It
+is one ADO.NET query (`PaymentDashboardRepository`) grouped by invoice, so an
+invoice with several payments is counted once and one with none stays in at zero
+paid.
+
+`PaymentDashboardEndpointTests` covers the total, the mapping, ordering and the
+empty case over a stand-in repository. `PaymentDashboardRepositoryDatabaseTests`
+proves the SQL against `payment-db`, including that its outstanding figure agrees
+with the billing history's. `EndpointRoleDeclarationTests` pins the endpoint to
+Client.

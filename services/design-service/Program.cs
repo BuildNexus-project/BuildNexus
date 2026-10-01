@@ -22,6 +22,7 @@ builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IDesignDocumentRepository, DesignDocumentRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 builder.Services.AddScoped<IDesignReportRepository, DesignReportRepository>();
+builder.Services.AddScoped<IDesignDashboardRepository, DesignDashboardRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
 // background threads and a connection pool, so one per request would spend more
@@ -46,6 +47,16 @@ builder.Services.AddOptions<ProjectServiceOptions>()
     .ValidateOnStart();
 
 builder.Services.AddHttpClient<IProjectAccessClient, HttpProjectAccessClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<ProjectServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
+
+// The other question this service puts to the Project Service: which projects may
+// the caller see at all (US-21). Same address and timeout as the access check
+// above, so nothing new to configure or validate.
+builder.Services.AddHttpClient<IProjectDirectoryClient, HttpProjectDirectoryClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<ProjectServiceOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
