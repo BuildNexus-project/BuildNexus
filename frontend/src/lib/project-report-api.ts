@@ -1,5 +1,5 @@
 import type { ApiFetchOptions } from './api'
-import { ApiError } from './api'
+import { ApiError, apiUrl } from './api'
 import type { ProjectReportFilterValues } from './project-report-schemas'
 import type { ProjectStatus } from './project-status'
 
@@ -98,7 +98,7 @@ export async function downloadProjectStatusReportCsv(
   token: string | null,
   filter: ProjectReportFilterValues,
 ): Promise<Blob> {
-  const response = await fetch(`${REPORT_PATH}/export${projectReportQuery(filter)}`, {
+  const response = await fetch(apiUrl(`${REPORT_PATH}/export${projectReportQuery(filter)}`), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
 
