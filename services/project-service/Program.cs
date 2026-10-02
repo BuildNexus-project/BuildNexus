@@ -44,6 +44,11 @@ builder.Services.AddHostedService<ConstructionEventsConsumer>();
 // can be read without asking that service anything. Nothing on any request path waits on it.
 builder.Services.AddHostedService<PaymentEventsConsumer>();
 
+// Reads design-events, construction-events and payment-events under a group of its own and stores
+// an in-app notification for the Client and Architect each DesignApproved, MilestoneCompleted or
+// PaymentReceived concerns (US-26). Publishes nothing, and nothing on any request path waits on it.
+builder.Services.AddHostedService<NotificationEventsConsumer>();
+
 // The User Service, asked over HTTP — with the Admin's own token — what role an
 // account holds before it is assigned to a project. Its address is validated at
 // startup for the same reason the JWT settings are: a service that cannot reach
