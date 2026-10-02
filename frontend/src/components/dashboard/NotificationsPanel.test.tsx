@@ -47,6 +47,7 @@ function stubService(
     if (path === `${NOTIFICATIONS_PATH}/read-all`) {
       current = {
         unreadCount: 0,
+        hasMore: false,
         notifications: current.notifications.map((n) => ({ ...n, isRead: true })),
       }
     } else if (path.endsWith('/read')) {
@@ -54,6 +55,7 @@ function stubService(
       const wasUnread = current.notifications.some((n) => n.id === id && !n.isRead)
       current = {
         unreadCount: current.unreadCount - (wasUnread ? 1 : 0),
+        hasMore: current.hasMore,
         notifications: current.notifications.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
       }
     }
@@ -164,7 +166,7 @@ describe('NotificationsPanel', () => {
 
   describe('when there is nothing to show', () => {
     it('says so, and says what will appear', async () => {
-      stubService({ unreadCount: 0, notifications: [] })
+      stubService({ unreadCount: 0, hasMore: false, notifications: [] })
       renderPanel()
 
       expect(await screen.findByText('Nothing new')).toBeInTheDocument()
@@ -177,6 +179,7 @@ describe('NotificationsPanel', () => {
       const allRead = notificationList()
       stubService({
         unreadCount: 0,
+        hasMore: false,
         notifications: allRead.notifications.map((n) => ({ ...n, isRead: true })),
       })
       renderPanel()
@@ -252,6 +255,83 @@ describe('NotificationsPanel', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent(
         'Your notifications could not be updated right now.',
       )
+    })
+  })
+
+  describe('the rest of the history', () => {
+    it('leads to the full list from a link beside the heading', async () => {
+      stubService()
+      renderPanel()
+
+      await screen.findAllByRole('listitem')
+
+      expect(screen.getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/notifications')
+    })
+
+    it('offers the link even when there is nothing yet, so the page is always findable from here', async () => {
+      stubService({ unreadCount: 0, hasMore: false, notifications: [] })
+      renderPanel()
+
+      await screen.findByText('Nothing new')
+
+      expect(screen.getByRole('link', { name: 'View all' })).toBeInTheDocument()
+    })
+  })
+
+  describe('staying current', () => {
+    it('shows a notification that arrives while the dashboard is open, without a reload', async () => {
+      // The reader sits on the dashboard; the tab is hidden, then shown again — the same trigger
+      // the rest of the app refreshes on. Nothing is clicked.
+      const calls = stubService({ unreadCount: 0, hasMore: false, notifications: [] })
+      renderPanel()
+      await screen.findByText('Nothing new')
+
+      stubService(notificationList())
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      expect(await screen.findByText('A payment was received on "Beachfront villa".')).toBeInTheDocument()
+      expect(screen.getByText('2 new')).toBeInTheDocument()
+      expect(calls.length).toBeGreaterThan(0)
+    })
+
+    it('keeps the list on screen while the next one is fetched', async () => {
+      stubService()
+      renderPanel()
+      await screen.findAllByRole('listitem')
+
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      // Not blanked to "Loading…" for the length of a round trip.
+      expect(screen.queryByText('Loading your notifications…')).not.toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+    })
+
+    it('announces a change, so the bell in the header reads its own count again', async () => {
+      const user = userEvent.setup()
+      stubService()
+      const changed = vi.fn()
+      window.addEventListener('buildnexus:notifications-changed', changed)
+      renderPanel()
+
+      const [payment] = await screen.findAllByRole('listitem')
+      await user.click(within(payment).getByRole('button', { name: 'Mark as read' }))
+
+      await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+      window.removeEventListener('buildnexus:notifications-changed', changed)
+    })
+
+    it('does not announce anything when marking fails', async () => {
+      const user = userEvent.setup()
+      stubService(notificationList(), { mark: apiResponse(500, { title: 'Boom' }) })
+      const changed = vi.fn()
+      window.addEventListener('buildnexus:notifications-changed', changed)
+      renderPanel()
+
+      await user.click(await screen.findByRole('button', { name: 'Mark all as read' }))
+      await screen.findByRole('alert')
+
+      expect(changed).not.toHaveBeenCalled()
+      window.removeEventListener('buildnexus:notifications-changed', changed)
     })
   })
 

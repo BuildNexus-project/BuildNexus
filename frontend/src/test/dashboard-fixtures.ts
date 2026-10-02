@@ -307,6 +307,7 @@ export const NOTIFICATIONS_PATH = '/api/projects/notifications'
 export function notificationList(backlog = 0): NotificationList {
   return {
     unreadCount: 2 + backlog,
+    hasMore: false,
     notifications: [
       {
         id: 'aaaaaaaa-0000-4000-8000-000000000003',

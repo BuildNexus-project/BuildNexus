@@ -1,11 +1,12 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AuthProvider } from '@/auth/AuthProvider'
 import { ProtectedRoute } from '@/auth/ProtectedRoute'
 import type { Role } from '@/lib/roles'
+import { apiResponse } from '@/test/fake-fetch'
 
 const TOKEN_STORAGE_KEY = 'buildnexus.accessToken'
 const PAGE = 'The page itself'
@@ -60,7 +61,23 @@ function primaryNavNames(): string[] {
     .map((link) => link.textContent ?? '')
 }
 
+/** The paths the header asked for, so a test can say who was and was not asked for notifications. */
+let requested: string[] = []
+
+beforeEach(() => {
+  requested = []
+
+  // A Client's or Architect's header asks for their unread count. Answered here so no test in
+  // this file depends on a network that is not there.
+  vi.stubGlobal('fetch', (path: string) => {
+    requested.push(path)
+
+    return Promise.resolve(apiResponse(200, { unreadCount: 4, hasMore: false, notifications: [] }))
+  })
+})
+
 afterEach(() => {
+  vi.unstubAllGlobals()
   localStorage.clear()
 })
 
@@ -92,6 +109,50 @@ describe('AppShell', () => {
       'href',
       '#content',
     )
+  })
+})
+
+describe('the notification bell', () => {
+  it.each<Role>(['Client', 'Architect'])('is in the header of a %s, with how many are unread', async (role) => {
+    signInAs(role)
+
+    renderAt('/projects')
+
+    const bell = await screen.findByRole('link', { name: 'Notifications, 4 unread' })
+    expect(bell).toHaveAttribute('href', '/notifications')
+    expect(within(screen.getByRole('banner')).getByRole('link', { name: /^Notifications/ })).toBe(bell)
+  })
+
+  it.each<Role>(['ProjectManager', 'Admin'])(
+    'is not in the header of a %s, who are never sent any, nor is their count asked for',
+    async (role) => {
+      signInAs(role)
+
+      renderAt('/projects')
+
+      await screen.findByRole('banner')
+      expect(screen.queryByRole('link', { name: /^Notifications/ })).not.toBeInTheDocument()
+      expect(requested).not.toContain('/api/projects/notifications?take=1')
+    },
+  )
+
+  it('is not one of the navigation links, so it does not crowd the role’s own pages', () => {
+    signInAs('Client')
+
+    renderAt('/projects')
+
+    expect(primaryNavNames()).not.toContain('Notifications')
+  })
+
+  it('stays out of the way of the profile link and sign out', async () => {
+    signInAs('Client')
+
+    renderAt('/projects')
+
+    await screen.findByRole('link', { name: /^Notifications/ })
+    const header = within(screen.getByRole('banner'))
+    expect(header.getByRole('link', { name: 'Your profile' })).toBeInTheDocument()
+    expect(header.getAllByRole('button', { name: 'Sign out' }).length).toBeGreaterThan(0)
   })
 })
 

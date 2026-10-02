@@ -21,6 +21,7 @@ afterEach(() => {
 
 const LIST: NotificationList = {
   unreadCount: 12,
+  hasMore: true,
   notifications: [
     {
       id: '7b0f4b0e-0000-4000-8000-000000000001',
@@ -92,6 +93,49 @@ describe('markNotificationRead', () => {
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
+  })
+})
+
+describe('fetchNotifications paging', () => {
+  it('asks for a page by skip and take', async () => {
+    const requests = stubFetch(apiResponse(200, LIST))
+
+    await fetchNotifications(authFetch, { skip: 20, take: 10 })
+
+    expect(requests[0].path).toBe('/api/projects/notifications?skip=20&take=10')
+  })
+
+  it('sends only what it is given, leaving the service its defaults for the rest', async () => {
+    const requests = stubFetch(apiResponse(200, LIST), apiResponse(200, LIST))
+
+    await fetchNotifications(authFetch, { take: 1 })
+    await fetchNotifications(authFetch, { skip: 40 })
+
+    expect(requests[0].path).toBe('/api/projects/notifications?take=1')
+    expect(requests[1].path).toBe('/api/projects/notifications?skip=40')
+  })
+
+  it('sends a skip of zero rather than treating it as absent', async () => {
+    const requests = stubFetch(apiResponse(200, LIST))
+
+    await fetchNotifications(authFetch, { skip: 0, take: 20 })
+
+    expect(requests[0].path).toBe('/api/projects/notifications?skip=0&take=20')
+  })
+
+  it('returns whether there are older notifications beyond the page', async () => {
+    stubFetch(apiResponse(200, LIST))
+
+    expect((await fetchNotifications(authFetch)).hasMore).toBe(true)
+  })
+
+  it('surfaces a 400 for a page out of range as an ApiError naming the field', async () => {
+    stubFetch(apiResponse(400, { title: 'Invalid', errors: { take: ['take must be between 1 and 50.'] } }))
+
+    const error = await fetchNotifications(authFetch, { take: 0 }).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).fieldErrors.take).toEqual(['take must be between 1 and 50.'])
   })
 })
 

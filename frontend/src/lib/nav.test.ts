@@ -113,6 +113,10 @@ describe('breadcrumbsFor', () => {
     expect(breadcrumbsFor('/profile')).toEqual([{ label: 'Profile' }])
   })
 
+  it('has a trail for the notification history, reached from the bell rather than a nav item', () => {
+    expect(breadcrumbsFor('/notifications')).toEqual([{ label: 'Notifications' }])
+  })
+
   it('links every step but the last', () => {
     expect(breadcrumbsFor('/projects/new')).toEqual([
       { label: 'Projects', to: '/projects' },

@@ -33,16 +33,38 @@ export type UserNotification = {
 
 export type NotificationList = {
   /**
-   * Every notification not yet read — not only the ones in `notifications`. The list is capped by
-   * the service and this is not, so "12 new" is true even when 10 are shown.
+   * Every notification not yet read — not only the ones in `notifications`. A page is only part
+   * of the list and this is not, so "12 new" is true even when 10 are shown.
    */
   unreadCount: number
+  /** Whether there are older notifications beyond this page. */
+  hasMore: boolean
   /** Newest first, read and unread alike. */
   notifications: UserNotification[]
 }
 
-export function fetchNotifications(authFetch: AuthFetch) {
-  return authFetch<NotificationList>('/api/projects/notifications')
+/** Which page of the list to read. The service defaults to the newest 20. */
+export type NotificationPage = {
+  /** How many of the newest to pass over. */
+  skip?: number
+  /** How many to return, 1 to 50. */
+  take?: number
+}
+
+export function fetchNotifications(authFetch: AuthFetch, page: NotificationPage = {}) {
+  const query = new URLSearchParams()
+
+  if (page.skip !== undefined) {
+    query.set('skip', String(page.skip))
+  }
+
+  if (page.take !== undefined) {
+    query.set('take', String(page.take))
+  }
+
+  const suffix = query.size > 0 ? `?${query}` : ''
+
+  return authFetch<NotificationList>(`/api/projects/notifications${suffix}`)
 }
 
 /** Marks one read. Repeating it is harmless. */

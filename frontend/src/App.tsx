@@ -13,6 +13,7 @@ import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { MyProjectCostsPage } from '@/pages/MyProjectCostsPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
+import { NotificationsPage } from '@/pages/NotificationsPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
@@ -21,7 +22,14 @@ import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES, REPORTING_ROLES } from '@/lib/roles'
+import {
+  ADMIN_ROLES,
+  CLIENT_ROLES,
+  COST_MANAGEMENT_ROLES,
+  NOTIFICATION_ROLES,
+  PROJECT_STAFF_ROLES,
+  REPORTING_ROLES,
+} from '@/lib/roles'
 
 export default function App() {
   return (
@@ -43,6 +51,16 @@ export default function App() {
             <ProtectedRoute>
               <HomePage />
             </ProtectedRoute>
+          }
+        />
+        {/* The full history behind the dashboard's notifications panel. Only Clients and
+            Architects are ever sent any, so it mirrors the Project Service's gate. */}
+        <Route
+          path="/notifications"
+          element={
+            <RoleRoute allowedRoles={NOTIFICATION_ROLES}>
+              <NotificationsPage />
+            </RoleRoute>
           }
         />
         <Route

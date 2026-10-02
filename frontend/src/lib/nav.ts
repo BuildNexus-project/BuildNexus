@@ -169,6 +169,7 @@ const TRAILS: ReadonlyArray<{ path: string; trail: readonly Crumb[] }> = [
   { path: '/progress', trail: [{ label: 'Construction progress' }] },
   { path: '/my-costs', trail: [{ label: 'My costs' }] },
   { path: '/directory', trail: [{ label: 'Project team' }] },
+  { path: '/notifications', trail: [{ label: 'Notifications' }] },
   { path: '/profile', trail: [{ label: 'Profile' }] },
   { path: '/admin/users', trail: [{ label: 'Users' }] },
   {
