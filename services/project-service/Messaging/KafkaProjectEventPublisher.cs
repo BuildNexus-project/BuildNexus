@@ -60,48 +60,14 @@ public sealed class KafkaProjectEventPublisher : IProjectEventPublisher, IDispos
             MessageTimeoutMs = kafkaOptions.MessageTimeoutMs
         };
 
-        // How to authenticate to the broker — each written only when configured.
-        // Unset, none of these keys reaches librdkafka and it keeps its own
-        // plaintext default, which is what the local broker speaks: a local run's
-        // producer is configured exactly as it was before these settings existed.
-        // Azure Event Hubs sets all four — SaslSsl, Plain, the literal username
-        // $ConnectionString, and the namespace connection string as the password.
-        if (kafkaOptions.SecurityProtocol is { } securityProtocol)
-        {
-            config.SecurityProtocol = securityProtocol;
-        }
+        // The broker login and connection tuning, shared with every consumer in this service.
+        KafkaBrokerSettings.ApplyBrokerSettings(kafkaOptions, config);
 
-        if (kafkaOptions.SaslMechanism is { } saslMechanism)
-        {
-            config.SaslMechanism = saslMechanism;
-        }
-
-        if (!string.IsNullOrEmpty(kafkaOptions.SaslUsername))
-        {
-            config.SaslUsername = kafkaOptions.SaslUsername;
-        }
-
-        if (!string.IsNullOrEmpty(kafkaOptions.SaslPassword))
-        {
-            config.SaslPassword = kafkaOptions.SaslPassword;
-        }
-
-        // Connection tuning for Azure Event Hubs — likewise each written only when
-        // configured, so locally librdkafka keeps its own defaults. Independent of
-        // one another and of the security settings above.
+        // Producer-only, so not part of the shared settings. Left unset locally, where
+        // librdkafka keeps its own default; Event Hubs enforces a twenty-second minimum.
         if (kafkaOptions.RequestTimeoutMs is { } requestTimeoutMs)
         {
             config.RequestTimeoutMs = requestTimeoutMs;
-        }
-
-        if (kafkaOptions.SocketKeepaliveEnable is { } socketKeepaliveEnable)
-        {
-            config.SocketKeepaliveEnable = socketKeepaliveEnable;
-        }
-
-        if (kafkaOptions.MetadataMaxAgeMs is { } metadataMaxAgeMs)
-        {
-            config.MetadataMaxAgeMs = metadataMaxAgeMs;
         }
 
         return config;

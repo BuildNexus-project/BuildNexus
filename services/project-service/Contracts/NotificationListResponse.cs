@@ -9,6 +9,12 @@ public class NotificationListResponse
     /// </summary>
     public int UnreadCount { get; set; }
 
+    /// <summary>
+    /// Whether there are older notifications beyond this page — ask again with <c>skip</c> advanced
+    /// by the length of <see cref="Notifications"/>.
+    /// </summary>
+    public bool HasMore { get; set; }
+
     /// <summary>Newest first, read and unread alike.</summary>
     public List<NotificationResponse> Notifications { get; set; } = [];
 }

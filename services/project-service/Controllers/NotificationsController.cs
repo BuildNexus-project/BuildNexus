@@ -29,11 +29,14 @@ namespace BuildNexus.ProjectService.Controllers;
 public class NotificationsController : ControllerBase
 {
     /// <summary>
-    /// How many notifications one read returns. Enough for what accumulates between visits; the
-    /// unread count beside it is the whole figure, so a longer backlog is not hidden — only not
-    /// all listed.
+    /// How many notifications a read returns when the caller does not say. Enough for what
+    /// accumulates between visits; the unread count beside it is the whole figure, so a longer
+    /// backlog is not hidden — only not all listed.
     /// </summary>
-    public const int MaxListed = 20;
+    public const int DefaultTake = 20;
+
+    /// <summary>The most a caller may ask for in one read.</summary>
+    public const int MaxTake = 50;
 
     private readonly INotificationRepository _notifications;
     private readonly TimeProvider _clock;
@@ -49,30 +52,63 @@ public class NotificationsController : ControllerBase
     /// Client, Architect.
     /// </summary>
     /// <remarks>
-    /// Newest first, read and unread alike, at most 20. A person nothing has happened for gets an
-    /// empty list and a count of zero, which is the truthful answer rather than a refusal.
+    /// Newest first, read and unread alike. <c>take</c> (default 20, at most 50) says how many and
+    /// <c>skip</c> how many to pass over first, so a caller pages by asking for the next
+    /// <c>skip</c>; <c>hasMore</c> says whether there is a next. A person nothing has happened
+    /// for gets an empty list and a count of zero, which is the truthful answer rather than a
+    /// refusal.
+    /// <para>
+    /// A bad <c>skip</c> or <c>take</c> is a <c>400</c> naming it, never quietly clamped: a caller
+    /// that asked for 500 and was handed 50 would believe it had reached the end of the list.
+    /// </para>
     /// </remarks>
+    /// <param name="skip">How many of the newest to pass over. Defaults to 0.</param>
+    /// <param name="take">How many to return. Defaults to 20; 1 to 50.</param>
     /// <response code="200">The caller's notifications and unread count.</response>
+    /// <response code="400"><c>skip</c> or <c>take</c> was out of range.</response>
     /// <response code="401">The token was missing, expired or otherwise invalid.</response>
     /// <response code="403">The caller is not a Client or an Architect.</response>
     [HttpGet]
     [ProducesResponseType(typeof(NotificationListResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> ListNotifications(CancellationToken cancellationToken)
+    public async Task<IActionResult> ListNotifications(
+        CancellationToken cancellationToken,
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = DefaultTake)
     {
         if (!TryGetCallerId(out var userId))
         {
             return Unauthorized();
         }
 
-        var notifications = await _notifications.ListForUserAsync(userId, MaxListed, cancellationToken);
+        if (skip < 0)
+        {
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                ["skip"] = ["skip must be 0 or more."]
+            }));
+        }
+
+        if (take is < 1 or > MaxTake)
+        {
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                ["take"] = [$"take must be between 1 and {MaxTake}."]
+            }));
+        }
+
+        // One more than was asked for: whether it comes back is the whole answer to "is there a
+        // next page", without a second query to count them.
+        var found = await _notifications.ListForUserAsync(userId, take + 1, skip, cancellationToken);
         var unread = await _notifications.CountUnreadAsync(userId, cancellationToken);
 
         return Ok(new NotificationListResponse
         {
             UnreadCount = unread,
-            Notifications = notifications.Select(NotificationResponse.From).ToList()
+            HasMore = found.Count > take,
+            Notifications = found.Take(take).Select(NotificationResponse.From).ToList()
         });
     }
 

@@ -63,22 +63,25 @@ public class NotificationRepository : INotificationRepository
     public async Task<IReadOnlyList<Notification>> ListForUserAsync(
         Guid userId,
         int limit,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
         // `id` breaks the tie between notifications that happened in the same instant, so the
-        // order is the same on every read.
+        // order is the same on every read — which is what makes a second page start exactly
+        // where the first left off.
         var sql = $@"
             SELECT {Columns}
             FROM notifications
             WHERE user_id = @userId
             ORDER BY occurred_at DESC, id
-            LIMIT @limit;";
+            LIMIT @limit OFFSET @offset;";
 
         await using var connection = await _connectionFactory.OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         AddParameter(command, "@userId", userId);
         AddParameter(command, "@limit", limit);
+        AddParameter(command, "@offset", offset);
 
         var notifications = new List<Notification>();
 

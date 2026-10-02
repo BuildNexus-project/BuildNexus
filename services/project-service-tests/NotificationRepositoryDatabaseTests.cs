@@ -102,6 +102,38 @@ public class NotificationRepositoryDatabaseTests
     }
 
     [Fact]
+    public async Task Pages_follow_on_from_one_another_with_no_overlap_and_no_gap()
+    {
+        // Several at the same instant, so only the id tie-break keeps the order the same on every
+        // read — which is what lets a second page start exactly where the first left off.
+        var project = await CreateProjectAsync();
+        var person = Guid.NewGuid();
+        var all = Enumerable.Range(0, 7)
+            .Select(i => NotificationFor(project, person, occurredAt: Happened.AddHours(i / 2)))
+            .ToList();
+        await _fixture.Notifications.InsertAsync(all);
+
+        var everything = (await _fixture.Notifications.ListForUserAsync(person, 100)).Select(n => n.Id).ToList();
+        var paged = new List<Guid>();
+        paged.AddRange((await _fixture.Notifications.ListForUserAsync(person, 3, 0)).Select(n => n.Id));
+        paged.AddRange((await _fixture.Notifications.ListForUserAsync(person, 3, 3)).Select(n => n.Id));
+        paged.AddRange((await _fixture.Notifications.ListForUserAsync(person, 3, 6)).Select(n => n.Id));
+
+        Assert.Equal(7, everything.Count);
+        Assert.Equal(everything, paged);
+    }
+
+    [Fact]
+    public async Task An_offset_past_the_end_is_an_empty_list()
+    {
+        var project = await CreateProjectAsync();
+        var person = Guid.NewGuid();
+        await _fixture.Notifications.InsertAsync([NotificationFor(project, person)]);
+
+        Assert.Empty(await _fixture.Notifications.ListForUserAsync(person, 10, 5));
+    }
+
+    [Fact]
     public async Task A_person_with_no_notifications_gets_an_empty_list_and_a_zero_count()
     {
         var person = Guid.NewGuid();

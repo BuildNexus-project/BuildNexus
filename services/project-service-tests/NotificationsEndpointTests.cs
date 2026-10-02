@@ -95,18 +95,126 @@ public class NotificationsEndpointTests
     }
 
     [Fact]
-    public async Task The_list_is_capped_but_the_unread_count_is_the_whole_figure()
+    public async Task The_list_is_one_page_but_the_unread_count_is_the_whole_figure()
     {
-        var many = Enumerable.Range(0, NotificationsController.MaxListed + 5)
+        var many = Enumerable.Range(0, NotificationsController.DefaultTake + 5)
             .Select(hour => Stored(CallerId, $"n{hour}", Happened.AddHours(hour)))
             .ToArray();
-        var (controller, repository) = ControllerWith(many);
+        var (controller, _) = ControllerWith(many);
 
         var list = await List(controller);
 
-        Assert.Equal(NotificationsController.MaxListed, list.Notifications.Count);
-        Assert.Equal(NotificationsController.MaxListed + 5, list.UnreadCount);
-        Assert.Equal(NotificationsController.MaxListed, repository.LastLimit);
+        Assert.Equal(NotificationsController.DefaultTake, list.Notifications.Count);
+        Assert.Equal(NotificationsController.DefaultTake + 5, list.UnreadCount);
+        Assert.True(list.HasMore);
+    }
+
+    // ------------------------------------------------------------ paging ----
+
+    [Fact]
+    public async Task A_second_page_continues_exactly_where_the_first_stopped()
+    {
+        var all = Enumerable.Range(0, 7)
+            .Select(hour => Stored(CallerId, $"n{hour}", Happened.AddHours(hour)))
+            .ToArray();
+        var (controller, _) = ControllerWith(all);
+
+        var first = await List(controller, skip: 0, take: 3);
+        var second = await List(controller, skip: 3, take: 3);
+        var third = await List(controller, skip: 6, take: 3);
+
+        var newestFirst = all.Reverse().Select(n => n.Id).ToList();
+        Assert.Equal(newestFirst.Take(3), first.Notifications.Select(n => n.Id));
+        Assert.Equal(newestFirst.Skip(3).Take(3), second.Notifications.Select(n => n.Id));
+        Assert.Equal(newestFirst.Skip(6), third.Notifications.Select(n => n.Id));
+    }
+
+    [Fact]
+    public async Task HasMore_is_true_until_the_last_page_and_false_on_it()
+    {
+        var (controller, _) = ControllerWith(
+            Enumerable.Range(0, 7).Select(hour => Stored(CallerId, $"n{hour}", Happened.AddHours(hour))).ToArray());
+
+        Assert.True((await List(controller, skip: 0, take: 3)).HasMore);
+        Assert.True((await List(controller, skip: 3, take: 3)).HasMore);
+        Assert.False((await List(controller, skip: 6, take: 3)).HasMore);
+    }
+
+    [Fact]
+    public async Task A_page_that_ends_exactly_at_the_last_notification_has_no_more()
+    {
+        // Six notifications, pages of three: the second page is full, and there is nothing after it.
+        var (controller, _) = ControllerWith(
+            Enumerable.Range(0, 6).Select(hour => Stored(CallerId, $"n{hour}", Happened.AddHours(hour))).ToArray());
+
+        var second = await List(controller, skip: 3, take: 3);
+
+        Assert.Equal(3, second.Notifications.Count);
+        Assert.False(second.HasMore);
+    }
+
+    [Fact]
+    public async Task Asking_past_the_end_is_an_empty_page_not_an_error()
+    {
+        var (controller, _) = ControllerWith(Stored(CallerId, "only"));
+
+        var list = await List(controller, skip: 10, take: 5);
+
+        Assert.Empty(list.Notifications);
+        Assert.False(list.HasMore);
+        Assert.Equal(1, list.UnreadCount);
+    }
+
+    [Fact]
+    public async Task The_page_asked_for_reaches_the_query()
+    {
+        var (controller, repository) = ControllerWith();
+
+        await controller.ListNotifications(default, skip: 40, take: 10);
+
+        // One more than asked for, to learn whether there is a next page.
+        Assert.Equal(11, repository.LastLimit);
+        Assert.Equal(40, repository.LastOffset);
+    }
+
+    [Fact]
+    public async Task Without_a_page_the_first_twenty_are_returned()
+    {
+        var (controller, repository) = ControllerWith();
+
+        await controller.ListNotifications(default);
+
+        Assert.Equal(NotificationsController.DefaultTake + 1, repository.LastLimit);
+        Assert.Equal(0, repository.LastOffset);
+    }
+
+    [Fact]
+    public async Task The_largest_page_allowed_is_accepted()
+    {
+        var (controller, _) = ControllerWith();
+
+        Assert.IsType<OkObjectResult>(
+            await controller.ListNotifications(default, take: NotificationsController.MaxTake));
+    }
+
+    [Theory]
+    [InlineData(0, 0, "take")]
+    [InlineData(0, -1, "take")]
+    [InlineData(0, 51, "take")]
+    [InlineData(-1, 20, "skip")]
+    public async Task A_page_out_of_range_is_a_400_naming_it_and_reads_nothing(int skip, int take, string field)
+    {
+        // Never quietly clamped: a caller that asked for 500 and was handed 50 would believe it
+        // had reached the end of the list.
+        var (controller, repository) = ControllerWith(Stored(CallerId, "x"));
+
+        var result = await controller.ListNotifications(default, skip, take);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        var problem = Assert.IsType<ValidationProblemDetails>(bad.Value);
+        Assert.Equal(StatusCodes.Status400BadRequest, bad.StatusCode);
+        Assert.Contains(field, problem.Errors.Keys);
+        Assert.Null(repository.LastLimit);
     }
 
     [Fact]
@@ -207,9 +315,12 @@ public class NotificationsEndpointTests
 
     // ----------------------------------------------------------- helpers ----
 
-    private static async Task<NotificationListResponse> List(NotificationsController controller) =>
+    private static async Task<NotificationListResponse> List(
+        NotificationsController controller,
+        int skip = 0,
+        int take = NotificationsController.DefaultTake) =>
         Assert.IsType<NotificationListResponse>(
-            Assert.IsType<OkObjectResult>(await controller.ListNotifications(default)).Value);
+            Assert.IsType<OkObjectResult>(await controller.ListNotifications(default, skip, take)).Value);
 
     private static Notification Stored(
         Guid userId,

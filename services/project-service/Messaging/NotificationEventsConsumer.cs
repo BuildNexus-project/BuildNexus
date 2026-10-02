@@ -75,39 +75,7 @@ public sealed class NotificationEventsConsumer : BackgroundService
         // until the first await, and the consume loop is a long-running one.
         await Task.Yield();
 
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = GroupId,
-            // Commit explicitly, only after a message is handled — so a crash mid-handling
-            // re-delivers rather than skips.
-            EnableAutoCommit = false,
-            // A brand-new group reads each topic from the start, so an event announced before
-            // this reader first ran is not missed.
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        };
-
-        // How to authenticate to the broker — each written only when configured, so a local run
-        // stays plaintext. Azure Event Hubs sets all four; see KafkaProjectEventPublisher.
-        if (_options.SecurityProtocol is { } securityProtocol)
-        {
-            config.SecurityProtocol = securityProtocol;
-        }
-
-        if (_options.SaslMechanism is { } saslMechanism)
-        {
-            config.SaslMechanism = saslMechanism;
-        }
-
-        if (!string.IsNullOrEmpty(_options.SaslUsername))
-        {
-            config.SaslUsername = _options.SaslUsername;
-        }
-
-        if (!string.IsNullOrEmpty(_options.SaslPassword))
-        {
-            config.SaslPassword = _options.SaslPassword;
-        }
+        var config = KafkaBrokerSettings.BuildConsumerConfig(_options, GroupId);
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(Topics);

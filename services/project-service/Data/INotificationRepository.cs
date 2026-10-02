@@ -31,12 +31,13 @@ public interface INotificationRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// The person's most recent notifications, newest first, at most <paramref name="limit"/>.
-    /// Read and unread alike.
+    /// The person's notifications, newest first: at most <paramref name="limit"/> of them, after the
+    /// first <paramref name="offset"/>. Read and unread alike.
     /// </summary>
     Task<IReadOnlyList<Notification>> ListForUserAsync(
         Guid userId,
         int limit,
+        int offset = 0,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -33,6 +33,9 @@ public sealed class FakeNotificationRepository : INotificationRepository
     /// <summary>The limit the last list call was given.</summary>
     public int? LastLimit { get; private set; }
 
+    /// <summary>The offset the last list call was given.</summary>
+    public int? LastOffset { get; private set; }
+
     /// <summary>The time the last mark call was given.</summary>
     public DateTime? LastReadAtUtc { get; private set; }
 
@@ -61,15 +64,18 @@ public sealed class FakeNotificationRepository : INotificationRepository
     public Task<IReadOnlyList<Notification>> ListForUserAsync(
         Guid userId,
         int limit,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
         LastUserId = userId;
         LastLimit = limit;
+        LastOffset = offset;
 
         return Task.FromResult<IReadOnlyList<Notification>>(
             _stored.Where(n => n.UserId == userId)
                 .OrderByDescending(n => n.OccurredAt)
                 .ThenBy(n => n.Id)
+                .Skip(offset)
                 .Take(limit)
                 .ToList());
     }
