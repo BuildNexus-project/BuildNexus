@@ -68,6 +68,13 @@ export const COST_MANAGEMENT_ROLES: readonly Role[] = ['ProjectManager', 'Admin'
  */
 export const REPORTING_ROLES: readonly Role[] = ['ProjectManager', 'Admin']
 
+/**
+ * The roles that are told about design approvals, completed milestones and received payments
+ * (US-26), mirroring the Project Service's gate on `/api/projects/notifications`. Nothing is ever
+ * stored for the other two, so they are not shown a panel that could only ever be empty.
+ */
+export const NOTIFICATION_ROLES: readonly Role[] = ['Client', 'Architect']
+
 /** Display names — the wire value `ProjectManager` reads badly in a UI. */
 export const ROLE_LABELS: Record<Role, string> = {
   Client: 'Client',

@@ -5,10 +5,11 @@ import { useAuth } from '@/auth/auth-context'
 import { AdminDashboard } from '@/components/dashboard/AdminDashboard'
 import { ArchitectDashboard } from '@/components/dashboard/ArchitectDashboard'
 import { ClientDashboard } from '@/components/dashboard/ClientDashboard'
+import { NotificationsPanel } from '@/components/dashboard/NotificationsPanel'
 import { ProjectManagerDashboard } from '@/components/dashboard/ProjectManagerDashboard'
 import { Button } from '@/components/ui/button'
 import { NAV_ITEMS, WORKSPACE_LABELS, type NavItem } from '@/lib/nav'
-import type { Role } from '@/lib/roles'
+import { NOTIFICATION_ROLES, type Role } from '@/lib/roles'
 
 /** One line under the greeting, in the voice of what this role is here to do. */
 const ROLE_INTROS: Record<Role, string> = {
@@ -102,6 +103,8 @@ export function HomePage() {
           </div>
         </div>
       </section>
+
+      {NOTIFICATION_ROLES.includes(user.role) && <NotificationsPanel />}
 
       <RoleDashboard role={user.role} />
 
