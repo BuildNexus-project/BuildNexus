@@ -242,11 +242,18 @@ the dashboard reads those rows the next time it loads.
 | POST   | `/api/projects/notifications/{id}/read`   | Client, Architect   |
 | POST   | `/api/projects/notifications/read-all`    | Client, Architect   |
 
-- **List** — `{ unreadCount, notifications[] }`, newest first, at most 20.
-  `unreadCount` is every unread notification the caller has, not the length of
-  the list, so "12 new" stays true when only 20 are shown. Each notification is
+- **List** — `{ unreadCount, hasMore, notifications[] }`, newest first, paged by
+  `?skip=` (default 0) and `?take=` (default 20, 1 to 50). `hasMore` says whether
+  there are older ones beyond this page: ask again with `skip` advanced by the
+  length of `notifications`. `unreadCount` is every unread notification the
+  caller has, not the length of the page, so "12 new" stays true when only 20 are
+  shown. A `skip` or `take` out of range is a `400` naming it — never quietly
+  clamped, since a caller that asked for 500 and was handed 50 would believe it
+  had reached the end. Each notification is
   `{ id, projectId, eventType, message, occurredAt, isRead }`; `occurredAt` is
-  UTC with a `Z`.
+  UTC with a `Z`. Pages follow on with no overlap or gap because the order is
+  `occurred_at` newest first with the id as the tie-break, so it is the same on
+  every read.
 - **Mark read** — `204`, and repeating it is harmless (it keeps the time it was
   first read). A notification that is not the caller's answers `404`, exactly as
   one that does not exist does, so a guessed id confirms nothing.
@@ -296,6 +303,24 @@ messages — and this service already reads `construction-events` and
 `payment-events` under groups of their own. A brand-new group reads each topic
 from the start, so the first run also notifies for older events; they are stamped
 with when the event happened, not when it was read.
+
+**Who is told is decided when the event is read, not when it happened.** An event
+names a project and never the people, so the Client and Architect are whoever the
+project has *now*. In steady state that is the same thing — events are read within
+moments — but a replay, or a reader that was down for a while, tells the Architect
+the project has today. An Architect assigned after a design was approved would be
+told of that approval on a replay, and one reassigned away would not. Nothing on
+any topic says who the Architect was at the time, so it cannot be done better from
+here.
+
+**Every Kafka client here connects to the broker the same way.** The producer and
+all three consumers build their librdkafka config through `KafkaBrokerSettings`,
+so the optional Azure Event Hubs login (`Kafka:SecurityProtocol`, `SaslMechanism`,
+`SaslUsername`, `SaslPassword`) and connection tuning reach every one of them. The
+consumers once did not receive them at all: against Event Hubs the service could
+publish and could not read. Unset, as locally, none of those keys is passed and a
+client is configured exactly as before. `request.timeout.ms` stays with the
+publisher — it is a producer-only setting.
 
 Schema: `Migrations/008_create_notifications_table.sql`. `user_id` is not a
 foreign key (the account lives in the User Service's database); `project_id` is.
@@ -465,7 +490,11 @@ database or broker. `NotificationEventsConsumerTests` drives
 the Architect, a redelivery stores nothing new, other events and unknown
 projects are left alone, and the commit-or-retry exception contract holds.
 `NotificationsEndpointTests` walks the acceptance criterion that a stored
-notification is visible on the person's next request, and that it is only theirs.
+notification is visible on the person's next request, and that it is only theirs;
+it also pins the paging — pages that follow on, `hasMore`, the edges, and the
+`400` for a `skip` or `take` out of range. `KafkaConsumerConfigTests` pins what
+every consumer is built with, for the local broker and for Event Hubs, without a
+broker.
 `NotificationRepositoryDatabaseTests` proves the SQL against `project-db`: the
 unique key, the all-or-nothing batch, the foreign key and CHECK refusals, and
 that a second "mark read" keeps the first time. Each person in it is a fresh
@@ -485,8 +514,8 @@ hold no foreign key into another service's schema.
 - `Kafka:MessageTimeoutMs` — how long a publish may spend reaching the broker.
   Defaults to 5000; see [When the broker is down](#when-the-broker-is-down).
 - `Kafka:SecurityProtocol`, `Kafka:SaslMechanism`, `Kafka:SaslUsername`,
-  `Kafka:SaslPassword` — how the producer authenticates to the broker. **All
-  four are unset locally**, and then the producer speaks plaintext, which is what
+  `Kafka:SaslPassword` — how the producer and every consumer authenticate to the broker. **All
+  four are unset locally**, and then each client speaks plaintext, which is what
   the compose broker's `kafka:9092` listener expects — exactly as before these
   settings existed. Azure Event Hubs accepts only SASL over TLS, so the deployed
   service is given all four: `SaslSsl`, `Plain`, the literal username
