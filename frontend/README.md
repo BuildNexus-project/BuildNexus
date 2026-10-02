@@ -139,6 +139,30 @@ than a blank.
   digits. A phone's two-column grid otherwise made the tile wider than the screen. The
   tests cannot see this; a real browser can.
 
+## Notifications (US-26)
+
+A Client or Architect sees what has happened on their projects — a design
+approved, a milestone completed, a payment received — in a **Notifications**
+panel between the welcome banner and their dashboard on `/home`. That page is
+where a login lands, so a notification stored earlier is visible on the next
+login or dashboard load; nothing is pushed.
+
+- `src/components/dashboard/NotificationsPanel.tsx` is rendered by `HomePage` for
+  the roles in `NOTIFICATION_ROLES` only. The Project Manager and Admin are never
+  sent any, so they are neither shown the panel nor asked for the list. It sits in
+  the page rather than inside the role dashboards, whose tests pin the exact
+  slices each one requests.
+- `src/lib/notifications-api.ts` has the three calls, all under
+  `/api/projects/notifications`: the list, mark one read, mark all read. The type
+  is `UserNotification`, not `Notification`, which is the browser's own global.
+- The "N new" badge is the service's whole unread count, not the length of the
+  list it capped at 20.
+- Marking read asks the service and then reads the list again, so what is on
+  screen is the service's answer rather than a local guess. It has its own small
+  loading effect instead of `useDashboardSlice`, which reads once on mount.
+- Like a dashboard slice, a failed load names what failed and shows no figure —
+  never a reassuring zero — and leaves the rest of the dashboard working.
+
 ## New project (US-05)
 
 `/projects/new` is where a Client submits a construction project: name,

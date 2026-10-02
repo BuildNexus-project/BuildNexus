@@ -59,3 +59,36 @@ Chamath(IT24101842)
 - Flagged, not done: the `Base UI nativeButton` dev-only console warning on link-styled buttons is older than this story and was left alone after the last attempt to silence it broke eight tests
 
 ---
+
+## 2026-10-02
+
+### Present
+Chamath(IT24101842)
+
+### Progress
+- Chamath(IT24101842): US-26 (In-App Notifications from Events, SCRUM-39) completed — branch `feature/SCRUM-39-In-App-Notifications-from-Events-US-26` ready to merge into `develop`. A vertical slice in the Project Service and the frontend. Backend: a `notifications` table (migration 008) holding one row per person per event; a Kafka consumer that reads `design-events`, `construction-events` and `payment-events` and stores a notification for the project's Client and assigned Architect whenever a `DesignApproved`, `MilestoneCompleted` or `PaymentReceived` arrives; and three endpoints under `/api/projects/notifications` (list, mark one read, mark all read), open to Client and Architect only. Frontend: a typed client (`notifications-api.ts`) and a Notifications panel on `/home` with a "N new" badge, a link to each project and mark-read controls, shown to Clients and Architects. Both acceptance scenarios covered: the consumer stores per-user records, and a stored notification is visible the next time the person logs in or loads their dashboard. Unit tests for the event-to-notification mapping, consumer and endpoint tests over stand-ins, and database tests against real MySQL for every query.
+- Chamath(IT24101842): checked end to end against the running stack — created a project, assigned the Architect, published one event of each kind straight to Kafka and read the results back through the gateway as each role (200 for Client and Architect, 403 for Project Manager and Admin, 401 with no token, 404 for another person's notification) — then opened the page in real Chrome at desktop and phone width.
+
+### Challenges
+- The story says to notify "whoever is concerned", but an event names a project and never the people. The Client's id is on the project events; the Architect's id is on none of them. The only place both are recorded is the Project Service's own `projects` table, so the notifications live there rather than in a new service — a separate one could not have worked out who to tell without a change to the Project Service anyway, and would have meant a sixth service, database, pipeline and deployment. No other service was edited and the gateway needed no change.
+- The Project Service already reads `construction-events` and `payment-events` under consumer groups of its own. Joining one of them would have split a topic's partitions between two readers, each seeing only some messages, so the new consumer reads all three topics under a group of its own (`project-service-notifications`).
+- Kafka delivers at least once, so a restart replays events. The table's unique key on (event id, person) makes a replay store nothing new; the insert is `ON DUPLICATE KEY UPDATE` and not `INSERT IGNORE`, because `IGNORE` would also turn a foreign-key failure into a warning and a notification for a missing project would silently never exist.
+- The Payment Service refuses an Architect every one of its endpoints, so a payment amount in the notification text would show them a figure they may not otherwise see. The text says only that a payment was received.
+- The first run of the consumer replayed the whole history of the three topics and stored nothing: every old event was about a project earlier test runs had deleted. Those are logged and skipped rather than treated as errors, since a retry cannot create the project.
+- The existing dashboard tests assert the exact requests each dashboard makes, so a notifications request inside them would have broken those assertions. The panel is rendered by the home page instead, and the home page's own request assertions were updated for the Client and Architect.
+- The first version of the panel re-read its list by changing the identity of a callback, which made the linter warn about an unnecessary dependency. Rather than add a warning, or change the shared `useDashboardSlice` hook for a story-local reason, the panel has its own small loading effect that re-runs after a change.
+- Flagged, not fixed: the existing Construction, Payment and Project consumers never apply the Azure Event Hubs login settings that the publishers do, so they would fail to connect in Azure. The new consumer applies them; the others belong to other stories.
+- Looking at the finished page and the demo data it needed, the demo project and its notifications were removed by recorded id afterwards, leaving the development database as it was.
+
+### Decisions
+- The notifications live in the Project Service, the one service that knows a project's Client and Architect, and are written by a consumer and read through the service's own endpoints — nothing new is published and no cross-service lookup is made
+- Each event notifies the project's Client and its assigned Architect, the two roles the story names; the Project Manager and Admin are not told and are refused by the endpoints. The person who caused the event is told too — a Client who pays gets a receipt — because leaving them out would leave the Client with nothing for two of the three events
+- A notification is stored as finished text, stamped with when the event happened rather than when it was read, so it reads the same later and sorts correctly even for an event replayed after downtime
+- The list is capped at 20 and the unread count is the whole figure, so "12 new" stays true when 20 are shown
+- Marking read is explicit; showing the panel does not mark anything read. Marking one twice is a success that keeps the first time, and a notification that is not the caller's is a `404`, the same as one that does not exist
+- Every endpoint takes the person only from the token's `sub` — none takes an id — so nobody can read or dismiss another person's notification
+- A message too long for its column is cut to fit, because a row the database refuses would be retried forever and hold the partition
+- A new consumer group reads each topic from the start, so the first run also notifies for older events; accepted, since they are stamped with their real time and the list is capped
+- Open for the BA: should the person who caused an event be told about it (today they are), and should the Project Manager or Admin ever be told? Both are a one-line change in the mapper
+
+---

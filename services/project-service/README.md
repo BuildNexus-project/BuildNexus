@@ -229,6 +229,77 @@ All three are ADO.NET reads in `ProjectDashboardRepository`, kept apart from
 `IProjectRepository` the way the report query is. The Admin counts are a single
 `GROUP BY status`, so the cost does not grow with the pipeline.
 
+## In-app notifications (US-26)
+
+A Client or Architect is told, on their next visit, when a design is approved, a
+milestone is completed or a payment is received on one of their projects.
+Nothing is pushed: a consumer stores a row per person when the event happens, and
+the dashboard reads those rows the next time it loads.
+
+| Method | Route                                     | Allowed roles       |
+|--------|-------------------------------------------|---------------------|
+| GET    | `/api/projects/notifications`             | Client, Architect   |
+| POST   | `/api/projects/notifications/{id}/read`   | Client, Architect   |
+| POST   | `/api/projects/notifications/read-all`    | Client, Architect   |
+
+- **List** — `{ unreadCount, notifications[] }`, newest first, at most 20.
+  `unreadCount` is every unread notification the caller has, not the length of
+  the list, so "12 new" stays true when only 20 are shown. Each notification is
+  `{ id, projectId, eventType, message, occurredAt, isRead }`; `occurredAt` is
+  UTC with a `Z`.
+- **Mark read** — `204`, and repeating it is harmless (it keeps the time it was
+  first read). A notification that is not the caller's answers `404`, exactly as
+  one that does not exist does, so a guessed id confirms nothing.
+- **Mark all read** — `204`, even when nothing was unread.
+
+None takes a user id: whose notifications these are is always the token's own
+`sub`. Admin and Project Manager get `403` — nothing is ever stored for them.
+No gateway change is needed; `/api/projects/{**catch-all}` already covers it.
+
+### What is stored, and for whom
+
+`NotificationEventsConsumer` reads three topics owned by other services and turns
+three event types into notifications. Anything else on those topics is ignored.
+
+| Topic                 | `eventType`          | Message                                                  |
+|-----------------------|----------------------|----------------------------------------------------------|
+| `design-events`       | `DesignApproved`     | `Design "<name>" (version <n>) was approved on "<project>".` |
+| `construction-events` | `MilestoneCompleted` | `Milestone "<name>" was completed on "<project>".`       |
+| `payment-events`      | `PaymentReceived`    | `A payment was received on "<project>".`                 |
+
+An event names a project, never the people, and the people are in this service's
+own `projects` table — which is why the notifications live here and not in a
+service of their own. Each event notifies the project's **Client** and its
+**assigned Architect** (just the Client while no Architect is assigned). The
+Project Manager and Admin are not told. The person who caused the event is told
+too: a Client who pays gets a receipt.
+
+**The payment amount is deliberately not in the message.** The Architect is a
+recipient and the Payment Service refuses them every one of its endpoints, so a
+figure here would show them what they may not otherwise see.
+
+`NotificationMapper` holds those rules and is pure, so they are unit-tested with
+no database or broker; the consumer is the plumbing around it. Resilience follows
+the other consumers here: an unreadable message is logged and committed past, an
+unknown project is logged and skipped, and a database failure leaves the offset
+uncommitted so the message is retried.
+
+**Redelivery is safe.** `notifications` has a unique key on `(event_id, user_id)`
+— the id is the envelope's `eventId` — so Kafka delivering an event twice stores
+it once. The insert is `ON DUPLICATE KEY UPDATE`, not `INSERT IGNORE`: a missing
+project still fails loudly instead of being swallowed as a warning.
+
+**It reads under its own consumer group**, `<Kafka:ConsumerGroupId>-notifications`
+(`project-service-notifications` by default). Two readers sharing a group would
+split a topic's partitions between them, and each would see only some of the
+messages — and this service already reads `construction-events` and
+`payment-events` under groups of their own. A brand-new group reads each topic
+from the start, so the first run also notifies for older events; they are stamped
+with when the event happened, not when it was read.
+
+Schema: `Migrations/008_create_notifications_table.sql`. `user_id` is not a
+foreign key (the account lives in the User Service's database); `project_id` is.
+
 ## Events published (Kafka)
 
 This service publishes to one topic, `project-events` — one topic per publishing
@@ -325,8 +396,9 @@ cd ../project-service-tests && dotnet test
 repository and the event publisher are stood in for, so nothing has to be
 started first. The exceptions are tagged `[Trait("Category", "Integration")]`
 and need the real thing: `ProjectRepositoryDatabaseTests`,
-`ProjectPaymentStatusDatabaseTests`, `ProjectReportRepositoryDatabaseTests` and
-`ProjectDashboardRepositoryDatabaseTests` run SQL against `project-db`, and
+`ProjectPaymentStatusDatabaseTests`, `ProjectReportRepositoryDatabaseTests`,
+`ProjectDashboardRepositoryDatabaseTests` and
+`NotificationRepositoryDatabaseTests` run SQL against `project-db`, and
 `ProjectKafkaIntegrationTests` does a real round trip through the broker. Start
 them with `cd infra && docker compose up -d --wait project-db kafka`.
 
@@ -384,6 +456,20 @@ the SQL against `project-db` — ownership scoping, that completed and cancelled
 projects are left out, the newest-moved-first order, and the per-status count
 (asserted as a difference before and after, since the development database holds
 other projects).
+
+The US-26 notifications are covered in layers too. `NotificationMapperTests`
+pins which events count, who is told and what they are told — including that no
+amount reaches the message and that an unreadable event is refused — with no
+database or broker. `NotificationEventsConsumerTests` drives
+`HandleAsync` over stand-ins: each of the three events stores for the Client and
+the Architect, a redelivery stores nothing new, other events and unknown
+projects are left alone, and the commit-or-retry exception contract holds.
+`NotificationsEndpointTests` walks the acceptance criterion that a stored
+notification is visible on the person's next request, and that it is only theirs.
+`NotificationRepositoryDatabaseTests` proves the SQL against `project-db`: the
+unique key, the all-or-nothing batch, the foreign key and CHECK refusals, and
+that a second "mark read" keeps the first time. Each person in it is a fresh
+random id, so it shares the development database without reading anyone's rows.
 
 `MigrationScriptTests` checks the scripts are embedded (DbUp silently skips one
 that is not), sort into the order they must run in, do not switch database, and
