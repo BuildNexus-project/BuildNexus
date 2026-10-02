@@ -33,6 +33,7 @@ public class MigrationScriptTests
     [InlineData("004_create_project_outbox.sql")]
     [InlineData("005_index_projects_assigned_staff.sql")]
     [InlineData("006_add_cancelled_status.sql")]
+    [InlineData("008_create_notifications_table.sql")]
     public void The_known_scripts_are_present(string fileName)
     {
         Assert.Contains(ScriptNames(), name => name.EndsWith(fileName, StringComparison.Ordinal));

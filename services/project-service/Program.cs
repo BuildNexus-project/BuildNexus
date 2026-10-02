@@ -20,6 +20,7 @@ builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
 builder.Services.AddScoped<IProjectReportRepository, ProjectReportRepository>();
 builder.Services.AddScoped<IProjectDashboardRepository, ProjectDashboardRepository>();
+builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
