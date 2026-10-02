@@ -128,6 +128,16 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Admin], RolesFor("GetAdminDashboard"));
     }
 
+    [Fact]
+    public void Notifications_are_for_clients_and_architects_alone()
+    {
+        // US-26: the story is the Client's and the Architect's, and nothing is ever stored for
+        // anyone else. Pinned rather than left to whoever edits the controller next.
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Architect], RolesFor("ListNotifications"));
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Architect], RolesFor("MarkNotificationRead"));
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Architect], RolesFor("MarkAllNotificationsRead"));
+    }
+
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()

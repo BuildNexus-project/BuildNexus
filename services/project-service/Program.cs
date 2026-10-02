@@ -13,6 +13,9 @@ using Microsoft.OpenApi;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+// The clock, injected so a test can fix the moment a notification is marked read.
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)

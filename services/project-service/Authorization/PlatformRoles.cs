@@ -67,6 +67,13 @@ public static class PlatformRoles
     /// </remarks>
     public const string ClientOrAdmin = $"{Client},{Admin}";
 
+    /// <summary>
+    /// The two roles US-26's notifications are for. Admin and Project Manager are outside it on
+    /// purpose: the story is the Client's and the Architect's, and nothing is ever stored for
+    /// anyone else, so there is nothing for them to read.
+    /// </summary>
+    public const string ClientOrArchitect = $"{Client},{Architect}";
+
     /// <summary>All four names, for code that has to enumerate the roles.</summary>
     public static readonly IReadOnlyList<string> All = [Client, Architect, ProjectManager, Admin];
 }
