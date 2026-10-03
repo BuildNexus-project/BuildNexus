@@ -97,3 +97,30 @@ Chamath(IT24101842)
 - Open for the BA: should the person who caused an event be told about it (today they are), should the Project Manager or Admin ever be told, and is notifying for older events on a first deploy acceptable? The first two are a one-line change in the mapper
 
 ---
+
+## 2026-10-03
+
+### Present
+Karunathilaka R.C.D
+
+### Progress
+- Karunathilaka R.C.D: US-38 (Admin: Platform Oversight & Reports, SCRUM-51) completed — branch `feature/SCRUM-51-Admin-Platform-Oversight-and-Reports-US-38` ready to merge into `develop`. Backend (Project Service only): an Admin-only `GET /api/projects/oversight` returning every project with its status, assigned Architect and Project Manager (id and name), last-updated date and a stalled flag, plus the total, the stalled count and the stalled threshold; the stalled rule is its own small class (`ProjectStallPolicy`). Frontend: a typed client (`oversight-api.ts`) and an Admin-only page at `/admin/oversight` with a Reports section linking the Project, Construction & Payment and Design Approval reports and an All projects table with stalled rows highlighted. It has an "Oversight" entry in the Admin's header, footer and dashboard cards, a breadcrumb, and is now the Admin's first button on `/home`. All three acceptance scenarios covered, including the optional stalled highlighting. Unit tests on both sides: the stall rule, the endpoint over a stand-in repository, the role gate, the client and the page.
+
+### Challenges
+- The three reports and the Admin's project list already existed, so the story is mostly a new view over them. Reused `ListAllAsync` and the existing name lookup rather than adding SQL or a new service; no other service and no gateway route was touched, since `/api/projects/{**catch-all}` already covers the new path.
+- The existing project list (`GET /api/projects`) leaves out cancelled projects and carries no staff, so it could not be reused as-is for "all projects with assigned staff". A separate Admin-only endpoint was cleaner than adding flags to a list every role uses.
+- "Links to or embeds" the reports: linked, because each report is already a full page with its own filters and CSV export and embedding would have duplicated them. The links come from the Admin's navigation list, so the page and the dashboard cannot disagree about which reports exist.
+- Adding "Oversight" to the Admin navigation changed the expected list in existing tests (header, footer, dashboard cards, breadcrumbs, route guards); updated them to the new order. Changing the Admin's first button on `/home` from Users to Oversight was a one-line change in the home page that goes with the story.
+- The first version of the page test failed because the shared card title is not a heading by default; the page's two card titles are now real headings, as the dashboard panels already do.
+
+### Decisions
+- The oversight list is its own Admin-only endpoint in its own controller, like the report controller, because it reads across every project; the role is enforced by the service independently of the gateway
+- Cancelled projects are included, because this is the whole-platform view and the status says which are closed out
+- A name that cannot be looked up is `null` with the id kept, and the screen says "Assigned (name unavailable)" — a User Service outage never blocks the list and never makes an assigned slot look empty
+- Stalled means not `Completed`/`Cancelled` and not updated for 14 days or more; a `Pending` project nobody has picked up counts, because that is exactly the neglect the screen exists to surface. The service decides and sends the threshold, so the screen keeps no second copy of the rule
+- Stalled is shown with a badge in words as well as a tinted row, so it never depends on seeing the colour
+- Flagged, not done: the 14-day threshold is a constant, not configuration; "last updated" moves on status changes and staff assignment but not on design uploads or milestone progress, which live in other services' databases
+- Open for the BA: is 14 days the right threshold, and should "stalled" take design or construction activity into account (that would need the other services to report it)
+
+---
+

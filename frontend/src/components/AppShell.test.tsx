@@ -161,7 +161,10 @@ describe('the header navigation', () => {
     ['Client', ['Dashboard', 'Projects', 'New project', 'Progress', 'My costs']],
     ['Architect', ['Dashboard', 'Projects', 'Project team']],
     ['ProjectManager', ['Dashboard', 'Projects', 'Project team', 'Build & payment']],
-    ['Admin', ['Dashboard', 'Projects', 'Users', 'Project report', 'Design report', 'Build & payment']],
+    [
+      'Admin',
+      ['Dashboard', 'Projects', 'Oversight', 'Users', 'Project report', 'Design report', 'Build & payment'],
+    ],
   ])('shows a %s their own pages', (role, expected) => {
     signInAs(role)
 
@@ -255,6 +258,7 @@ describe('the footer', () => {
     expect(nav.getAllByRole('link').map((link) => link.textContent)).toEqual([
       'Dashboard',
       'Projects',
+      'Oversight',
       'Users',
       'Project report',
       'Design report',

@@ -24,6 +24,7 @@ describe('NAV_ITEMS', () => {
     '/my-costs': CLIENT_ROLES,
     '/directory': PROJECT_STAFF_ROLES,
     '/admin/users': ADMIN_ROLES,
+    '/admin/oversight': ADMIN_ROLES,
     '/admin/reports/design-approval': ADMIN_ROLES,
     '/admin/reports/project-status': ADMIN_ROLES,
     '/reports/construction-payment': REPORTING_ROLES,
@@ -141,6 +142,10 @@ describe('breadcrumbsFor', () => {
       'Project',
       'Design documents',
     ])
+  })
+
+  it('has a trail for the oversight screen', () => {
+    expect(breadcrumbsFor('/admin/oversight')).toEqual([{ label: 'Oversight' }])
   })
 
   it('leads to the combined report through Reports', () => {

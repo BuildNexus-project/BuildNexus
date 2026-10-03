@@ -191,6 +191,38 @@ is *applied*, not one that has been ticked and not yet applied, so the file is
 always the report on screen. No gateway change is needed: the existing
 `/api/projects/{**catch-all}` route already covers these paths.
 
+## Platform oversight (US-38)
+
+An Admin-only list of every project on the platform, for the one screen that
+also links to the reports.
+
+| Method | Route                     | Allowed roles |
+|--------|---------------------------|---------------|
+| GET    | `/api/projects/oversight` | Admin         |
+
+Each row carries the project's status, its assigned Architect and Project
+Manager (id and name), its `updatedAt` — the "last updated" date — and an
+`isStalled` flag. The envelope adds `totalProjects`, `stalledCount`,
+`generatedAt` and `stalledAfterDays`, so the screen quotes the service's
+threshold rather than keeping its own copy.
+
+- **Cancelled projects are included**, unlike `GET /api/projects`: this is the
+  whole-platform view, and the status says which are closed out.
+- **Names are looked up, never stored**, through the same `IUserNameResolver` the
+  project detail uses. A name that cannot be found is `null` with the id still
+  present, so a User Service outage never stops the list.
+- **Stalled** (`ProjectStallPolicy`): a project that is not `Completed` or
+  `Cancelled` and whose `updated_at` is 14 or more days old. A `Pending` project
+  nobody has picked up counts — that is the neglect the screen is for. The rule
+  lives in one class and every row is judged at one instant, so the flags and
+  the count cannot disagree. The 14 days is a constant, not configuration; the
+  BA has not been asked yet whether it should be.
+- It reuses the existing `ListAllAsync` query (no new SQL) and lives in its own
+  `OversightController`, like `ReportsController`, because it reads across every
+  project. No gateway change: `/api/projects/{**catch-all}` already covers it.
+
+The React screen is `/admin/oversight`.
+
 ## Role dashboards (US-21)
 
 The Project Service's slice of each role's dashboard — the part only it knows:
@@ -471,6 +503,13 @@ boundaries — is only provable against the real engine, so
 `ProjectReportRepositoryDatabaseTests` runs against `project-db` (the same
 integration category as `ProjectRepositoryDatabaseTests`): start it first with
 `cd infra && docker compose up -d --wait project-db`.
+
+The US-38 oversight list is covered by `ProjectStallPolicyTests` (every open
+status, the exact 14-day edge, finished projects never stalled) and
+`ProjectOversightEndpointTests` (every project listed, cancelled kept, staff by
+id and name, a name that cannot be found, one lookup per person, an empty
+platform, the stalled flags and count) over a stand-in repository, with no
+database. `EndpointRoleDeclarationTests` pins it to Admin only.
 
 The US-21 dashboards are covered the same way. `ProjectDashboardEndpointTests`
 walks each role's dashboard over a stand-in query: what comes back, that an empty
