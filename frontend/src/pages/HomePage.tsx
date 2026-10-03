@@ -25,7 +25,7 @@ const PRIMARY_ACTION: Record<Role, string> = {
   Client: '/projects/new',
   Architect: '/projects',
   ProjectManager: '/projects',
-  Admin: '/admin/users',
+  Admin: '/admin/oversight',
 }
 
 /**

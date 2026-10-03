@@ -14,6 +14,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { MyProjectCostsPage } from '@/pages/MyProjectCostsPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
+import { PlatformOversightPage } from '@/pages/PlatformOversightPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
@@ -154,6 +155,16 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={ADMIN_ROLES}>
               <AdminUsersPage />
+            </RoleRoute>
+          }
+        />
+        {/* Admin only, matching the Project Service's own gate on the system-wide list.
+            The one place an Admin sees every project and opens the three reports from. */}
+        <Route
+          path="/admin/oversight"
+          element={
+            <RoleRoute allowedRoles={ADMIN_ROLES}>
+              <PlatformOversightPage />
             </RoleRoute>
           }
         />

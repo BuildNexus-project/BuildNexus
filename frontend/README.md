@@ -37,6 +37,7 @@ The User Service must be running — see `infra/README.md`.
 | `/projects/new` | Client                                            |
 | `/directory`   | Architect, Project Manager                         |
 | `/admin/users` | Admin                                              |
+| `/admin/oversight` | Admin — every project, who is on it, which have stalled, and links to the three reports |
 
 The access token is kept in `localStorage` under `buildnexus.accessToken` and
 read back on load, so a refresh keeps the session. It is discarded if it is
@@ -55,6 +56,28 @@ happened. The home page offers each link only to the roles allowed to open it.
 None of that is the boundary either. Each page also handles the `403` the
 service returns and shows the reason it gives, so bypassing the guard changes
 nothing about what a user can actually read.
+
+## Platform oversight (US-38)
+
+`/admin/oversight` is the Admin's single entry point for platform health, and the
+Admin's first button on `/home`. It has two parts:
+
+- **Reports** — links to the project status, construction & payment and design
+  approval reports. They are taken from the Admin's own navigation, so a report
+  added there appears here too and one the Admin cannot open is never offered.
+  Linked rather than embedded: each already exists as a full page with its own
+  filters and export, and an embed would duplicate them.
+- **All projects** — one table from `GET /api/projects/oversight`: status,
+  Architect, Project Manager, last-updated date. Cancelled projects are listed.
+  A person who is assigned but whose name could not be looked up reads
+  "Assigned (name unavailable)" rather than looking like an empty slot.
+
+Stalled projects get a tinted row and a "Stalled · N days" badge — in words as
+well as colour. The service decides which are stalled and says how many days that
+means; the page only shows it. "Show only stalled projects" narrows the list.
+
+The list and the reports load independently of each other: if the projects cannot
+be loaded the reports are still offered.
 
 ## Landing page
 
