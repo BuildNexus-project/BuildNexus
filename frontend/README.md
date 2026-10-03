@@ -139,6 +139,59 @@ than a blank.
   digits. A phone's two-column grid otherwise made the tile wider than the screen. The
   tests cannot see this; a real browser can.
 
+## Notifications (US-26)
+
+A Client or Architect sees what has happened on their projects — a design
+approved, a milestone completed, a payment received — in a **Notifications**
+panel between the welcome banner and their dashboard on `/home`. That page is
+where a login lands, so a notification stored earlier is visible on the next
+login or dashboard load; nothing is pushed.
+
+- `src/components/dashboard/NotificationsPanel.tsx` is rendered by `HomePage` for
+  the roles in `NOTIFICATION_ROLES` only. The Project Manager and Admin are never
+  sent any, so they are neither shown the panel nor asked for the list. It sits in
+  the page rather than inside the role dashboards, whose tests pin the exact
+  slices each one requests.
+- `src/lib/notifications-api.ts` has the three calls, all under
+  `/api/projects/notifications`: the list, mark one read, mark all read. The type
+  is `UserNotification`, not `Notification`, which is the browser's own global.
+- The "N new" badge is the service's whole unread count, not the length of the
+  page it showed.
+- Marking read asks the service and then reads the list again, so what is on
+  screen is the service's answer rather than a local guess. It has its own small
+  loading effect instead of `useDashboardSlice`, which reads once on mount.
+- Like a dashboard slice, a failed load names what failed and shows no figure —
+  never a reassuring zero — and leaves the rest of the dashboard working.
+
+**The bell.** `NotificationBell` sits in the header of a Client or Architect on
+every page, with the unread count (capped at "99+") and a link to the history. It
+shows no badge for zero, and none before the first answer or if there never is
+one — no badge is never a claim that nothing is new. A failed later read keeps the
+last count rather than guessing. The Project Manager and Admin get no bell and are
+never asked for a count. It is not one of the `NAV_ITEMS`: it is not a page in a
+role's own workspace list, so the nav tests' guard map is unchanged.
+
+**The history.** `/notifications` (`NotificationsPage`, guarded by
+`NOTIFICATION_ROLES`) lists every notification newest first, 20 at a time, with
+"Load more", Mark as read and Mark all as read. It is reached from the bell and
+from "View all" on the panel. Unlike the panel it updates the rows on screen
+instead of re-reading: a re-read of the first page would throw away the pages
+already loaded. A notification that arrives while paging pushes the rest down
+one, so the next page can begin with a row already shown — those are skipped by id.
+The panel and the page share `NotificationRow`, so one notification looks the same
+in both.
+
+**Staying current.** Nothing is pushed — there is no push transport, for the
+reason on `useAutoRefresh` — so the bell and the panel re-read on that same
+polling: every 30 seconds while the tab is visible, and straight away when it
+becomes visible again. `useUnreadNotificationCount` asks for a page of one, since
+the unread figure in the answer is the whole count whatever the page size. When the
+panel or the history page marks something read it calls
+`announceNotificationsChanged()` (`notifications-sync.ts`), a window event the bell
+listens for, so the badge does not lag a poll behind. The history page itself does
+not poll: it is a record you opened, and re-reading it would reshuffle the pages
+under the reader.
+
 ## New project (US-05)
 
 `/projects/new` is where a Client submits a construction project: name,

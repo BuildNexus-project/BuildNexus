@@ -55,6 +55,9 @@ public class ProjectDatabaseFixture : IAsyncLifetime
     /// <summary>The role-dashboard queries over the same database (US-21).</summary>
     public ProjectDashboardRepository DashboardRepository { get; private set; } = null!;
 
+    /// <summary>The per-person notifications over the same database (US-26).</summary>
+    public NotificationRepository Notifications { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         // The production migration path, not a hand-written schema: DbUp records
@@ -77,15 +80,17 @@ public class ProjectDatabaseFixture : IAsyncLifetime
         Outbox = new OutboxRepository(connectionFactory);
         ReportRepository = new ProjectReportRepository(connectionFactory);
         DashboardRepository = new ProjectDashboardRepository(connectionFactory);
+        Notifications = new NotificationRepository(connectionFactory);
 
         return Task.CompletedTask;
     }
 
     /// <summary>
     /// Removes the projects these tests created, leaving the development
-    /// database as it was found. The history and outbox rows go with them —
-    /// <c>fk_project_status_history_project</c> and
-    /// <c>fk_project_outbox_events_project</c> both cascade on delete.
+    /// database as it was found. The history, outbox and notification rows go
+    /// with them — <c>fk_project_status_history_project</c>,
+    /// <c>fk_project_outbox_events_project</c> and
+    /// <c>fk_notifications_project</c> all cascade on delete.
     /// </summary>
     public async Task DisposeAsync()
     {

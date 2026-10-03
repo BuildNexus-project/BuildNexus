@@ -123,7 +123,14 @@ function renderPage() {
   )
 }
 
-const reportCalls = (calls: Call[]) => calls.filter((call) => !call.path.includes('/export'))
+/**
+ * The calls that are about the report. Not the export, and not the header's own request for a
+ * Client's or Architect's unread notification count, which any page rendered in the shell makes.
+ */
+const reportCalls = (calls: Call[]) =>
+  calls.filter(
+    (call) => !call.path.includes('/export') && !call.path.startsWith('/api/projects/notifications'),
+  )
 
 /** The `download` name of every anchor the page clicked, in order. */
 let savedAs: string[] = []

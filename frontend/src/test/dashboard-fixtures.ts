@@ -10,6 +10,7 @@ import type {
   DashboardProject,
   ProjectManagerConstructionDashboard,
 } from '@/lib/dashboard-api'
+import type { NotificationList } from '@/lib/notifications-api'
 import { apiResponse } from '@/test/fake-fetch'
 
 /*
@@ -292,4 +293,53 @@ export function adminRoutes(
     [ADMIN_PATHS.users]: overrides.users ?? apiResponse(200, adminUsers()),
     [ADMIN_PATHS.projects]: overrides.projects ?? apiResponse(200, adminProjects()),
   }
+}
+
+// ------------------------------------------------------------------ Notifications ----
+
+export const NOTIFICATIONS_PATH = '/api/projects/notifications'
+
+/**
+ * Three notifications for the villa, the newest first and the oldest already read — one of each
+ * kind the Project Service sends. `unreadCount` is the service's whole figure, which is larger
+ * than the two unread ones listed when `backlog` says so.
+ */
+export function notificationList(backlog = 0): NotificationList {
+  return {
+    unreadCount: 2 + backlog,
+    hasMore: false,
+    notifications: [
+      {
+        id: 'aaaaaaaa-0000-4000-8000-000000000003',
+        projectId: VILLA_ID,
+        eventType: 'PaymentReceived',
+        message: 'A payment was received on "Beachfront villa".',
+        occurredAt: '2026-09-20T11:00:00.000Z',
+        isRead: false,
+      },
+      {
+        id: 'aaaaaaaa-0000-4000-8000-000000000002',
+        projectId: VILLA_ID,
+        eventType: 'MilestoneCompleted',
+        message: 'Milestone "Foundation" was completed on "Beachfront villa".',
+        occurredAt: '2026-09-19T08:30:00.000Z',
+        isRead: false,
+      },
+      {
+        id: 'aaaaaaaa-0000-4000-8000-000000000001',
+        projectId: VILLA_ID,
+        eventType: 'DesignApproved',
+        message: 'Design "Ground floor plan" (version 2) was approved on "Beachfront villa".',
+        occurredAt: '2026-09-18T15:45:00.000Z',
+        isRead: true,
+      },
+    ],
+  }
+}
+
+/** The notifications endpoint answering 200 with the fixture above. */
+export function notificationRoutes(
+  answer: Response | Error = apiResponse(200, notificationList()),
+): Record<string, Response | Error> {
+  return { [NOTIFICATIONS_PATH]: answer }
 }

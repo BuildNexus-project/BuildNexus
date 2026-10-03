@@ -13,6 +13,9 @@ using Microsoft.OpenApi;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+// The clock, injected so a test can fix the moment a notification is marked read.
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
@@ -20,6 +23,7 @@ builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
 builder.Services.AddScoped<IProjectReportRepository, ProjectReportRepository>();
 builder.Services.AddScoped<IProjectDashboardRepository, ProjectDashboardRepository>();
+builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
@@ -42,6 +46,11 @@ builder.Services.AddHostedService<ConstructionEventsConsumer>();
 // (US-24). The money stays in Payment Service; this keeps one derived fact locally so a project
 // can be read without asking that service anything. Nothing on any request path waits on it.
 builder.Services.AddHostedService<PaymentEventsConsumer>();
+
+// Reads design-events, construction-events and payment-events under a group of its own and stores
+// an in-app notification for the Client and Architect each DesignApproved, MilestoneCompleted or
+// PaymentReceived concerns (US-26). Publishes nothing, and nothing on any request path waits on it.
+builder.Services.AddHostedService<NotificationEventsConsumer>();
 
 // The User Service, asked over HTTP — with the Admin's own token — what role an
 // account holds before it is assigned to a project. Its address is validated at

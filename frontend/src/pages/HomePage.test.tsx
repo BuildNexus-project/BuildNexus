@@ -9,10 +9,12 @@ import {
   ADMIN_PATHS,
   ARCHITECT_PATHS,
   CLIENT_PATHS,
+  NOTIFICATIONS_PATH,
   PM_PATHS,
   adminRoutes,
   architectRoutes,
   clientRoutes,
+  notificationRoutes,
   pmRoutes,
 } from '@/test/dashboard-fixtures'
 import { signInAs } from '@/test/sign-in'
@@ -31,6 +33,7 @@ function renderPage(
 ): RecordedRequest[] {
   signInAs(role, fullName)
   const requests = stubRoutes({
+    ...notificationRoutes(),
     ...clientRoutes(),
     ...architectRoutes(),
     ...pmRoutes(),
@@ -104,8 +107,10 @@ describe('HomePage', () => {
 
 /** What each role's dashboard is made of: its heading, and every slice it asks a service for. */
 const DASHBOARDS: [Role, string, string[]][] = [
-  ['Client', 'Your active projects', Object.values(CLIENT_PATHS)],
-  ['Architect', 'Revisions to make', Object.values(ARCHITECT_PATHS)],
+  // The Client and the Architect also read their notifications (US-26); the other two are
+  // never stored any, so they are not asked.
+  ['Client', 'Your active projects', [...Object.values(CLIENT_PATHS), NOTIFICATIONS_PATH]],
+  ['Architect', 'Revisions to make', [...Object.values(ARCHITECT_PATHS), NOTIFICATIONS_PATH]],
   // The Project Manager's names come from the project list, the one they may read.
   ['ProjectManager', 'Active construction', Object.values(PM_PATHS)],
   ['Admin', 'System-wide counts', Object.values(ADMIN_PATHS)],
@@ -161,5 +166,49 @@ describe('HomePage role dashboards', () => {
     // The welcome and the way to every page are unaffected by a dashboard that failed.
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Welcome back')
     expect(screen.getByText('Where would you like to go?')).toBeInTheDocument()
+  })
+})
+
+describe('HomePage notifications (US-26)', () => {
+  it.each(['Client', 'Architect'] as const)(
+    'shows a %s what was stored for them as soon as the dashboard loads',
+    async (role) => {
+      renderPage(role)
+
+      // Nothing was clicked: stored earlier, visible on this load.
+      expect(await screen.findByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
+      expect(await screen.findByText('A payment was received on "Beachfront villa".')).toBeInTheDocument()
+      expect(screen.getByText('2 new')).toBeInTheDocument()
+    },
+  )
+
+  it.each(['ProjectManager', 'Admin'] as const)(
+    'shows a %s no notifications panel, since nothing is stored for them',
+    async (role) => {
+      const requests = renderPage(role)
+
+      await screen.findByRole('heading', { name: 'Where would you like to go?' })
+
+      expect(screen.queryByRole('heading', { name: 'Notifications' })).not.toBeInTheDocument()
+      expect(requests.map((request) => request.path)).not.toContain(NOTIFICATIONS_PATH)
+    },
+  )
+
+  it('puts the notifications above the dashboard, where a returning user looks first', async () => {
+    renderPage('Client')
+
+    const notifications = await screen.findByRole('heading', { name: 'Notifications' })
+    const projects = await screen.findByRole('heading', { name: 'Your projects at a glance' })
+
+    expect(
+      notifications.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('leaves the dashboard working when the notifications cannot be loaded', async () => {
+    renderPage('Client', { [NOTIFICATIONS_PATH]: apiResponse(502, { title: 'Bad Gateway' }) })
+
+    expect(await screen.findByText('Your notifications could not be loaded right now.')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Beachfront villa' })).toBeInTheDocument()
   })
 })
