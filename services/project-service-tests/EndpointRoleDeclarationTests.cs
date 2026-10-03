@@ -117,6 +117,15 @@ public class EndpointRoleDeclarationTests
     }
 
     [Fact]
+    public void The_platform_oversight_list_is_the_admins_alone()
+    {
+        // US-38: every project on the platform at once is an Admin's view, the
+        // same as the report it links to. Pinned rather than left to whoever
+        // edits the controller next.
+        Assert.Equal([PlatformRoles.Admin], RolesFor("GetOversight"));
+    }
+
+    [Fact]
     public void Each_dashboard_endpoint_is_gated_to_exactly_its_own_role()
     {
         // US-21: a dashboard is the view of one role's own work, so each shape is
