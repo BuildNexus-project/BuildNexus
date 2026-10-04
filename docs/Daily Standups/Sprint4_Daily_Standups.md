@@ -124,3 +124,31 @@ Karunathilaka R.C.D
 
 ---
 
+## 2026-10-04
+
+### Present
+Chamath(IT24101842)
+
+### Progress
+- Chamath(IT24101842): US-36 (Project & API Documentation, SCRUM-49) completed — branch `feature/SCRUM-49-Project-and-API-Documentation-US-36` ready to merge into `develop`, apart from the Selenium section noted below. Backend: every service's Swagger now marks only the endpoints that need a token (login, register and reset no longer show a padlock), states each endpoint's allowed roles and its `401`/`403` responses, and shows the controllers' own `///` descriptions; the User Service also documents its `/api/internal` API-key scheme. The setup moved out of each `Program.cs` into an `ApiDocs` folder (`SwaggerSetup`, `AuthorizationOperationFilter`) in all five services, with a database-free `SwaggerDocumentTests` per service. Documentation: the root `README` now covers full-stack setup, ports, the seeded Admin, Swagger links for all five services and how to authorize in Swagger; `docs/architecture.md` has a diagram of the local stack and a separate one of what is deployed on Azure, plus the request path and a topic-by-topic event table; `docs/test-documentation.md` consolidates test counts, coverage, JMeter results and E2E status. Stale statements in the infra, gateway and frontend READMEs, the JMeter notes and the runbook were corrected. All three acceptance scenarios covered, with one gap: Scenario 3 mentions Selenium E2E scenarios, which are delivered by a separate story, so that section of the test documentation is a marked placeholder.
+
+### Challenges
+- Swagger was already wired into every service, so the real work was making it meet the acceptance criteria. The one global Bearer requirement marked every endpoint as locked, including login and register, and the controllers' XML comments were never loaded, so most written descriptions never reached the page. Replaced the global requirement with a filter that reads the same `[AllowAnonymous]`/`[Authorize]` metadata the authorization middleware reads.
+- The first test run showed the roles line missing from every description: Swashbuckle's XML-comments step overwrites the operation description, and it ran after the filter. Registering the comments before the filter, so the filter appends, fixed it. Worth knowing for anyone adding another filter.
+- Turning on XML documentation made four services warn about partly documented parameters (CS1573) and one about a stale `<see cref>` in the Payment Service (copied from the Construction Service, naming a class Payment does not have). Silenced the first, as the goal is richer API docs and not a comment on every parameter; fixed the second, since it was wrong.
+- Swashbuckle is configured per service and the services share no code, so the filter and setup are copied into each rather than shared. The User Service's copy is the only one that uses the internal-key branch.
+- Measured real coverage rather than quoting CI: unit tests alone reach 47.1% of backend lines but unit plus integration reach 82.1%, because the data layer is SQL that is only exercised against real MySQL. Both figures are in the test documentation with the reason, so the lower one is not read as a failure.
+- The frontend coverage run had one timeout (a 5-second limit hit at 5.9 s) when it overlapped with the backend run on the same machine; a quiet re-run passed 796 of 796. Documented as a slow test, not fixed here.
+- The existing docs said "only the User Service exists" in two places and the performance notes said the gateway was not deployed. All three predate later stories; corrected, with dated notes on the recorded results rather than rewriting them.
+
+### Decisions
+- Swagger stays Development-only. The runbook turns it off in Azure on purpose, and the README says where to see it (the local stack); changing that is a deployment decision, not a documentation one
+- The gateway has no Swagger page, because it has no endpoints of its own; the README says so rather than adding a page that would document nothing
+- The architecture is drawn twice, local and Azure, because they differ (no Construction or Payment Service on Azure, Event Hubs instead of Kafka, one shared MySQL server) and a single diagram would be wrong for one of them
+- The test documentation uses the combined coverage figure as the headline and shows unit-only beside it, with the reason, instead of picking whichever number looks better
+- The JMeter results are transcribed from the committed results files with their dates, not re-run; they predate the gateway's deployment and the document says so
+- Selenium E2E is left as a marked placeholder with an empty scenarios table, not filled with invented results
+- Flagged, not done: the per-service READMEs' endpoint tables are out of date (Swagger is now the reference and the README links to it); the Application Insights gap that stops the Azure design-upload `500` being traced; the near-limit frontend test
+- Open for the BA: should Swagger be switched on in Azure for a marker, and where should the Selenium results go in the test documentation when that story merges
+
+---

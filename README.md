@@ -121,6 +121,8 @@ Every endpoint declares the roles that may call it. The gateway checks only that
 
 ## Testing
 
+The consolidated summary — test counts, coverage per service, JMeter results and the state of end-to-end testing — is in [docs/test-documentation.md](docs/test-documentation.md). What follows is how the tests are set up.
+
 Two frameworks, standardized across the whole codebase (US-29):
 
 - **Backend — xUnit.** Every .NET service that has any code has a matching `*-service-tests` project beside it (`services/user-service-tests`, `services/project-service-tests`, `services/design-service-tests`, `services/construction-service-tests`, `services/payment-service-tests`) plus `api-gateway-tests`. Run one with `dotnet test services/<name>/<Project>.csproj`; CI runs all of them on every push.
