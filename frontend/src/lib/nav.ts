@@ -5,6 +5,7 @@ import {
   FolderKanban,
   HardHat,
   LayoutDashboard,
+  Radar,
   SquarePlus,
   UserCog,
   Users,
@@ -73,6 +74,13 @@ const USERS: NavItem = {
   icon: UserCog,
 }
 
+const OVERSIGHT: NavItem = {
+  to: '/admin/oversight',
+  label: 'Oversight',
+  description: 'Every project on the platform, who is on it and which have stalled — with the reports.',
+  icon: Radar,
+}
+
 const PROJECT_REPORT: NavItem = {
   to: '/admin/reports/project-status',
   label: 'Project report',
@@ -105,7 +113,7 @@ export const NAV_ITEMS: Record<Role, readonly NavItem[]> = {
   Client: [PROJECTS, NEW_PROJECT, PROGRESS, MY_COSTS],
   Architect: [PROJECTS, TEAM],
   ProjectManager: [PROJECTS, TEAM, BUILD_PAYMENT_REPORT],
-  Admin: [PROJECTS, USERS, PROJECT_REPORT, DESIGN_REPORT, BUILD_PAYMENT_REPORT],
+  Admin: [PROJECTS, OVERSIGHT, USERS, PROJECT_REPORT, DESIGN_REPORT, BUILD_PAYMENT_REPORT],
 }
 
 /** What a role calls its own corner of the app, shown beside the breadcrumbs. */
@@ -172,6 +180,7 @@ const TRAILS: ReadonlyArray<{ path: string; trail: readonly Crumb[] }> = [
   { path: '/notifications', trail: [{ label: 'Notifications' }] },
   { path: '/profile', trail: [{ label: 'Profile' }] },
   { path: '/admin/users', trail: [{ label: 'Users' }] },
+  { path: '/admin/oversight', trail: [{ label: 'Oversight' }] },
   {
     path: '/reports/construction-payment',
     trail: [{ label: 'Reports' }, { label: 'Construction & payment' }],

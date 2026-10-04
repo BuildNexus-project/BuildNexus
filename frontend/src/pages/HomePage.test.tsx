@@ -84,7 +84,7 @@ describe('HomePage', () => {
     ['Client', 'New project', '/projects/new'],
     ['Architect', 'Projects', '/projects'],
     ['ProjectManager', 'Projects', '/projects'],
-    ['Admin', 'Users', '/admin/users'],
+    ['Admin', 'Oversight', '/admin/oversight'],
   ])('leads a %s to %s', (role, label, to) => {
     renderPage(role)
 
@@ -97,7 +97,10 @@ describe('HomePage', () => {
     ['Client', ['Projects', 'New project', 'Progress', 'My costs', 'Your profile']],
     ['Architect', ['Projects', 'Project team', 'Your profile']],
     ['ProjectManager', ['Projects', 'Project team', 'Build & payment', 'Your profile']],
-    ['Admin', ['Projects', 'Users', 'Project report', 'Design report', 'Build & payment', 'Your profile']],
+    [
+      'Admin',
+      ['Projects', 'Oversight', 'Users', 'Project report', 'Design report', 'Build & payment', 'Your profile'],
+    ],
   ])('offers a %s their own pages and the profile', (role, expected) => {
     renderPage(role)
 
