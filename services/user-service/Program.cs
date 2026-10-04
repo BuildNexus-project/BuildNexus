@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
+using BuildNexus.UserService.ApiDocs;
 using BuildNexus.UserService.Authorization;
 using BuildNexus.UserService.Configuration;
 using BuildNexus.UserService.Data;
@@ -9,7 +10,6 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,7 +27,6 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["APPLICATIONINSIGHTS_CONNEC
 }
 
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
@@ -150,25 +149,7 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "BuildNexus User Service", Version = "v1" });
-
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Paste the access token returned by /api/auth/login."
-    });
-
-    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
-    {
-        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
-    });
-});
+builder.Services.AddServiceSwagger();
 
 // Local development only: guarantees an Admin exists to log in with, since
 // self-service registration refuses that role. Real environments get their

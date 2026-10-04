@@ -7,6 +7,11 @@
     <RootNamespace>BuildNexus.UserService</RootNamespace>
     <AssemblyName>BuildNexus.UserService</AssemblyName>
     <UserSecretsId>2da9d1bf-a1e7-4bc5-8294-aebdd1bf0e9b</UserSecretsId>
+    <!-- Feeds the /// comments on the controllers into Swagger UI. CS1591 (missing
+         comment on a public member) is silenced: the goal is richer API docs, not a
+         comment on every public type. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
