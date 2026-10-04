@@ -62,8 +62,8 @@ public sealed class ConstructionEventsConsumer : BackgroundService
     /// appended.
     /// </summary>
     /// <remarks>
-    /// Deliberately <em>not</em> the bare <c>Kafka:ConsumerGroupId</c> that
-    /// <see cref="DesignEventsConsumer"/> uses. Every member of a Kafka consumer
+    /// Deliberately <em>not</em> the bare <c>Kafka:ConsumerGroupId</c>, just as
+    /// <see cref="ProjectEventsConsumer"/> appends its own topic. Every member of a Kafka consumer
     /// group is expected to subscribe to the same topics; two members of one
     /// group subscribing to different topics makes each rebalance revoke the
     /// other's partitions, and the two consumers would take turns being
