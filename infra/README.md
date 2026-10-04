@@ -13,12 +13,25 @@ cp .env.example .env    # then fill in the values
 docker compose up -d
 ```
 
-| Service        | Container                | Host address            |
-|----------------|--------------------------|-------------------------|
-| API Gateway    | buildnexus-api-gateway   | http://localhost:5000   |
-| User Service   | buildnexus-user-service  | http://localhost:5001   |
-| User database  | buildnexus-user-db       | localhost:3306 (MySQL)  |
-| Mail catcher   | buildnexus-mailpit       | http://localhost:8025   |
+| Service              | Container                        | Host address                    |
+|----------------------|----------------------------------|---------------------------------|
+| API Gateway          | buildnexus-api-gateway           | http://localhost:5000           |
+| User Service         | buildnexus-user-service          | http://localhost:5001           |
+| Project Service      | buildnexus-project-service       | http://localhost:5002           |
+| Design Service       | buildnexus-design-service        | http://localhost:5003           |
+| Construction Service | buildnexus-construction-service  | http://localhost:5004           |
+| Payment Service      | buildnexus-payment-service       | http://localhost:5005           |
+| User database        | buildnexus-user-db               | localhost:3306 (MySQL)          |
+| Project database     | buildnexus-project-db            | localhost:3307 (MySQL)          |
+| Design database      | buildnexus-design-db             | localhost:3309 (MySQL)          |
+| Construction database| buildnexus-construction-db       | localhost:3310 (MySQL)          |
+| Payment database     | buildnexus-payment-db            | localhost:3311 (MySQL)          |
+| Kafka                | buildnexus-kafka                 | localhost:29092 (from the host) |
+| Mail catcher         | buildnexus-mailpit               | http://localhost:8025           |
+
+Each service serves Swagger UI at `/swagger` on its own port while it runs in
+Development, which compose sets. The root [README](../README.md#api-documentation-swagger-ui)
+lists the links. For how the pieces connect, see [docs/architecture.md](../docs/architecture.md).
 
 The gateway is the entry point: the frontend calls <http://localhost:5000> and
 nothing else, and the Vite dev server proxies `/api` there. The service port
@@ -46,8 +59,9 @@ whole system — none of the five services repeats it.
 Which path prefix reaches which service is the gateway's own routing table; see
 `api-gateway/README.md`. The addresses in that file are the local `dotnet run`
 ports, and `docker-compose.yml` overrides each one to a compose service name.
-Only the User Service exists so far, so the other four routes answer 502 until
-the stories that build them land.
+All five services are in this stack, so every route is live locally. On Azure
+only the User, Project and Design Services are deployed, so there the
+construction and payment routes answer 502 — see [RUNBOOK.md](RUNBOOK.md).
 
 ## Reading the emails the stack sends (US-04)
 

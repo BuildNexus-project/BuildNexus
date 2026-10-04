@@ -46,8 +46,13 @@ A path matching no route is answered by the gateway — 404 for an authenticated
 caller, 401 for an anonymous one, since the deny-by-default fallback policy also
 covers requests that match no route. Nothing unrouted reaches a service.
 
-Only the User Service exists so far. The other four routes are configured and
-correct, and will answer 502 until the stories that build those services land.
+All five services exist and every route is live in the local stack. In the Azure
+deployment only the User, Project and Design clusters have an address; the
+`construction` and `payment` routes answer 502 there until those services are
+deployed (see `infra/RUNBOOK.md`).
+
+The gateway has no controllers, so it has no Swagger page. Each service's
+Swagger UI is on its own port — the links are in the root `README.md`.
 
 ## Configuration
 

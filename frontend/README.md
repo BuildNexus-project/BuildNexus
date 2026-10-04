@@ -16,12 +16,14 @@ npm install
 npm run dev
 ```
 
-Serves on `http://localhost:5173`. Requests to `/api/*` are proxied to the User
-Service on `http://localhost:5001`, so the browser makes same-origin calls and
-no CORS configuration is needed in development. When the YARP gateway lands,
-change that one proxy target in `vite.config.ts`.
+Serves on `http://localhost:5173`. Requests to `/api/*` are proxied to the API
+Gateway on `http://localhost:5000` (the one target in `vite.config.ts`), so the
+browser makes same-origin calls and no CORS configuration is needed in
+development. The deployed build instead calls the gateway directly, at the
+address in `VITE_GATEWAY_URL`.
 
-The User Service must be running — see `infra/README.md`.
+The backend stack must be running — see `infra/README.md`, or the root
+`README.md` for the whole run-through.
 
 ## Routes
 
