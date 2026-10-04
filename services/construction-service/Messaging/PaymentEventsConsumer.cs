@@ -72,19 +72,7 @@ public sealed class PaymentEventsConsumer : BackgroundService
         // startup until the first await, and the consume loop is a long-running one.
         await Task.Yield();
 
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = GroupId,
-            // Commit explicitly, only after a message is handled — so a crash
-            // mid-handling re-delivers rather than skips.
-            EnableAutoCommit = false,
-            // A brand-new group reads the topic from the start, so settlements
-            // published before this service first ran are not missed. That matters
-            // more here than elsewhere: a settlement missed is a project that can
-            // never be handed over.
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        };
+        var config = KafkaBrokerSettings.BuildConsumerConfig(_options, GroupId);
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(Topic);

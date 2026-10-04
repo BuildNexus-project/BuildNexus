@@ -487,6 +487,7 @@ jobs:
       user-service: ${{ steps.filter.outputs.user-service }}
       project-service: ${{ steps.filter.outputs.project-service }}
       design-service: ${{ steps.filter.outputs.design-service }}
+      construction-service: ${{ steps.filter.outputs.construction-service }}
       api-gateway: ${{ steps.filter.outputs.api-gateway }}
     steps:
       - uses: actions/checkout@v4
@@ -508,6 +509,8 @@ jobs:
               - 'services/project-service/**'
             design-service:
               - 'services/design-service/**'
+            construction-service:
+              - 'services/construction-service/**'
             api-gateway:
               - 'api-gateway/**'
 
@@ -731,6 +734,66 @@ jobs:
             sleep 15
           done
           echo "::error::$url never returned 200. Check the App Service log stream — the usual causes are a startup failure against MySQL (the design_service user or its grant) or a missing or half-set Kafka__*, Jwt__*, Services__*, InternalService__ApiKey or Email__FromAddress application setting."
+          exit 1
+
+  deploy-construction-service:
+    name: Deploy Construction Service
+    runs-on: ubuntu-latest
+    # Tests first. Deliberately not dependent on any other deploy job, nor they on
+    # this: a change under services/construction-service/** redeploys only this
+    # App Service.
+    needs: [changed-services, backend-unit-tests, backend-integration-tests]
+    if: needs.changed-services.outputs.construction-service == 'true'
+
+    concurrency:
+      group: deploy-construction-service
+      cancel-in-progress: false
+
+    env:
+      # Must match var.construction_service_app_name in infra/terraform/variables.tf.
+      AZURE_WEBAPP_NAME: buildnexus-construction-service-2026
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish
+        run: >-
+          dotnet publish services/construction-service/ConstructionService.csproj
+          -c Release
+          -o ${{ runner.temp }}/construction-service-publish
+
+      # A publish profile for THIS App Service only, in its own repository secret.
+      # Regenerated whenever Terraform recreates the App Service — see infra/RUNBOOK.md.
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_CONSTRUCTION_SERVICE }}
+          package: ${{ runner.temp }}/construction-service-publish
+
+      # /health answers only once the app has migrated its database as the scoped
+      # construction_service user and passed its startup validation. It does not
+      # prove an Event Hubs connection: the broker is contacted only when there is
+      # an event to send or a topic to read.
+      - name: Verify the deployed service answers
+        run: |
+          url="https://${AZURE_WEBAPP_NAME}.azurewebsites.net/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 20); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 30 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "HTTP 200 on attempt $attempt:"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$url never returned 200. Check the App Service log stream — the usual causes are a startup failure against MySQL (the construction_service user or its grant) or a missing or half-set Kafka__* or Jwt__* application setting."
           exit 1
 
   deploy-api-gateway:

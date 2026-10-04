@@ -205,3 +205,32 @@ variable "design_service_db_password" {
     error_message = "design_service_db_password must differ from mysql_administrator_password."
   }
 }
+
+# --- Construction Service ----------------------------------------------------
+
+variable "construction_service_app_name" {
+  description = "Name of the Construction Service App Service. Must be globally unique across Azure, since it becomes <name>.azurewebsites.net — override only if the default is already taken."
+  type        = string
+  default     = "buildnexus-construction-service-2026"
+}
+
+variable "construction_service_db_password" {
+  description = "Password for the Construction Service's own MySQL user, which is granted privileges on buildnexus_construction_db and nothing else on the server. No default on purpose — supply it through TF_VAR_construction_service_db_password or a git-ignored terraform.tfvars."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.construction_service_db_password) >= 8
+    error_message = "construction_service_db_password must be at least 8 characters."
+  }
+
+  validation {
+    condition     = !strcontains(var.construction_service_db_password, ";")
+    error_message = "construction_service_db_password must not contain a semicolon — it is embedded in a MySQL connection string."
+  }
+
+  validation {
+    condition     = var.construction_service_db_password != var.mysql_administrator_password
+    error_message = "construction_service_db_password must differ from mysql_administrator_password."
+  }
+}
