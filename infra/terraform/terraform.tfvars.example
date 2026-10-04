@@ -112,6 +112,20 @@ project_service_db_password = "REPLACE-ME"
 #
 design_service_db_password = "REPLACE-ME"
 
+# --- Construction Service ----------------------------------------------------
+
+# Only needed if the default "buildnexus-construction-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# construction_service_app_name = "buildnexus-construction-service-2026"
+
+# Password for the Construction Service's own MySQL user, which can reach
+# buildnexus_construction_db and nothing else. Generate a fresh one, under the same
+# rules as the other services' passwords:
+#
+#   openssl rand -base64 32
+#
+construction_service_db_password = "REPLACE-ME"
+
 # --- Azure subscription ------------------------------------------------------
 
 # Normally left unset: the provider falls back to ARM_SUBSCRIPTION_ID and then

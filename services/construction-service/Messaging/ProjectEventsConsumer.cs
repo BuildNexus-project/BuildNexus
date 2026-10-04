@@ -71,20 +71,7 @@ public sealed class ProjectEventsConsumer : BackgroundService
         // long-running one.
         await Task.Yield();
 
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = GroupId,
-            // Commit explicitly, only after a message is handled — so a crash
-            // mid-handling re-delivers rather than skips.
-            EnableAutoCommit = false,
-            // A brand-new group reads the topic from the start, so the
-            // ProjectCreated events published before this consumer first ran
-            // are picked up rather than missed — which matters more here than
-            // anywhere else in this service, because a project whose ownership
-            // was never recorded is one its Client cannot see the progress of.
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        };
+        var config = KafkaBrokerSettings.BuildConsumerConfig(_options, GroupId);
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(Topic);
