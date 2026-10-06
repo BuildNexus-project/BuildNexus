@@ -79,8 +79,14 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 | GET    | `/api/users/directory`   | Architect, ProjectManager                |
 | GET    | `/api/users`             | Admin                                    |
 | GET    | `/api/users/{id}`        | Admin                                    |
+| PUT    | `/api/users/{id}`        | Admin                                    |
+| PATCH  | `/api/users/{id}/status` | Admin                                    |
 | GET    | `/api/users/dashboard/admin` | Admin                                |
+| GET    | `/api/internal/users/{id}` | Other services only — `X-Internal-Api-Key`, not a user token |
 | GET    | `/health`                | Anonymous                                |
+
+The live list, with request and response bodies, is the service's Swagger UI at
+`/swagger`.
 
 `PUT /api/users/me` edits the caller's own full name, phone number and contact
 address, and nothing else. Email and role are **not** self-editable — that is the

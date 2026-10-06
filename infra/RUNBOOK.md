@@ -912,6 +912,11 @@ that variable is set to its origin and Terraform is applied.
 
 ## Health checks across services (SCRUM-47)
 
+> **Snapshot from SCRUM-47.** Since then the Design Service and the API Gateway
+> have been deployed to Azure and the Payment Service has been built, so the
+> "not deployed yet" and "out of scope" cells below are out of date. "What is
+> deployed" at the top of this file is the current list.
+
 SCRUM-47's first acceptance criterion is that each service exposes a
 health-check endpoint. "Each service" here means every service that currently
 exists as running code — Azure for the two already deployed there, local

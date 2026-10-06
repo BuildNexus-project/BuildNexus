@@ -73,10 +73,30 @@ per schema.
 
 ## Endpoints
 
-| Method | Route            | Allowed roles |
-|--------|------------------|---------------|
-| POST   | `/api/projects` | Client        |
-| GET    | `/health`       | Anonymous     |
+| Method | Route                                        | Allowed roles                            |
+|--------|----------------------------------------------|------------------------------------------|
+| POST   | `/api/projects`                              | Client                                   |
+| GET    | `/api/projects`                              | Client, Architect, ProjectManager, Admin |
+| GET    | `/api/projects/{id}`                         | Client, Architect, ProjectManager, Admin |
+| PATCH  | `/api/projects/{id}/status`                  | Architect, ProjectManager, Admin         |
+| POST   | `/api/projects/{id}/cancellation`            | Client, Admin                            |
+| PUT    | `/api/projects/{id}/architect`               | Admin                                    |
+| PUT    | `/api/projects/{id}/project-manager`         | Admin                                    |
+| GET    | `/api/projects/{id}/events`                  | Admin                                    |
+| GET    | `/api/projects/oversight`                    | Admin                                    |
+| GET    | `/api/projects/reports/status`               | Admin                                    |
+| GET    | `/api/projects/reports/status/export`        | Admin                                    |
+| GET    | `/api/projects/dashboard/client`             | Client                                   |
+| GET    | `/api/projects/dashboard/architect`          | Architect                                |
+| GET    | `/api/projects/dashboard/admin`              | Admin                                    |
+| GET    | `/api/projects/notifications`                | Client, Architect                        |
+| POST   | `/api/projects/notifications/{id}/read`      | Client, Architect                        |
+| POST   | `/api/projects/notifications/read-all`       | Client, Architect                        |
+| GET    | `/health`                                    | Anonymous                                |
+
+The report, oversight, dashboard and notification endpoints are described in
+their own sections below, and the live list with request and response bodies is
+the service's Swagger UI at `/swagger`.
 
 `POST /api/projects` is US-05: a Client describes the building they want and
 the project is created with status `Pending`, waiting on the company to pick it

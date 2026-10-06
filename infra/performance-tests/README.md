@@ -88,9 +88,9 @@ for `azure`.
 
 ### Pointing it elsewhere, or changing the load
 
-There is no single target host: the API Gateway and frontend aren't deployed
-yet, so this plan talks to User Service, Project Service and Design Service
-directly, one protocol/host/port triple per service. Both thread groups'
+There is no single target host: this plan was written before the API Gateway
+and frontend were deployed (the gateway now is — see `infra/RUNBOOK.md`), and it
+still talks to User Service, Project Service and Design Service directly, one protocol/host/port triple per service. Both thread groups'
 register/login setup calls (plus Admin Login) go through `auth_*`; `Create
 Project` and `Assign Architect To Project` go through `project_*`; `Upload
 Design Document` goes through `design_*`. Every knob is a JMeter property,
