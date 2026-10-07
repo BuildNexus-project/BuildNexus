@@ -39,77 +39,25 @@ public sealed class FullProjectWorkflowTests
     [Fact]
     public async Task Client_registers_creates_a_project_and_it_is_designed_approved_and_paid_for()
     {
-        await StackPreflight.EnsureFrontendIsUpAsync();
-
-        var run = Guid.NewGuid().ToString("N")[..8];
-        var projectName = $"E2E House {run}";
-        var documentName = $"FloorPlan {run}";
-        const string estimate = "25000000";
-        const string invoiceAmount = "5000000";
-
-        var designFile = TestFiles.WriteSamplePng(run);
-
-        using var browser = new BrowserSession();
-        var app = new BuildNexusApp(browser);
-
-        try
+        await WorkflowSetup.RunAsync((app, run, designFile) =>
         {
-            // 1. Register — three people sign up through the real form. An Admin cannot, which is
-            //    why the seeded one is used below.
-            var client = app.Register($"E2E Client {run}", $"e2e.client.{run}@buildnexus.test", "Client", "Client");
-            var architect = app.Register($"E2E Architect {run}", $"e2e.architect.{run}@buildnexus.test", "Architect", "Architect");
-            var projectManager = app.Register($"E2E Manager {run}", $"e2e.pm.{run}@buildnexus.test", "ProjectManager", "Project Manager");
+            const string estimate = "25000000";
+            const string invoiceAmount = "5000000";
 
-            // 2. The Client submits a project.
-            app.SignIn(client);
-            var projectId = app.CreateProject(projectName, "Colombo 07");
-            app.SignOut();
-
-            // 3. The Admin staffs it.
-            app.SignIn(E2ESettings.AdminEmail, E2ESettings.AdminPassword);
-            app.AssignStaff(projectId, architect, projectManager);
-            app.SignOut();
-
-            // 4. The Architect uploads a design.
-            app.SignIn(architect);
-            app.UploadDesign(projectId, documentName, designFile);
-            app.SignOut();
-
-            // 5. The Client approves it, and is told so — the notification only exists if the Design
-            //    Service's event reached the Project Service.
-            app.SignIn(client);
-            app.ApproveDesign(projectId, documentName);
-            app.WaitForNotification($"was approved on \"{projectName}\"");
-            app.SignOut();
+            // 1-5. Register, create the project, staff it, upload the design, approve it.
+            var project = WorkflowSetup.RegisterAndApproveDesign(app, run, designFile);
 
             // 6. The Project Manager prices the project and bills for it.
-            app.SignIn(projectManager);
-            app.QuoteAndInvoice(projectId, estimate, invoiceAmount);
+            app.SignIn(project.ProjectManager);
+            app.QuoteAndInvoice(project.ProjectId, estimate, invoiceAmount);
             app.SignOut();
 
             // 7. The Client pays the invoice, the balance clears, and the payment event reaches the
             //    Project Service as a notification.
-            app.SignIn(client);
-            app.PayInvoice(projectName, invoiceAmount);
-            app.WaitForNotification($"A payment was received on \"{projectName}\"");
-        }
-        catch (Exception)
-        {
-            // The page's text is already in the failure message; the picture is for what text can't
-            // say. Saved beside the test binaries — CI uploads that folder.
-            var screenshot = browser.Screenshot($"failure-{run}");
-
-            if (screenshot is not null)
-            {
-                Console.Error.WriteLine($"Screenshot of the failing page: {screenshot}");
-            }
-
-            throw;
-        }
-        finally
-        {
-            File.Delete(designFile);
-        }
+            app.SignIn(project.Client);
+            app.PayInvoice(project.ProjectName, invoiceAmount);
+            app.WaitForNotification($"A payment was received on \"{project.ProjectName}\"");
+        });
     }
 }
 

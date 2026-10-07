@@ -137,7 +137,7 @@ Two frameworks, standardized across the whole codebase (US-29):
 
 A third layer sits on top of those two (US-31):
 
-- **End-to-end — Selenium (xUnit, Chrome).** `e2e-tests/` drives the real React app against the running stack — gateway, all five services, databases and Kafka — through a full workflow: register, create a project, assign staff, upload and approve a design, then invoice and pay. Start the stack as above, then run `dotnet test e2e-tests/EndToEnd.Tests.csproj`. Setup, settings and troubleshooting are in [e2e-tests/README.md](e2e-tests/README.md). CI compiles it on every push and runs it only when triggered by hand.
+- **End-to-end — Selenium (xUnit, Chrome).** `e2e-tests/` drives the real React app against the running stack — gateway, all five services, databases and Kafka — through two full workflows: register, create a project, assign staff, upload and approve a design, then invoice and pay; and from an approved design through construction, the automatic invoice, payment and handover. Start the stack as above, then run `dotnet test e2e-tests/EndToEnd.Tests.csproj`. Setup, settings and troubleshooting are in [e2e-tests/README.md](e2e-tests/README.md). CI compiles it on every push and runs it only when triggered by hand.
 
 Conventions used across both:
 

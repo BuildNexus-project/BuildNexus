@@ -68,9 +68,15 @@ public sealed class BrowserSession : IDisposable
             return element.Displayed && element.Enabled ? element : null;
         }, what);
 
+    /// <summary>
+    /// Clicks an element after scrolling it to the middle of the window. Without that, a button near
+    /// the top is hidden under the sticky header, and a dropdown opened near the bottom puts its
+    /// scroll arrow over its own options — either way the click is intercepted.
+    /// </summary>
     public IWebElement Click(By by, string what)
     {
         var element = WaitForClickable(by, what);
+        ((IJavaScriptExecutor)Driver).ExecuteScript("arguments[0].scrollIntoView({ block: 'center' });", element);
         element.Click();
         return element;
     }
@@ -127,6 +133,40 @@ public sealed class BrowserSession : IDisposable
 
         throw new Xunit.Sdk.XunitException(
             $"Timed out after {E2ESettings.WaitTimeout.TotalSeconds:0}s, reloading, waiting for: {what}. " +
+            $"Page: {Driver.Url}{Environment.NewLine}Visible text:{Environment.NewLine}{VisibleText()}");
+    }
+
+    /// <summary>
+    /// For an action the system refuses until an asynchronous event has landed (handover is refused
+    /// until the Payment Service's settlement event reaches the Construction Service): performs
+    /// <paramref name="attempt"/>, looks briefly for the success marker, and tries again until it
+    /// appears or the wait runs out.
+    /// </summary>
+    public void RetryUntilVisible(Action attempt, By success, string what)
+    {
+        var deadline = DateTime.UtcNow + E2ESettings.WaitTimeout;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            attempt();
+
+            try
+            {
+                new WebDriverWait(Driver, TimeSpan.FromSeconds(3))
+                {
+                    PollingInterval = TimeSpan.FromMilliseconds(250)
+                }.Until(driver => driver.FindElements(success).Any(element => element.Displayed));
+
+                return;
+            }
+            catch (WebDriverTimeoutException)
+            {
+                // Refused for now — the event it depends on may still be in flight. Try again.
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"Timed out after {E2ESettings.WaitTimeout.TotalSeconds:0}s, retrying, waiting for: {what}. " +
             $"Page: {Driver.Url}{Environment.NewLine}Visible text:{Environment.NewLine}{VisibleText()}");
     }
 

@@ -18,7 +18,7 @@ For how the system is put together, see [architecture.md](architecture.md).
 | Frontend coverage | **90.2% lines, 83.0% branches, 91.5% functions** | 2026-10-04, this branch |
 | Performance (JMeter), local stack | 0 errors; project create p95 28 ms, design upload p95 35 ms | 2026-09-29 ([RESULTS.md](../infra/performance-tests/RESULTS.md)) |
 | Performance (JMeter), Azure | Reduced load only; 1 error in 65 samples; p95 1.7 s on project create | 2026-09-29 ([AZURE-RESULTS.md](../infra/performance-tests/AZURE-RESULTS.md)) |
-| End-to-end (Selenium) | **1 flow passing** (register → project → staff → design → approve → invoice → pay), 2 runs in a row, 0 failing | 2026-10-06, this branch, local Docker Compose; see [below](#end-to-end-tests-selenium) |
+| End-to-end (Selenium) | **2 flows passing** (sign-up to payment; approved design to handover), 2 runs in a row, 0 failing | 2026-10-07, this branch, freshly built images on local Docker Compose; see [below](#end-to-end-tests-selenium) |
 
 ## How to reproduce
 
@@ -168,17 +168,19 @@ the gateway, all five services, their five databases and Kafka. Nothing is stubb
 project is [e2e-tests/](../e2e-tests/README.md), and its tests carry `Category=E2E` so the
 unit and integration CI jobs never start a browser.
 
-**Measured 2026-10-06 on this branch**, against the local Docker Compose stack and the Vite
-dev server. The suite passed in two consecutive runs (25 s and 18 s), each with fresh
-accounts. Earlier runs failed while the test was being written; every one of those was a bug
+**Measured 2026-10-07 on this branch**, against images built from this branch on the local
+Docker Compose stack, with the Vite dev server. Both flows passed in two consecutive runs
+(57 s and 46 s for the pair), each with fresh accounts. An earlier run on 2026-10-06 against
+older images passed the first flow twice as well. Earlier runs failed while the test was being written; every one of those was a bug
 in the test (a wait Selenium cannot poll, a non-breaking space in the currency text, a page
 that reads once and does not poll), and none was a defect in the app.
 
 | Scenario | Roles | Result |
 |---|---|---|
-| Register → create project → assign staff → upload design → approve → quote, invoice and pay | Client, Architect, Project Manager, Admin | Pass |
+| 1. Register → create project → assign staff → upload design → approve → quote, invoice and pay | Client, Architect, Project Manager, Admin | Pass |
+| 2. The same set-up, then Design Approved → quote → milestones → start construction → pay the automatic invoice → complete milestones and construction → hand over | Client, Architect, Project Manager, Admin | Pass |
 
-What the one scenario proves, step by step:
+What scenario 1 proves, step by step:
 
 1. Three people register through the real form (Client, Architect, Project Manager).
 2. The Client submits a project and lands on its page.
@@ -188,15 +190,24 @@ What the one scenario proves, step by step:
 6. The Project Manager generates a quotation and raises an invoice.
 7. The Client pays it in full: the invoice reads Paid, the outstanding balance reads LKR 0.00, and a "payment received" notification arrives over Kafka from the Payment Service.
 
-What this does not cover: the construction phase (start, milestones, handover), design revision
-requests, project cancellation, the reports and the Admin's oversight pages. Nor does it cover
+Scenario 2 repeats steps 1 to 5, then proves:
+
+1. The Architect moves the project to Design Approved.
+2. The Project Manager quotes it and creates the seven template milestones. They only appear once the Construction Service has heard the design was approved over Kafka.
+3. The Project Manager starts construction; the build phase reads In Construction and the project reads Construction.
+4. The Client has an invoice for the quoted total that nobody raised: the Payment Service made it from the `ConstructionStarted` event. The Client pays it in full.
+5. The Project Manager completes all seven milestones and marks construction complete.
+6. The Project Manager hands the project over. The Construction Service refuses this until the Payment Service has announced the final payment settled, so the test retries until it is accepted. The build phase reads Handed Over and the project reads Completed.
+
+What this does not cover: design revision requests, project cancellation, partial payments, the
+reports and the Admin's oversight pages. Nor does it cover
 a failing path such as an over-payment, or any browser other than Chrome. Several of those
 are exercised below the browser, by the integration and frontend tests; none is checked
 through a real browser.
 
 ## Known gaps
 
-1. **End-to-end coverage is one happy-path flow, on Chrome only.** See what it leaves out in the section above. It ran against the local stack; it has not been run against Azure, which has no Construction or Payment Service deployed.
+1. **End-to-end coverage is two happy-path flows, on Chrome only.** See what they leave out in the section above. They ran against the local stack; they have not been run against Azure, which has no Construction or Payment Service deployed.
 2. **Coverage is a reported number, not an enforced one.** CI does not fail below 70%.
 3. **Performance is measured on two endpoints only**, not on Construction, Payment, the
    dashboards or the gateway, and the Azure run is at reduced load.

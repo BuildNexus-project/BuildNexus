@@ -142,13 +142,7 @@ public sealed class BuildNexusApp(BrowserSession browser)
     /// </summary>
     public void QuoteAndInvoice(Guid projectId, string estimatedTotal, string invoiceAmount)
     {
-        browser.GoTo($"/projects/{projectId}/costs");
-
-        browser.Type(By.Id("estimatedTotal"), estimatedTotal, "the estimated total field");
-        browser.Click(By.XPath("//button[normalize-space()='Generate quotation']"), "the Generate quotation button");
-        browser.UntilTrue(
-            _ => browser.PageContains("Currently estimated at"),
-            "the page to show the quotation as the current estimate");
+        Quote(projectId, estimatedTotal);
 
         browser.Type(By.Id("amount"), invoiceAmount, "the invoice amount field");
         browser.Click(By.XPath("//button[normalize-space()='Raise invoice']"), "the Raise invoice button");
@@ -156,6 +150,23 @@ public sealed class BuildNexusApp(BrowserSession browser)
             By.XPath("//table//*[normalize-space()='Pending']"),
             "the raised invoice listed as Pending");
     }
+
+    /// <summary>
+    /// As the signed-in Project Manager, generates the project's quotation and waits for it to show
+    /// as the current estimate. Starting construction later bills the quoted total automatically.
+    /// </summary>
+    public void Quote(Guid projectId, string estimatedTotal)
+    {
+        browser.GoTo($"/projects/{projectId}/costs");
+
+        browser.Type(By.Id("estimatedTotal"), estimatedTotal, "the estimated total field");
+        browser.Click(By.XPath("//button[normalize-space()='Generate quotation']"), "the Generate quotation button");
+        browser.UntilTrue(
+            _ => browser.PageContains("Currently estimated at"),
+            "the page to show the quotation as the current estimate");
+    }
+
+    public void OpenProject(Guid projectId) => browser.GoTo($"/projects/{projectId}");
 
     /// <summary>
     /// As the signed-in Client, pays an invoice in full from <c>/my-costs</c> and returns once the
@@ -194,6 +205,104 @@ public sealed class BuildNexusApp(BrowserSession browser)
             $"a notification containing: {text}");
     }
 
+    /// <summary>The milestones the standard construction template creates, in the order it creates them.</summary>
+    public static readonly string[] TemplateMilestones =
+        ["Foundation", "Walls", "Roof", "Electrical", "Plumbing", "Painting", "Finishing"];
+
+    /// <summary>
+    /// As the signed-in Architect, Project Manager or Admin, moves the project to the next status
+    /// (for example "Design Approved") from the project page and waits for the status badge to change.
+    /// </summary>
+    public void MoveProjectTo(Guid projectId, string statusLabel)
+    {
+        browser.GoTo($"/projects/{projectId}");
+
+        browser.Click(By.XPath($"//button[normalize-space()='Move to {statusLabel}']"), $"the 'Move to {statusLabel}' button");
+        browser.WaitForVisible(StatusBadge(statusLabel), $"the project's status badge to read {statusLabel}");
+    }
+
+    /// <summary>
+    /// As the signed-in Project Manager, creates the standard milestones. The Construction Service
+    /// only learns the design is approved from a Kafka event, until when the page offers "Try
+    /// again" instead, so the page is reloaded until the button appears.
+    /// </summary>
+    public void CreateMilestonesFromTemplate(Guid projectId)
+    {
+        browser.GoTo($"/projects/{projectId}");
+
+        browser.ReloadUntilVisible(
+            By.XPath("//button[normalize-space()='Create from template']"),
+            "the Create from template button (the Construction Service must have heard the design was approved)");
+        browser.Click(By.XPath("//button[normalize-space()='Create from template']"), "the Create from template button");
+
+        browser.WaitForVisible(MilestoneRow(TemplateMilestones[0]), "the template milestones to be listed");
+    }
+
+    /// <summary>As the signed-in Project Manager, starts construction and waits for the build phase to read In Construction and the project to read Construction.</summary>
+    public void StartConstruction()
+    {
+        browser.Click(By.XPath("//button[normalize-space()='Start construction']"), "the Start construction button");
+
+        browser.WaitForVisible(PhaseBadge("In Construction"), "the build phase to read In Construction");
+        browser.ReloadUntilVisible(StatusBadge("Construction"), "the project's status badge to read Construction");
+    }
+
+    /// <summary>As the signed-in Project Manager, sets every template milestone to Completed and waits for the progress to reach 100%.</summary>
+    public void CompleteAllMilestones()
+    {
+        foreach (var milestone in TemplateMilestones)
+        {
+            ChooseFromSelect(
+                By.CssSelector($"[aria-label='Change status of {milestone}']"),
+                "Completed",
+                $"the status picker for {milestone}");
+
+            browser.WaitForVisible(
+                By.XPath($"//tr[.//*[normalize-space()='{milestone}']]//*[@aria-label='Change status of {milestone}'][contains(normalize-space(), 'Completed')]"),
+                $"{milestone} to read Completed");
+        }
+
+        browser.WaitForVisible(
+            By.XPath($"//*[normalize-space()='{TemplateMilestones.Length} of {TemplateMilestones.Length} completed']"),
+            "the milestone count to read all completed");
+    }
+
+    /// <summary>As the signed-in Project Manager, marks construction complete and waits for the build phase to say so.</summary>
+    public void CompleteConstruction()
+    {
+        browser.Click(By.XPath("//button[normalize-space()='Mark construction complete']"), "the Mark construction complete button");
+
+        browser.WaitForVisible(PhaseBadge("Construction Complete"), "the build phase to read Construction Complete");
+    }
+
+    /// <summary>
+    /// As the signed-in Project Manager, hands the project over to the client. Handover is refused
+    /// until the Payment Service has announced the final payment settled, so it is retried until
+    /// the page confirms, and the project's status then reads Completed.
+    /// </summary>
+    public void HandOver(Guid projectId)
+    {
+        browser.RetryUntilVisible(
+            () =>
+            {
+                browser.GoTo($"/projects/{projectId}");
+                browser.Click(By.XPath("//button[normalize-space()='Hand over to client']"), "the Hand over to client button");
+            },
+            PhaseBadge("Handed Over"),
+            "the build phase to read Handed Over (the final payment must have been announced as settled)");
+
+        browser.ReloadUntilVisible(StatusBadge("Completed"), "the project's status badge to read Completed");
+    }
+
+    private static By StatusBadge(string label) =>
+        By.XPath($"//*[@data-slot='card-title']//*[normalize-space()='{label}']");
+
+    private static By PhaseBadge(string label) =>
+        By.XPath($"//section[@data-testid='construction-phase-panel']//*[normalize-space()='{label}']");
+
+    private static By MilestoneRow(string name) =>
+        By.XPath($"//section[@data-testid='milestones-panel']//tr[.//*[normalize-space()='{name}']]");
+
     private static By SignOutButton => By.XPath("//header//button[normalize-space()='Sign out']");
 
     private static string ProjectCard(string projectName) =>
@@ -216,9 +325,21 @@ public sealed class BuildNexusApp(BrowserSession browser)
     /// <summary>Opens a shadcn Select and clicks the option with the given text (its list renders in a portal).</summary>
     private void ChooseFromSelect(By trigger, string optionText, string what)
     {
+        // A list that was just chosen from is still unmounting for a moment, and a click on the next
+        // trigger in that moment is swallowed by it. Wait for it to be gone.
+        browser.UntilTrue(
+            driver => !driver.FindElements(By.XPath("//*[@role='option']")).Any(option => option.Displayed),
+            "any previously opened dropdown list to close");
+
         browser.Click(trigger, what);
-        browser.Click(
-            By.XPath($"//*[@role='option'][normalize-space()='{optionText}']"),
+
+        // The page can hold several lists at once — the ones already used stay in the DOM, hidden —
+        // so the option clicked is the visible one, not simply the first with that text.
+        var option = browser.Until(
+            driver => driver
+                .FindElements(By.XPath($"//*[@role='option'][normalize-space()='{optionText}']"))
+                .FirstOrDefault(candidate => candidate.Displayed && candidate.Enabled),
             $"the '{optionText}' option in {what}");
+        option.Click();
     }
 }

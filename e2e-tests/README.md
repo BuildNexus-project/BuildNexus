@@ -13,7 +13,9 @@ the third layer of the testing story, after unit tests (US-29) and integration t
 
 ## What it covers
 
-`FullProjectWorkflowTests` is one flow, across four roles and all five services:
+Two flows, each one test, across four roles and all five services.
+
+### 1. `FullProjectWorkflowTests`: from sign-up to payment
 
 1. **Register**: a Client, an Architect and a Project Manager sign up through `/register`.
 2. **Create project**: the Client submits a project through `/projects/new`.
@@ -23,8 +25,17 @@ the third layer of the testing story, after unit tests (US-29) and integration t
 6. **Quote and invoice**: the Project Manager generates a quotation and raises an invoice.
 7. **Record payment**: the Client pays the invoice in full. The invoice reads Paid, the outstanding balance reads `LKR 0.00`, and a "payment received" notification arrives, again over Kafka (Payment Service to Project Service).
 
-It is a single test on purpose. Each step depends on the one before, so splitting it would make
-later tests fail for an earlier test's reason.
+### 2. `ConstructionHandoverWorkflowTests`: from approved design to handover
+
+Steps 1 to 5 above (shared, in `WorkflowSetup`), then:
+
+6. **Move on**: the Architect moves the project to Design Approved. Approving the document does not do it; the status is the company's word.
+7. **Quote, build, start**: the Project Manager quotes the project, creates the standard milestones (which only appear once the Construction Service has heard the design was approved over Kafka) and starts construction. The project reads Construction.
+8. **Pay the automatic invoice**: nobody raises an invoice, yet the Client has one for the quoted total. The Payment Service made it from the `ConstructionStarted` event. The Client pays it in full.
+9. **Finish and hand over**: the Project Manager sets all seven milestones to Completed, marks construction complete, and hands the project over. Handover is refused until the Payment Service's settlement event reaches the Construction Service, so the test retries until it is accepted. The project then reads Completed.
+
+Each flow is a single test on purpose. Every step depends on the one before, so splitting a flow
+would make later tests fail for an earlier test's reason.
 
 ## Run it
 
@@ -46,7 +57,7 @@ dotnet test e2e-tests/EndToEnd.Tests.csproj
 ```
 
 If the frontend is not answering, the test stops at once and says so, rather than waiting out a
-timeout. A passing run takes under a minute (18 and 25 seconds in the recorded runs).
+timeout. Both flows together take under a minute (46 and 57 seconds in the recorded runs).
 
 To watch the browser instead of running headless: `E2E_HEADLESS=false dotnet test e2e-tests/EndToEnd.Tests.csproj`.
 
