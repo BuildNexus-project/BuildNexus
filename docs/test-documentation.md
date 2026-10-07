@@ -18,7 +18,7 @@ For how the system is put together, see [architecture.md](architecture.md).
 | Frontend coverage | **90.2% lines, 83.0% branches, 91.5% functions** | 2026-10-04, this branch |
 | Performance (JMeter), local stack | 0 errors; project create p95 28 ms, design upload p95 35 ms | 2026-09-29 ([RESULTS.md](../infra/performance-tests/RESULTS.md)) |
 | Performance (JMeter), Azure | Reduced load only; 1 error in 65 samples; p95 1.7 s on project create | 2026-09-29 ([AZURE-RESULTS.md](../infra/performance-tests/AZURE-RESULTS.md)) |
-| End-to-end (Selenium) | **Not part of this story; pending its own story** | see [below](#end-to-end-tests-selenium) |
+| End-to-end (Selenium) | **1 flow passing** (register → project → staff → design → approve → invoice → pay), 2 runs in a row, 0 failing | 2026-10-06, this branch, local Docker Compose; see [below](#end-to-end-tests-selenium) |
 
 ## How to reproduce
 
@@ -45,6 +45,13 @@ Frontend (use the Node version in `.nvmrc`):
 cd frontend
 npm test                 # run the tests
 npm run test:coverage    # run them and measure coverage (frontend/coverage/)
+```
+
+End-to-end (needs the whole stack running, the backend through `docker compose up -d` and the
+frontend through `npm run dev`, plus Chrome; see [e2e-tests/README.md](../e2e-tests/README.md)):
+
+```bash
+dotnet test e2e-tests/EndToEnd.Tests.csproj
 ```
 
 ## Unit and integration tests (backend)
@@ -156,26 +163,44 @@ Full tables, setup-call timings and the reproduction commands are in the two res
 
 ## End-to-end tests (Selenium)
 
-**Not in this story.** Selenium browser tests are delivered by a separate story, and
-there is no Selenium code in the repository yet, so there is nothing to report here and no
-results have been invented. This section is the place to fill in once that story merges.
+Selenium (C#, xUnit, Chrome) drives the real React app against the real running system:
+the gateway, all five services, their five databases and Kafka. Nothing is stubbed. The
+project is [e2e-tests/](../e2e-tests/README.md), and its tests carry `Category=E2E` so the
+unit and integration CI jobs never start a browser.
+
+**Measured 2026-10-06 on this branch**, against the local Docker Compose stack and the Vite
+dev server. The suite passed in two consecutive runs (25 s and 18 s), each with fresh
+accounts. Earlier runs failed while the test was being written; every one of those was a bug
+in the test (a wait Selenium cannot poll, a non-breaking space in the currency text, a page
+that reads once and does not poll), and none was a defect in the app.
 
 | Scenario | Roles | Result |
 |---|---|---|
-| _to be filled in from the Selenium story_ | | |
+| Register → create project → assign staff → upload design → approve → quote, invoice and pay | Client, Architect, Project Manager, Admin | Pass |
 
-What covers the full flow today, short of a browser: the integration tests exercise each
-service's real HTTP endpoints, database and Kafka; the gateway tests boot the real gateway
-against stub clusters and assert both routing and refusals; and the frontend tests render
-the pages against stubbed services.
+What the one scenario proves, step by step:
+
+1. Three people register through the real form (Client, Architect, Project Manager).
+2. The Client submits a project and lands on its page.
+3. The seeded Admin assigns the Architect and the Project Manager; both appear in the project's Team section.
+4. The Architect uploads a PNG; it is listed as Submitted.
+5. The Client approves it; it is listed as Approved, and the Client then sees a "design approved" notification. That notification exists only if the Design Service's event crossed Kafka to the Project Service.
+6. The Project Manager generates a quotation and raises an invoice.
+7. The Client pays it in full: the invoice reads Paid, the outstanding balance reads LKR 0.00, and a "payment received" notification arrives over Kafka from the Payment Service.
+
+What this does not cover: the construction phase (start, milestones, handover), design revision
+requests, project cancellation, the reports and the Admin's oversight pages. Nor does it cover
+a failing path such as an over-payment, or any browser other than Chrome. Several of those
+are exercised below the browser, by the integration and frontend tests; none is checked
+through a real browser.
 
 ## Known gaps
 
-1. **No end-to-end browser tests yet.** Belongs to the Selenium story; this document needs
-   its scenarios added then.
+1. **End-to-end coverage is one happy-path flow, on Chrome only.** See what it leaves out in the section above. It ran against the local stack; it has not been run against Azure, which has no Construction or Payment Service deployed.
 2. **Coverage is a reported number, not an enforced one.** CI does not fail below 70%.
 3. **Performance is measured on two endpoints only**, not on Construction, Payment, the
    dashboards or the gateway, and the Azure run is at reduced load.
 4. **Construction Service and Payment Service are not deployed to Azure**, so they have
    local test and performance coverage only.
 5. **One frontend test is close to its time limit** (see above).
+6. **The CI end-to-end job has not run yet.** It is in `ci.yml` and starts only when triggered by hand; until it has passed once on GitHub, the end-to-end result above is a local one.

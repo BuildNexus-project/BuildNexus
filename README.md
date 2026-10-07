@@ -24,6 +24,7 @@ A microservices-based construction project management system. A Client describes
 |---|---|
 | `services/user-service`, `project-service`, `design-service`, `construction-service`, `payment-service` | The five services, each with its own `Migrations/` and `README.md` |
 | `services/*-tests`, `api-gateway-tests` | xUnit test projects, one per service and one for the gateway |
+| `e2e-tests` | Selenium end-to-end tests that drive the real UI against the running stack (see [e2e-tests/README.md](e2e-tests/README.md)) |
 | `api-gateway` | The YARP gateway |
 | `frontend` | The React app |
 | `infra` | `docker-compose.yml`, Terraform, JMeter performance plan and results |
@@ -133,6 +134,10 @@ Two frameworks, standardized across the whole codebase (US-29):
   test global, and every frontend test then fails in `src/test/setup.ts` with
   `localStorage.clear is not a function` — a local-only breakage, since CI reads the
   same `.nvmrc`.
+
+A third layer sits on top of those two (US-31):
+
+- **End-to-end — Selenium (xUnit, Chrome).** `e2e-tests/` drives the real React app against the running stack — gateway, all five services, databases and Kafka — through a full workflow: register, create a project, assign staff, upload and approve a design, then invoice and pay. Start the stack as above, then run `dotnet test e2e-tests/EndToEnd.Tests.csproj`. Setup, settings and troubleshooting are in [e2e-tests/README.md](e2e-tests/README.md). CI compiles it on every push and runs it only when triggered by hand.
 
 Conventions used across both:
 
