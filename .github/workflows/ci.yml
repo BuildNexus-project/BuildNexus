@@ -7,6 +7,7 @@
 #   build            Sprint 1  (below)
 #   unit tests       Sprint 1  (below)
 #   integration      Sprint 3  (below — US-30)
+#   end-to-end       Sprint 4  (below — US-31, manual trigger)
 #   docker build     Sprint 4
 #   deploy           Sprint 4  (below — User Service SCRUM-52, Project Service SCRUM-53,
 #                               Design Service SCRUM-54, API Gateway)
@@ -32,6 +33,8 @@ on:
   # And again on the way in, in case the target has moved since the last push.
   pull_request:
     branches: [develop, main]
+  # Starts the end-to-end job below by hand (Actions tab -> CI -> Run workflow).
+  workflow_dispatch:
 
 # A second push to the same branch makes the run in progress obsolete.
 concurrency:
@@ -84,6 +87,7 @@ jobs:
           dotnet restore services/construction-service-tests/ConstructionService.Tests.csproj
           dotnet restore services/payment-service-tests/PaymentService.Tests.csproj
           dotnet restore api-gateway-tests/ApiGateway.Tests.csproj
+          dotnet restore e2e-tests/EndToEnd.Tests.csproj
 
       # Release, matching the configuration the Docker build stage will publish.
       - name: Build
@@ -100,6 +104,7 @@ jobs:
           dotnet build services/construction-service-tests/ConstructionService.Tests.csproj -c Release --no-restore
           dotnet build services/payment-service-tests/PaymentService.Tests.csproj -c Release --no-restore
           dotnet build api-gateway-tests/ApiGateway.Tests.csproj -c Release --no-restore
+          dotnet build e2e-tests/EndToEnd.Tests.csproj -c Release --no-restore
 
   frontend-build:
     name: Build (frontend)
@@ -467,6 +472,115 @@ jobs:
         run: docker compose -f infra/docker-compose.yml logs user-db project-db design-db construction-db payment-db kafka
 
       - name: Stop the service databases and Kafka
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
+  # ------------------------------------------------------- end-to-end tests ----
+  # US-31. The Selenium suite in e2e-tests/: a real browser walking register ->
+  # project -> design -> approval -> invoice -> payment against the WHOLE system —
+  # every service, the gateway, all five databases, Kafka, and the React app.
+  #
+  # Manual only (workflow_dispatch), on purpose. It builds six images and starts
+  # fourteen containers, which is minutes per run, and it is the one stage that
+  # nothing else gates on — the deploy jobs deliberately do not wait for it. Run
+  # it before a sprint merge to main, or from a pull request that touches a
+  # user-facing flow. To run it on every pull request instead, replace the `if`
+  # with `github.event_name != 'push'`.
+  #
+  # The tests carry only Category=E2E, so the unit and integration jobs above
+  # (Category!=Integration / Category=Integration) never start a browser.
+  backend-e2e-tests:
+    name: End-to-end tests (Selenium)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    needs: backend-integration-tests
+    timeout-minutes: 30
+
+    env:
+      # The same published development values as the integration job and
+      # infra/.env.example — compose reads them from the environment when there
+      # is no infra/.env, which there is not on a runner.
+      USER_DB_ROOT_PASSWORD: buildnexus-root-dev
+      USER_DB_USER: buildnexus
+      USER_DB_PASSWORD: buildnexus-dev
+      PROJECT_DB_ROOT_PASSWORD: buildnexus-root-dev
+      PROJECT_DB_USER: buildnexus
+      PROJECT_DB_PASSWORD: buildnexus-dev
+      DESIGN_DB_ROOT_PASSWORD: buildnexus-root-dev
+      DESIGN_DB_USER: buildnexus
+      DESIGN_DB_PASSWORD: buildnexus-dev
+      CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-dev
+      CONSTRUCTION_DB_USER: buildnexus
+      CONSTRUCTION_DB_PASSWORD: buildnexus-dev
+      PAYMENT_DB_ROOT_PASSWORD: buildnexus-root-dev
+      PAYMENT_DB_USER: buildnexus
+      PAYMENT_DB_PASSWORD: buildnexus-dev
+
+      Jwt__Issuer: BuildNexusAuth
+      Jwt__Audience: BuildNexusServices
+      Jwt__SigningKey: ${{ secrets.JWT_SIGNING_KEY }}
+
+      InternalService__ApiKey: ${{ secrets.INTERNAL_SERVICE_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Compose sets ASPNETCORE_ENVIRONMENT=Development, which is what makes the
+      # User Service seed the Admin the suite signs in as. --wait returns once
+      # every container with a healthcheck is healthy.
+      - name: Start the whole backend
+        run: docker compose -f infra/docker-compose.yml up -d --build --wait --wait-timeout 600
+
+      # The frontend is not part of compose. Its dev server proxies /api to the
+      # gateway on localhost:5000, the same path a developer uses.
+      - name: Start the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          nohup npm run dev > ../vite.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5173 > /dev/null && exit 0
+            sleep 2
+          done
+          cat ../vite.log
+          exit 1
+
+      # ubuntu-latest ships Chrome, and Selenium Manager fetches the matching
+      # chromedriver, so there is nothing to install.
+      - name: Run the end-to-end tests
+        run: dotnet test e2e-tests/EndToEnd.Tests.csproj -c Release --logger "console;verbosity=normal"
+
+      # Only a failing run writes any: the failing page, as it looked.
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-screenshots
+          path: e2e-tests/bin/Release/net10.0/screenshots/
+          if-no-files-found: ignore
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail 200
+
+      - name: Stop the stack
         if: always()
         run: docker compose -f infra/docker-compose.yml down -v
 
