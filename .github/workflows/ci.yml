@@ -481,7 +481,7 @@ jobs:
   # every service, the gateway, all five databases, Kafka, and the React app.
   #
   # Manual only (workflow_dispatch), on purpose. It builds six images and starts
-  # fourteen containers, which is minutes per run, and it is the one stage that
+  # thirteen containers, which is minutes per run, and it is the one stage that
   # nothing else gates on — the deploy jobs deliberately do not wait for it. Run
   # it before a sprint merge to main, or from a pull request that touches a
   # user-facing flow. To run it on every pull request instead, replace the `if`

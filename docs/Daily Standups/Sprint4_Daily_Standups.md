@@ -152,3 +152,28 @@ Chamath(IT24101842)
 - Open for the BA: should Swagger be switched on in Azure for a marker, and where should the Selenium results go in the test documentation when that story merges
 
 ---
+
+## 2026-10-07
+
+### Present
+Chamath(IT24101842)
+
+### Progress
+- Chamath(IT24101842): US-31 (End-to-End Testing with Selenium, SCRUM-44) completed — branch `feature/SCRUM-44-End-to-End-Testing-US-31` ready to merge into `develop`. New `e2e-tests/EndToEnd.Tests.csproj` (xUnit + Selenium.WebDriver, net10.0, Chrome headless) with one full flow driven entirely through the real UI against the running stack: a Client, an Architect and a Project Manager register, the Client submits a project, the seeded Admin assigns the two staff, the Architect uploads a design, the Client approves it, the Project Manager quotes and invoices, and the Client pays in full. It also checks the Client's "design approved" and "payment received" notifications, which only appear if the events crossed Kafka between services. Helpers: `E2ESettings` (env-var settings), `BrowserSession` (Chrome plus explicit waits), `BuildNexusApp` (one method per user action). CI now compiles the project on every push and has a manual-trigger `backend-e2e-tests` job that starts the whole stack. Added `e2e-tests/README.md`, replaced the test documentation's placeholder with the real result, and updated the root README. Verified passing twice in a row against the local Docker Compose stack plus the Vite dev server (25 s and 18 s), with fresh accounts each run. The single acceptance scenario is covered.
+
+### Challenges
+- The first runs failed on the test's own mistakes, none on the app: Selenium's wait cannot poll a nullable value type, so waits that returned a Guid or a bool threw; the notifications page reads once on load and never polls, so waiting on it for a Kafka-created notification could never succeed (checked the Project Service log: the event had arrived and two people were notified) and the test now reloads until it appears; and the money format puts a non-breaking space after "LKR", which XPath does not treat as whitespace, so the balance check never matched until the space was translated.
+- Docker Desktop was not running at the start, and once it was, `docker compose up --build` failed with a DNS error reaching `mcr.microsoft.com`. The containers that were already there were running images 2 to 6 days old, so the passing runs are against those and not a fresh build of this branch.
+- The suite needs an Admin to assign staff, and an Admin cannot register. It uses the one the User Service seeds in Development, which means it only runs against an environment where that seed exists; the credentials are settings, not hard-coded.
+- The CI job could not be tried from here, so it has not run on GitHub.
+
+### Decisions
+- One test, not one per step: each step needs the one before, so separate tests would fail for an earlier test's reason; each step names what it waits for, so a failure points at the step
+- No `Thread.Sleep` and no implicit wait anywhere; every step waits for what it needs on screen, and a timeout prints the step, the URL and the page text. Events that arrive over Kafka are waited for by reloading, not by guessing a delay
+- Selectors follow what the user sees (field ids, button text, headings, existing `aria-label`s), so the app was not changed and no `data-testid` was added for the tests
+- Each run registers new accounts and a project under a random suffix, so it can be repeated against the same databases without cleanup
+- The tests carry only `Category=E2E`, so the unit and integration CI jobs never start a browser; the CI end-to-end job is manual-only and no deploy job waits on it, because it builds six images and starts thirteen containers
+- Flagged, not done: one happy-path flow only, so the construction phase, design revisions, cancellation, reports and failure paths are not covered through a browser; Chrome only; not run against Azure, which has no Construction or Payment Service deployed
+- Open for the BA: should the end-to-end job run on every pull request once it has passed once in CI, and which further flow matters most for the demo (construction start through handover is the obvious next one)
+
+---
