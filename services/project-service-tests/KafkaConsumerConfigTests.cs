@@ -24,16 +24,32 @@ public class KafkaConsumerConfigTests
         "Endpoint=sb://example-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=not-a-real-key";
 
     [Fact]
-    public void Without_the_optional_settings_a_consumer_gets_exactly_the_keys_it_always_had()
+    public void Without_the_optional_settings_a_consumer_gets_only_its_always_on_keys()
     {
         var config = KafkaBrokerSettings.BuildConsumerConfig(LocalOptions(), "project-service-payment-events");
 
         var keys = config.Select(setting => setting.Key).Order().ToList();
 
-        // The four settings the consumers were built with before the optional options existed —
-        // and no security.protocol, sasl.* or tuning key at all, so librdkafka keeps its own
-        // plaintext defaults for the local broker.
-        Assert.Equal(["auto.offset.reset", "bootstrap.servers", "enable.auto.commit", "group.id"], keys);
+        // The four settings the consumers were built with before the optional options existed,
+        // plus the topic-discovery interval — and no security.protocol, sasl.* or tuning key at
+        // all, so librdkafka keeps its own plaintext defaults for the local broker.
+        Assert.Equal(
+            [
+                "auto.offset.reset", "bootstrap.servers", "enable.auto.commit", "group.id",
+                "topic.metadata.refresh.interval.ms"
+            ],
+            keys);
+    }
+
+    [Fact]
+    public void A_consumer_looks_for_a_not_yet_created_topic_every_ten_seconds()
+    {
+        // The defect this closes: on a fresh stack payment-events does not exist until Payment
+        // Service first publishes, and librdkafka's five-minute default left the notification
+        // consumer deaf to it for minutes.
+        var config = KafkaBrokerSettings.BuildConsumerConfig(LocalOptions(), "g");
+
+        Assert.Equal(10_000, config.TopicMetadataRefreshIntervalMs);
     }
 
     [Fact]
@@ -88,7 +104,10 @@ public class KafkaConsumerConfigTests
             .Select(setting => setting.Key).Order().ToList();
 
         Assert.Equal(
-            ["auto.offset.reset", "bootstrap.servers", "enable.auto.commit", "group.id", "socket.keepalive.enable"],
+            [
+                "auto.offset.reset", "bootstrap.servers", "enable.auto.commit", "group.id",
+                "socket.keepalive.enable", "topic.metadata.refresh.interval.ms"
+            ],
             keys);
     }
 

@@ -16,6 +16,20 @@ namespace BuildNexus.ProjectService.Messaging;
 public static class KafkaBrokerSettings
 {
     /// <summary>
+    /// How often a consumer asks the broker whether a topic it subscribed to has appeared.
+    /// </summary>
+    /// <remarks>
+    /// A topic only exists once something publishes to it, so on a fresh stack a consumer
+    /// subscribes to topics that are not there yet. librdkafka then re-checks for them only every
+    /// <c>topic.metadata.refresh.interval.ms</c>, which defaults to five minutes, and until it does
+    /// the topic is silently left out of the subscription: the events are published and nothing
+    /// reads them. The <c>.fast</c> refresh settings do not help — they only speed up recovery from
+    /// a lost partition leader, not discovery of a topic that has never existed. Ten seconds keeps
+    /// the gap short for the cost of one small metadata request per consumer per interval.
+    /// </remarks>
+    private const int TopicMetadataRefreshIntervalMs = 10_000;
+
+    /// <summary>
     /// What a consumer in <paramref name="groupId"/> is built with.
     /// </summary>
     /// <remarks>
@@ -33,7 +47,9 @@ public static class KafkaBrokerSettings
             EnableAutoCommit = false,
             // A brand-new group reads each topic from the start, so an event announced before
             // this reader first ran is not missed.
-            AutoOffsetReset = AutoOffsetReset.Earliest
+            AutoOffsetReset = AutoOffsetReset.Earliest,
+            // Notice a subscribed topic that did not exist at startup within seconds, not minutes.
+            TopicMetadataRefreshIntervalMs = TopicMetadataRefreshIntervalMs
         };
 
         ApplyBrokerSettings(options, config);
