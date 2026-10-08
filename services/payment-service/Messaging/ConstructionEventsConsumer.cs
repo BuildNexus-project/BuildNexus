@@ -80,18 +80,10 @@ public sealed class ConstructionEventsConsumer : BackgroundService
         // long-running one.
         await Task.Yield();
 
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = GroupId,
-            // Commit explicitly, only after a message is handled — so a crash
-            // mid-handling re-delivers rather than skips.
-            EnableAutoCommit = false,
-            // A brand-new group reads the topic from the start, so a build that
-            // started before this consumer first ran is still invoiced rather
-            // than silently never billed.
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        };
+        // Broker address and, for Azure Event Hubs, the SASL/TLS settings; commits stay
+        // explicit (only after a message is handled, so a crash re-delivers rather than
+        // skips) and a brand-new group reads the topic from the start.
+        var config = KafkaBrokerSettings.BuildConsumerConfig(_options, GroupId);
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(Topic);

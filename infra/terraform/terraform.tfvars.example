@@ -126,6 +126,20 @@ design_service_db_password = "REPLACE-ME"
 #
 construction_service_db_password = "REPLACE-ME"
 
+# --- Payment Service ----------------------------------------------------
+
+# Only needed if the default "buildnexus-payment-service-2026" is already taken —
+# the name is global, and it becomes <name>.azurewebsites.net.
+# payment_service_app_name = "buildnexus-payment-service-2026"
+
+# Password for the Payment Service's own MySQL user, which can reach
+# buildnexus_payment_db and nothing else. Generate a fresh one, under the same
+# rules as the other services' passwords:
+#
+#   openssl rand -base64 32
+#
+payment_service_db_password = "REPLACE-ME"
+
 # --- Azure subscription ------------------------------------------------------
 
 # Normally left unset: the provider falls back to ARM_SUBSCRIPTION_ID and then

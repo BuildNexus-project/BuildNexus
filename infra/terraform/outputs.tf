@@ -54,6 +54,16 @@ output "construction_service_app_name" {
   value       = azurerm_linux_web_app.construction_service.name
 }
 
+output "payment_service_url" {
+  description = "Public base address of the Payment Service. /health answers anonymously, and only once the app has migrated its database as the scoped payment_service user — the quickest proof the deploy worked."
+  value       = "https://${azurerm_linux_web_app.payment_service.default_hostname}"
+}
+
+output "payment_service_app_name" {
+  description = "App Service name, as the `az webapp` commands in infra/RUNBOOK.md want it."
+  value       = azurerm_linux_web_app.payment_service.name
+}
+
 output "api_gateway_url" {
   description = "Public base address of the API Gateway — the one host the frontend calls. /health answers anonymously and does not depend on any service behind it."
   value       = "https://${azurerm_linux_web_app.api_gateway.default_hostname}"

@@ -68,3 +68,7 @@ logs/
 # Local .env backups from tooling — never commit these; they may contain secrets
 .env.backup*
 infra/.env.backup*
+
+# Terraform plan files and App Service publish profiles hold credentials.
+*.tfplan
+publish-profile.xml
