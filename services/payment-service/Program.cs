@@ -47,6 +47,10 @@ builder.Services.AddOptions<KafkaOptions>()
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    .Validate(o => o.RequestTimeoutMs is null or > 0, "Kafka:RequestTimeoutMs must be greater than zero when set.")
+    .Validate(
+        o => o.HasConsistentSaslSettings(),
+        "Kafka:SecurityProtocol SaslSsl or SaslPlaintext needs Kafka:SaslMechanism, Kafka:SaslUsername and Kafka:SaslPassword all set, and those three must not be set without it.")
     .ValidateOnStart();
 
 // How fast the outbox drains. Both settings have working defaults, so there is

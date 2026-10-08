@@ -44,20 +44,32 @@ public sealed class KafkaPaymentEventPublisher : IPaymentEventPublisher, IDispos
     /// Separate from the constructor so the settings can be checked without
     /// building a producer, which would start librdkafka's background threads.
     /// </remarks>
-    public static ProducerConfig BuildProducerConfig(KafkaOptions kafkaOptions) => new()
+    public static ProducerConfig BuildProducerConfig(KafkaOptions kafkaOptions)
     {
-        BootstrapServers = kafkaOptions.BootstrapServers,
-        // Wait for every in-sync replica before calling a publish done. An event
-        // that only reached the leader can still be lost if that broker fails, and
-        // a lost PaymentReceived means a payment the rest of the platform never
-        // hears about.
-        Acks = Acks.All,
-        // A retry inside librdkafka must not put the same event on the topic twice;
-        // idempotence makes the broker recognise the duplicate.
-        EnableIdempotence = true,
-        // Bounded — see the remarks on KafkaOptions.MessageTimeoutMs.
-        MessageTimeoutMs = kafkaOptions.MessageTimeoutMs
-    };
+        var config = new ProducerConfig
+        {
+            BootstrapServers = kafkaOptions.BootstrapServers,
+            // Wait for every in-sync replica before calling a publish done. An event
+            // that only reached the leader can still be lost if that broker fails, and
+            // a lost PaymentReceived means a payment the rest of the platform never
+            // hears about.
+            Acks = Acks.All,
+            // A retry inside librdkafka must not put the same event on the topic twice;
+            // idempotence makes the broker recognise the duplicate.
+            EnableIdempotence = true,
+            // Bounded — see the remarks on KafkaOptions.MessageTimeoutMs.
+            MessageTimeoutMs = kafkaOptions.MessageTimeoutMs
+        };
+
+        KafkaBrokerSettings.ApplyBrokerSettings(kafkaOptions, config);
+
+        if (kafkaOptions.RequestTimeoutMs is { } requestTimeoutMs)
+        {
+            config.RequestTimeoutMs = requestTimeoutMs;
+        }
+
+        return config;
+    }
 
     public async Task PublishAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
     {
