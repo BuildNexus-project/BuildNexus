@@ -58,18 +58,10 @@ resource "azurerm_eventhub" "construction_events" {
   message_retention = 7
 }
 
-# payment-events: the Payment Service is not deployed yet, but this service's
-# PaymentEventsConsumer subscribes to it on startup. Declared here so that
-# subscription has a topic to attach to. When the Payment Service is deployed it
-# publishes to this same hub and nothing here needs to change.
-resource "azurerm_eventhub" "payment_events" {
-  name         = "payment-events"
-  namespace_id = azurerm_eventhub_namespace.main.id
-
-  partition_count   = 1
-  message_retention = 7
-}
-
+# payment-events, which this service's PaymentEventsConsumer reads, is declared by
+# the Payment Service in payment-service.tf: the service that publishes a topic owns
+# its Event Hub, and the consumer group below attaches to it from here.
+#
 # Consumer groups. Event Hubs needs each Kafka consumer group to exist as its own
 # resource before a consumer can join it. One group per reader, named exactly as
 # the service's consumers compute them: the design consumer uses the bare
