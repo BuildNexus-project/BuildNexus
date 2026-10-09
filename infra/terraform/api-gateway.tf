@@ -65,6 +65,13 @@ resource "azurerm_linux_web_app" "api_gateway" {
     # frontend has no deployed home yet, so this is still the local dev server.
     Cors__AllowedOrigins__0 = var.frontend_origin
 
+    # The deployed frontend origins, which were added to the App Service by hand and
+    # are listed here so a Terraform apply does not remove them: the Static Web App,
+    # and the custom domain with and without www.
+    Cors__AllowedOrigins__1 = "https://delightful-grass-0feec4c00.3.azurestaticapps.net"
+    Cors__AllowedOrigins__2 = "https://buildnexus.me"
+    Cors__AllowedOrigins__3 = "https://www.buildnexus.me"
+
     # Where each cluster points: the deployed App Service, over HTTPS, with the
     # trailing slash YARP expects. Left to appsettings.json these would be the
     # local dotnet run ports, and every proxied call would answer 502.
@@ -72,10 +79,7 @@ resource "azurerm_linux_web_app" "api_gateway" {
     ReverseProxy__Clusters__project__Destinations__primary__Address = "https://${azurerm_linux_web_app.project_service.default_hostname}/"
     ReverseProxy__Clusters__design__Destinations__primary__Address  = "https://${azurerm_linux_web_app.design_service.default_hostname}/"
 
-    # construction and payment are deliberately not set. Neither service is
-    # deployed, so there is no address to point at; their routes keep the
-    # localhost default from appsettings.json and answer 502 — the same as they
-    # do locally with nothing running. The story that deploys each one adds its
-    # line here and changes nothing else in this block.
+    ReverseProxy__Clusters__construction__Destinations__primary__Address = "https://${azurerm_linux_web_app.construction_service.default_hostname}/"
+    ReverseProxy__Clusters__payment__Destinations__primary__Address      = "https://${azurerm_linux_web_app.payment_service.default_hostname}/"
   }
 }
