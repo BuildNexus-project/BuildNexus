@@ -170,9 +170,10 @@ SE3112 testing pipeline. One workflow, `.github/workflows/ci.yml`, runs every au
 | 3 | Integration tests | xUnit tests that need real MySQL and Kafka (started from docker compose) | Every push and PR, after unit tests |
 | 4 | Docker build | All six service images build | Every push and PR |
 | 5 | End-to-end tests | Selenium drives the real UI against the whole stack | By hand |
-| 6 | Test report | One summary page: verdict and test count per stage, links to the coverage reports | Every push and PR, always |
+| 6 | Test report | One summary page: verdict and test count per stage, coverage per service, links to the coverage reports | Every push and PR, always |
+| 7 | Static analysis | SonarCloud: bugs, smells, technical debt, duplication, coverage, quality gate | Every push and PR, after the tests |
 
-Mutation testing, load testing and static analysis are added to the same workflow by the individual branches listed below. Each has a marked insertion point in `ci.yml`, and mutation and load run by hand only.
+Static analysis (SonarCloud, with a quality gate) is stage 7; see [docs/code-quality.md](docs/code-quality.md) for the metrics and how to read the dashboard. Mutation testing and load testing are added to the same workflow by the individual branches listed below. Each has a marked insertion point in `ci.yml`, and mutation and load run by hand only.
 
 ### Run it locally
 

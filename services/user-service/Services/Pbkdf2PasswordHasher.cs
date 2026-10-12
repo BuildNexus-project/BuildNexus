@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 
 namespace BuildNexus.UserService.Services;
@@ -27,7 +28,7 @@ public class Pbkdf2PasswordHasher : IPasswordHasher
 
         return string.Join('$',
             Prefix,
-            Iterations.ToString(),
+            Iterations.ToString(CultureInfo.InvariantCulture),
             Convert.ToBase64String(salt),
             Convert.ToBase64String(hash));
     }

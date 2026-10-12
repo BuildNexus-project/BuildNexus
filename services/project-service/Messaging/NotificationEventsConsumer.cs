@@ -210,7 +210,7 @@ public sealed class NotificationEventsConsumer : BackgroundService
             notifiable.EventType, notifiable.EventId, notifiable.ProjectId, toStore.Count);
     }
 
-    private async Task DelayAsync(CancellationToken stoppingToken)
+    private static async Task DelayAsync(CancellationToken stoppingToken)
     {
         try
         {

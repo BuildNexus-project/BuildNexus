@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.PaymentService.Models;
+using System.Globalization;
 
 namespace BuildNexus.PaymentService.Data;
 
@@ -67,7 +68,7 @@ public class PaymentDashboardRepository : IPaymentDashboardRepository
                 Amount = reader.GetDecimal(reader.GetOrdinal("amount")),
                 // SUM over DECIMAL is DECIMAL, but COALESCE with the integer literal can
                 // surface it as another numeric type; Convert accepts whichever it is.
-                AmountPaid = Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("amount_paid"))),
+                AmountPaid = Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("amount_paid")), CultureInfo.InvariantCulture),
                 RaisedAtUtc = reader.GetDateTime(reader.GetOrdinal("raised_at"))
             });
         }

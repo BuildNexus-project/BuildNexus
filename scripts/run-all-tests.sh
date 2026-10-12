@@ -146,7 +146,7 @@ stage_frontend() {
 
   if [ ! -d frontend/node_modules ]; then
     echo "--- npm ci"
-    (cd frontend && npm ci) 2>&1 | tee -a "$lint_log"
+    (cd frontend && npm ci --ignore-scripts) 2>&1 | tee -a "$lint_log"
   fi
 
   start=$SECONDS

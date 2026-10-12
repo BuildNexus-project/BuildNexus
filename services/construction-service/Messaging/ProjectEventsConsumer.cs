@@ -215,7 +215,7 @@ public sealed class ProjectEventsConsumer : BackgroundService
         }
     }
 
-    private async Task DelayAsync(CancellationToken stoppingToken)
+    private static async Task DelayAsync(CancellationToken stoppingToken)
     {
         try
         {

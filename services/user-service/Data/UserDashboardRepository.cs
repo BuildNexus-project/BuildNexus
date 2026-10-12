@@ -1,4 +1,5 @@
 using BuildNexus.UserService.Models;
+using System.Globalization;
 
 namespace BuildNexus.UserService.Data;
 
@@ -40,7 +41,7 @@ public class UserDashboardRepository : IUserDashboardRepository
                 Role = Enum.Parse<UserRole>(reader.GetString(reader.GetOrdinal("role"))),
                 IsActive = reader.GetBoolean(reader.GetOrdinal("is_active")),
                 // COUNT(*) is a BIGINT; the value is a head count, not a key.
-                Count = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("user_count")))
+                Count = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("user_count")), CultureInfo.InvariantCulture)
             });
         }
 

@@ -439,13 +439,13 @@ public class DesignsController : ControllerBase
         };
     }
 
-    private IActionResult VersionNotFoundProblem(Guid versionId) =>
+    private ObjectResult VersionNotFoundProblem(Guid versionId) =>
         Problem(
             statusCode: StatusCodes.Status404NotFound,
             title: "Version not found",
             detail: $"No design document version with id '{versionId}' exists.");
 
-    private IActionResult FileProblem(string detail) =>
+    private ObjectResult FileProblem(string detail) =>
         Problem(statusCode: StatusCodes.Status400BadRequest, title: "The file was not accepted", detail: detail);
 
     private static async Task<byte[]> ReadAllBytesAsync(IFormFile file, CancellationToken cancellationToken)

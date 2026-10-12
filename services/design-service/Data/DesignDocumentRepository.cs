@@ -1,6 +1,7 @@
 using System.Data.Common;
 using BuildNexus.DesignService.Models;
 using MySqlConnector;
+using System.Globalization;
 
 namespace BuildNexus.DesignService.Data;
 
@@ -278,7 +279,7 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         command.CommandText = sql;
         AddParameter(command, "@documentId", documentId);
 
-        return Convert.ToInt32(await command.ExecuteScalarAsync());
+        return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     }
 
     private static async Task InsertVersionAsync(
@@ -441,7 +442,7 @@ public class DesignDocumentRepository : IDesignDocumentRepository
         AddParameter(command, "@documentId", documentId);
         AddParameter(command, "@versionId", versionId);
 
-        return Convert.ToInt64(await command.ExecuteScalarAsync()) > 0;
+        return Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture) > 0;
     }
 
     private static async Task ApplyReviewDecisionAsync(

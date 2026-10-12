@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.DesignService.Models;
+using System.Globalization;
 
 namespace BuildNexus.DesignService.Data;
 
@@ -71,10 +72,10 @@ public class DesignDashboardRepository : IDesignDashboardRepository
             {
                 // MySqlConnector surfaces CHAR(36) as a Guid, not a string.
                 ProjectId = reader.GetGuid(reader.GetOrdinal("project_id")),
-                DocumentCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("document_count"))),
-                AwaitingReviewCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("awaiting_review_count"))),
-                RevisionRequestedCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("revision_requested_count"))),
-                ApprovedCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("approved_count")))
+                DocumentCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("document_count")), CultureInfo.InvariantCulture),
+                AwaitingReviewCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("awaiting_review_count")), CultureInfo.InvariantCulture),
+                RevisionRequestedCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("revision_requested_count")), CultureInfo.InvariantCulture),
+                ApprovedCount = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("approved_count")), CultureInfo.InvariantCulture)
             });
         }
 

@@ -1,0 +1,26 @@
+# Shared editor and analyzer settings for the whole repository.
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,csproj,props}]
+indent_size = 4
+
+[*.{ts,tsx,js,json,yml,yaml,md}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# --- .NET analyzers (CAxxxx), switched on by Directory.Build.props ----------
+[*.cs]
+
+# Logging performance hints. Both ask for every logger call to become a source-generated
+# [LoggerMessage] method, about 230 calls across the services. That is a refactor for
+# speed in hot paths, not a defect, so they stay visible as suggestions only.
+dotnet_diagnostic.CA1848.severity = suggestion
+dotnet_diagnostic.CA1873.severity = suggestion

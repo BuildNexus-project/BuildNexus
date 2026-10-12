@@ -1,0 +1,139 @@
+# Code quality and metrics
+
+How BuildNexus measures code quality automatically, what each number means, and how to read it. Part of the SE3112 testing pipeline (see "Test automation pipeline" in the root [README](../README.md)).
+
+## Tools
+
+| Tool | What it measures | Where it runs |
+|---|---|---|
+| **.NET analyzers** (`CAxxxx` rules, built into the SDK) | Bugs, performance and design problems in the C# source, as build warnings | Every `dotnet build`, locally and in CI |
+| **oxlint** | Problems in the React/TypeScript source | `npm run lint` in `frontend/`, and the `Lint` step in CI |
+| **Coverlet** | Which lines and branches the tests execute | The unit and integration test jobs |
+| **ReportGenerator** | Turns the coverage files into one HTML report and a per-service table | The unit and integration jobs, and the Test report job |
+| **SonarCloud** | Bugs, vulnerabilities, code smells, technical debt, duplication, coverage, and a pass/fail quality gate | The `static-analysis` job |
+
+## What was added for this
+
+| File | Purpose |
+|---|---|
+| `Directory.Build.props` | Switches the stricter analyzer level (`AnalysisMode=Recommended`) on for every production project. Test projects stay at the default level. |
+| `.editorconfig` | Shared editor settings, and the two analyzer rules deliberately kept quiet (see below) |
+| `SonarQube.Analysis.xml` | SonarCloud settings: coverage report paths, exclusions, wait for the quality gate |
+| `.github/workflows/ci.yml` | `static-analysis` job, both coverage formats, and the per-service coverage table in the Test report |
+
+The analyzers produce **warnings, never errors**, so the build stays green. They are a list to work through, not a gate.
+
+## The metrics
+
+| Metric | Meaning | Where to see it |
+|---|---|---|
+| **Coverage** | Share of lines (and branches) the tests run | Test report (per service), SonarCloud, the HTML coverage artifacts |
+| **Bugs** | Code that is probably wrong | SonarCloud, Issues |
+| **Vulnerabilities** and **Security Hotspots** | Code that may be exploitable, and code that needs a human to judge | SonarCloud |
+| **Code smells** | Code that works but is hard to maintain | SonarCloud, and the analyzer warnings in the build |
+| **Technical debt** | SonarCloud's estimate of the time needed to fix all the smells | SonarCloud, Overview |
+| **Duplication** | Share of lines that are copies of other lines | SonarCloud, Measures |
+| **Ratings A to E** | Reliability, Security and Maintainability grades. A is best. | SonarCloud, Overview |
+
+## The quality gate
+
+SonarCloud's default gate ("Sonar way") judges **new code**, meaning code changed since the last baseline, so old code does not block you:
+
+- coverage on new code is at least 80%
+- duplicated lines on new code are at most 3%
+- no new bugs, vulnerabilities or security hotspots left unreviewed (ratings of A)
+
+The `static-analysis` job waits for the gate verdict and **fails if the gate fails**. In the Test report summary the row shows PASS or FAIL.
+
+## Reading the SonarCloud dashboard
+
+1. **Overview**: the gate verdict at the top, then Reliability, Security, Maintainability, Coverage and Duplication for new code and overall.
+2. **Issues**: every finding with its severity and the line, and a "Why is this an issue?" explanation. Filter by type or file.
+3. **Measures**: every metric per file and per folder. Use it to find the services with the lowest coverage or the most duplication.
+4. **Code**: browse a file with coverage shown line by line (green is covered, red is not).
+5. **Activity**: the trend over time, which shows whether quality is improving.
+
+## One-time SonarCloud setup
+
+Done once, by one person with admin access to the GitHub organization:
+
+1. Sign in at sonarcloud.io with GitHub, create or choose the organization, and import this repository.
+2. Check that the organization key and project key shown on SonarCloud (Administration, Information) match the `/o:` and `/k:` values in the `Begin the analysis` step of the `static-analysis` job in `ci.yml`. Edit that line if they differ.
+3. Under Administration, Analysis Method, turn **Automatic Analysis off**. CI analysis and automatic analysis cannot run together.
+4. Create a token (My Account, Security) and save it in the GitHub repository as the secret `SONAR_TOKEN` (Settings, Secrets and variables, Actions). **Never put the token in a file.**
+
+Until the secret exists, the job skips itself with a visible warning and the pipeline stays green.
+
+## Before and after: analyzer warnings
+
+Counted from a clean build of every project, duplicates removed.
+
+| Rule | Meaning | Before | After |
+|---|---|---|---|
+| CA1305 | Number conversions that depend on the machine's locale (`Convert.ToInt32(x)`) | 41 | 0 |
+| CA1859 | A private helper declared to return `IActionResult` where it always returns one concrete type | 19 | 2 |
+| CA1822 | A method that uses no instance data and could be `static` | 10 | 0 |
+| xUnit2031 | `Assert.Single(items.Where(...))` instead of the overload that takes the filter | 2 | 0 |
+| CA1716 | A parameter named `error` clashes with a keyword in other .NET languages | 4 | 4 |
+| CA1000 | A static member on a generic class | 4 | 4 |
+| **Total** | | **80** | **10** |
+
+What was fixed, and why it matters:
+
+- **CA1305**: `Convert.ToInt32(value)` on a database value is correct on most machines, but the rule exists because the same call can behave differently under another locale. Passing `CultureInfo.InvariantCulture` makes the result the same everywhere.
+- **CA1859**: the helper methods that build error responses now declare the exact result type they return, so the compiler can call them directly instead of treating the result as a generic interface.
+- **CA1822**: the `DelayAsync` and `Refused` helpers do not touch the object's fields, so they are now `static`. That is both clearer and slightly faster.
+
+Left alone on purpose:
+
+- **CA1716 and CA1000** (8): fixing them means renaming a parameter on a public interface, or reshaping a generic type, in all five services at once. That is a design change, not a cleanup.
+- **CA1859 on two fields**: the `Allowed` and `CancellableFrom` fields in `ProjectStatusTransitions` are typed as read-only on purpose, so nothing can change the status rules. A concrete type would give that up.
+- **CA1848 and CA1873** (logging performance, about 230 calls): downgraded to suggestions in `.editorconfig`. They ask for every log call to become a source-generated method, which is a speed refactor and not a defect.
+
+## SonarCloud: first analysis and the quality gate
+
+The first CI analysis of this branch **failed the quality gate** (Sonar way) on two of its conditions. Coverage was fine.
+
+| Condition (new code) | Result | Required |
+|---|---|---|
+| Coverage | 95.18% (passed) | at least 80% |
+| Duplicated lines | **4.21%** (failed) | at most 3% |
+| Security rating | **C** (failed) | A |
+| New issues | 318 | no condition |
+
+### Security: 32 findings, all of Major severity
+
+Any Major finding gives rating C. Each group was either fixed or judged, as below.
+
+| Rule | Count | What it is | Decision |
+|---|---|---|---|
+| `githubactions:S7637` | 4 | Third-party actions referenced by a movable tag | **Fixed**: pinned to a commit SHA in `ci.yml` |
+| `S6505` (shell and GitHub Actions) | 2 | `npm ci` runs package install scripts | **Fixed**: `npm ci --ignore-scripts` (the only dependency with an install script is `fsevents`, macOS only) |
+| `csharpsquid:S2077` | 11 | SQL built with string interpolation | **False positive**: only the generated placeholder names (`@p0, @p1, ...`) are interpolated, and every value is bound as a parameter |
+| `yaml:S2068`, `csharpsquid:S2068` | 11 | The word "password" next to a literal | **Accepted**: the throwaway development credentials in the CI service containers and `appsettings.json`. No real secret is committed. |
+| `terraform:S6378`, `S6380` | 4 | App Service without managed identity or Azure-level authentication | **Accepted**: the services authenticate callers themselves with JWT, and use no Azure resource that needs a managed identity |
+
+The false-positive and accepted decisions are recorded in SonarCloud with a comment on each issue, so they are visible and reversible.
+
+### Duplication
+
+993 duplicated lines, mostly the same infrastructure files copied into each service on purpose: the Swagger authorization filter (five copies) and the Kafka connection code (three copies). The services are built and deployed independently, so they do not share a library. `sonar.cpd.exclusions` in `SonarQube.Analysis.xml` leaves exactly those files out of **duplication detection only**. They are still analyzed for bugs, smells and security. Business and application code is not excluded.
+
+## SonarCloud measures
+
+| Measure | `main` before (automatic analysis) | Branch, first CI analysis | Branch, after fixes |
+|---|---|---|---|
+| Quality gate | not computed | Failed | **Passed** |
+| Security | E, 44 open issues | C, 32 new vulnerabilities | **A, 0 vulnerabilities** |
+| Reliability | A, 8 open issues | A | **A, 0 bugs** |
+| Maintainability | A, 81 open issues | A | **A, 286 code smells, about 7 h 23 min of technical debt** |
+| Duplication, new code | 0.7% (whole project) | 4.21% | **0.8%** |
+| Duplication, whole project | | 11.4% | 8.7% |
+| Coverage, new code | not measured | 95.18% | **95.2%** |
+| Coverage, whole project | not measured | | 86.8% |
+
+Reading the table:
+
+- **Not an exact comparison.** The `main` column comes from SonarCloud's automatic analysis, which cannot see test results and scans differently. The branch columns come from the CI analysis, which excludes test code from the "sources" and reads real coverage. Use the branch columns to compare before and after.
+- **The gate looks at new code.** The whole-project duplication is still 8.7%, because the intentional per-service copies and older code are part of it. The gate measures only what the branch changed.
+- **Remaining smells (286)** are the maintainability backlog. They don't fail the gate and are the next thing to work through.
