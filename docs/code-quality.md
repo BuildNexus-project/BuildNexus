@@ -90,16 +90,42 @@ Left alone on purpose:
 - **CA1859 on two fields**: the `Allowed` and `CancellableFrom` fields in `ProjectStatusTransitions` are typed as read-only on purpose, so nothing can change the status rules. A concrete type would give that up.
 - **CA1848 and CA1873** (logging performance, about 230 calls): downgraded to suggestions in `.editorconfig`. They ask for every log call to become a source-generated method, which is a speed refactor and not a defect.
 
-## SonarCloud findings
+## SonarCloud: first analysis and the quality gate
 
-Filled in after the first analysis, from the Overview and Measures pages.
+The first CI analysis of this branch **failed the quality gate** (Sonar way) on two of its conditions. Coverage was fine.
 
-| Measure | First analysis | After fixes |
+| Condition (new code) | Result | Required |
 |---|---|---|
-| Quality gate | | |
-| Bugs | | |
-| Vulnerabilities | | |
-| Code smells | | |
-| Technical debt | | |
-| Duplication | | |
-| Coverage (overall) | | |
+| Coverage | 95.18% (passed) | at least 80% |
+| Duplicated lines | **4.21%** (failed) | at most 3% |
+| Security rating | **C** (failed) | A |
+| New issues | 318 | no condition |
+
+### Security: 32 findings, all of Major severity
+
+Any Major finding gives rating C. Each group was either fixed or judged, as below.
+
+| Rule | Count | What it is | Decision |
+|---|---|---|---|
+| `githubactions:S7637` | 4 | Third-party actions referenced by a movable tag | **Fixed**: pinned to a commit SHA in `ci.yml` |
+| `S6505` (shell and GitHub Actions) | 2 | `npm ci` runs package install scripts | **Fixed**: `npm ci --ignore-scripts` (the only dependency with an install script is `fsevents`, macOS only) |
+| `csharpsquid:S2077` | 11 | SQL built with string interpolation | **False positive**: only the generated placeholder names (`@p0, @p1, ...`) are interpolated, and every value is bound as a parameter |
+| `yaml:S2068`, `csharpsquid:S2068` | 11 | The word "password" next to a literal | **Accepted**: the throwaway development credentials in the CI service containers and `appsettings.json`. No real secret is committed. |
+| `terraform:S6378`, `S6380` | 4 | App Service without managed identity or Azure-level authentication | **Accepted**: the services authenticate callers themselves with JWT, and use no Azure resource that needs a managed identity |
+
+The false-positive and accepted decisions are recorded in SonarCloud with a comment on each issue, so they are visible and reversible.
+
+### Duplication
+
+993 duplicated lines, mostly the same infrastructure files copied into each service on purpose: the Swagger authorization filter (five copies) and the Kafka connection code (three copies). The services are built and deployed independently, so they do not share a library. `sonar.cpd.exclusions` in `SonarQube.Analysis.xml` leaves exactly those files out of **duplication detection only**. They are still analyzed for bugs, smells and security. Business and application code is not excluded.
+
+## SonarCloud measures
+
+| Measure | `main` before (automatic analysis) | Branch, first CI analysis | After fixes |
+|---|---|---|---|
+| Quality gate | not computed | Failed | |
+| Security rating | E (44 issues) | C (32 new) | |
+| Reliability | A (8 issues) | | |
+| Maintainability | A (81 issues) | | |
+| Duplication | 0.7% | 4.21% on new code | |
+| Coverage | not measured | 95.18% on new code | |

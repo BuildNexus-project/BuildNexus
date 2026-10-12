@@ -25,6 +25,13 @@
 # path. A project added later must be added to the lists below or it is never
 # built and never tested.
 
+# Third-party actions (anything outside actions/*) are pinned to a full commit SHA,
+# with the version they were taken from in a trailing comment. A tag such as v3 can be
+# moved by the action's owner after the fact; a commit cannot. GitHub's own actions/*
+# stay on version tags. `npm ci` runs with --ignore-scripts: the only frontend
+# dependency with an install script is fsevents (macOS only), so nothing is lost, and
+# a compromised package can no longer run code while it is being installed.
+
 name: CI
 
 on:
@@ -141,7 +148,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # `tsc -b && vite build` — this type-checks as well as bundles, so a type
       # error fails the build stage rather than surfacing at runtime.
@@ -259,7 +266,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # oxlint, the same check scripts/run-all-tests.sh runs locally. Warnings are
       # printed but do not fail the job; an error does.
@@ -583,7 +590,7 @@ jobs:
       - name: Start the frontend
         working-directory: frontend
         run: |
-          npm ci
+          npm ci --ignore-scripts
           nohup npm run dev > ../vite.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://localhost:5173 > /dev/null && exit 0
@@ -652,10 +659,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build the ${{ matrix.service }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.context }}/Dockerfile
@@ -870,7 +877,7 @@ jobs:
           # the default shallow checkout does not contain.
           fetch-depth: 0
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
           # One entry per deployable service. A later deployment story adds its
@@ -936,7 +943,7 @@ jobs:
       # Service is destroyed and recreated by Terraform, so it has to be
       # refreshed after a teardown — see infra/RUNBOOK.md.
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_USER_SERVICE }}
@@ -1009,7 +1016,7 @@ jobs:
       # Service's, it is regenerated whenever Terraform recreates the App Service
       # and has to be refreshed after a teardown — see infra/RUNBOOK.md.
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROJECT_SERVICE }}
@@ -1081,7 +1088,7 @@ jobs:
       # whenever Terraform recreates the App Service, and has to be refreshed
       # after a teardown — see infra/RUNBOOK.md.
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_DESIGN_SERVICE }}
@@ -1145,7 +1152,7 @@ jobs:
       # A publish profile for THIS App Service only, in its own repository secret.
       # Regenerated whenever Terraform recreates the App Service — see infra/RUNBOOK.md.
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_CONSTRUCTION_SERVICE }}
@@ -1205,7 +1212,7 @@ jobs:
       # A publish profile for THIS App Service only, in its own repository secret.
       # Regenerated whenever Terraform recreates the App Service — see infra/RUNBOOK.md.
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PAYMENT_SERVICE }}
@@ -1275,7 +1282,7 @@ jobs:
       # whenever Terraform recreates the App Service, and has to be refreshed
       # after a teardown — see infra/RUNBOOK.md.
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_API_GATEWAY }}

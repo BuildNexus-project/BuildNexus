@@ -31,6 +31,14 @@
        type definitions would otherwise drag the coverage figure down. -->
   <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.test.ts,**/*.test.tsx,frontend/src/main.tsx,frontend/src/test/**</Property>
 
+  <!-- Files left out of DUPLICATION detection only (they are still analyzed for bugs,
+       smells and security). Each microservice owns its copy of this infrastructure
+       code on purpose: services are built, versioned and deployed independently, and a
+       shared library would tie their release cycles together (see PlatformRoles.cs).
+       The copies are Swagger's authorization filter and the Kafka connection glue.
+       Application and business code is NOT listed here and still counts. -->
+  <Property Name="sonar.cpd.exclusions">**/ApiDocs/**,**/Messaging/KafkaBrokerSettings.cs,**/Configuration/KafkaOptions.cs,**/Messaging/Kafka*EventPublisher.cs</Property>
+
   <!-- Make the CI step wait for SonarCloud's quality gate verdict and fail if the
        gate fails, instead of finishing as soon as the upload is done. -->
   <Property Name="sonar.qualitygate.wait">true</Property>
