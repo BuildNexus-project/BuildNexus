@@ -175,18 +175,22 @@ jobs:
       # for a database without the trait fails here on a refused connection, rather
       # than quietly relying on a container this job does not start.
       #
+      # The trailing "-- ...Format=cobertura,opencover" makes coverlet write both file
+      # types from the one run: Cobertura for ReportGenerator below, OpenCover because
+      # that is the format SonarCloud's C# analysis reads (static-analysis job).
+      #
       # --collect:"XPlat Code Coverage" activates coverlet.collector, which every
       # *-tests project already references (US-33) — it was sitting unused until
       # now. Each run writes a Cobertura XML under its own results directory, one
       # per service, so a project's own file cannot be confused with another's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
-          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/payment-service
-          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/payment-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
 
       # Kept as a build artifact rather than only living on the runner: the raw
       # Cobertura files are what a merged, human-readable report is built from
@@ -429,11 +433,11 @@ jobs:
       # directory, kept apart from the unit stage's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/user-service
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/project-service
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/design-service
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/construction-service
-          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/payment-service
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/user-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/project-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/design-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/construction-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/payment-service -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
 
       - name: Upload raw integration coverage
         if: always()
@@ -470,7 +474,7 @@ jobs:
           reportgenerator \
             -reports:"coverage/**/coverage.cobertura.xml" \
             -targetdir:"coverage/report" \
-            -reporttypes:"Html;MarkdownSummaryGithub"
+            -reporttypes:"Html;MarkdownSummaryGithub;JsonSummary"
 
       # Headed, because the unit job's own summary is unit tests only and the
       # two would otherwise read as a disagreement.
@@ -676,10 +680,105 @@ jobs:
   # scripts/ci-test-summary.sh.
 
   # ----------------------------------------------------- static analysis ----
-  # INSERTION POINT for the static-analysis job (branch feature/SE3112-02-code-quality-sonar).
-  # Add the job here as `static-analysis:`. It is cheap, so it can run on every push.
-  # Then add `static-analysis` to the `needs` list of `test-report` below and a row
-  # for it in scripts/ci-test-summary.sh.
+  # SonarCloud: code smells, bugs, vulnerabilities, duplication and technical debt for
+  # the C# services and the React app in one analysis, plus the coverage the test
+  # jobs above already measured. Settings are in SonarQube.Analysis.xml.
+  #
+  # Runs after the test jobs so their coverage files can be downloaded and handed to
+  # the scanner. The scanner's own `end` step then waits for SonarCloud's quality gate
+  # and fails this job if the gate fails (sonar.qualitygate.wait).
+  #
+  # Needs the SONAR_TOKEN repository secret. Without it the job does nothing and says
+  # so in a warning, so a fork's pull request, or a repository that has not set
+  # SonarCloud up yet, still goes green.
+  static-analysis:
+    name: Static analysis (SonarCloud)
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests, backend-integration-tests, frontend-unit-tests]
+    timeout-minutes: 20
+    outputs:
+      ran: ${{ steps.sonar.outputs.enabled }}
+
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    steps:
+      # The whole history, not the default single commit: SonarCloud uses it to
+      # blame lines and to tell new code from old.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for the SonarCloud token
+        id: sonar
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SONAR_TOKEN is not set, so static analysis was skipped. Add it under Settings, Secrets and variables, Actions."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.sonar.outputs.enabled == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # The scanner's JavaScript and TypeScript analysis runs on Java.
+      - if: steps.sonar.outputs.enabled == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The coverage the test jobs uploaded, put where SonarQube.Analysis.xml expects it.
+      - name: Download backend unit coverage
+        if: steps.sonar.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage-raw
+          path: coverage/unit
+
+      - name: Download backend integration coverage
+        if: steps.sonar.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-integration-coverage-raw
+          path: coverage/integration
+
+      - name: Download frontend coverage
+        if: steps.sonar.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage
+
+      - name: Install the SonarScanner for .NET
+        if: steps.sonar.outputs.enabled == 'true'
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      # begin -> build -> end is how the scanner works: it watches the build to see the
+      # C# code the compiler sees. /s: loads the committed settings; only the token
+      # is passed here, from the secret.
+      - name: Begin the analysis
+        if: steps.sonar.outputs.enabled == 'true'
+        run: dotnet sonarscanner begin /s:"$GITHUB_WORKSPACE/SonarQube.Analysis.xml" /d:sonar.token="$SONAR_TOKEN"
+
+      # The repository has no .sln, and the scanner wants one build to watch. So the
+      # job makes a throwaway solution of every project and builds that once. It is
+      # never committed.
+      - name: Build every project
+        if: steps.sonar.outputs.enabled == 'true'
+        run: |
+          dotnet new sln --name BuildNexus --format sln
+          dotnet sln BuildNexus.sln add $(find services api-gateway api-gateway-tests e2e-tests -name '*.csproj' -not -path '*/bin/*' -not -path '*/obj/*')
+          dotnet build BuildNexus.sln -c Release --no-incremental
+
+      # Uploads the results and, because of sonar.qualitygate.wait, waits for the
+      # quality gate. A failed gate fails this step.
+      - name: End the analysis and check the quality gate
+        if: steps.sonar.outputs.enabled == 'true'
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
 
   # ------------------------------------------------------------- report ----
   # One page that answers "did the pipeline pass, and how many tests ran" for the
@@ -691,7 +790,7 @@ jobs:
   test-report:
     name: Test report
     runs-on: ubuntu-latest
-    needs: [backend-unit-tests, backend-integration-tests, frontend-unit-tests, docker-build]
+    needs: [backend-unit-tests, backend-integration-tests, frontend-unit-tests, docker-build, static-analysis]
     if: always()
 
     steps:
@@ -722,12 +821,21 @@ jobs:
           name: frontend-coverage-report
           path: reports/frontend
 
+      - name: Download combined coverage report
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-combined-coverage-report
+          path: reports/coverage
+
       - name: Write the combined summary
         env:
           UNIT_RESULT: ${{ needs.backend-unit-tests.result }}
           INTEGRATION_RESULT: ${{ needs.backend-integration-tests.result }}
           FRONTEND_RESULT: ${{ needs.frontend-unit-tests.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
+          STATIC_RESULT: ${{ needs.static-analysis.result }}
+          STATIC_RAN: ${{ needs.static-analysis.outputs.ran }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash scripts/ci-test-summary.sh reports >> "$GITHUB_STEP_SUMMARY"
 

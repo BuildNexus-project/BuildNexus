@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SonarCloud analysis settings, read by the SonarScanner for .NET in the
+     `static-analysis` job of .github/workflows/ci.yml (passed with /s:).
+
+     Only settings that are safe to commit live here. The token is not one of
+     them: it comes from the SONAR_TOKEN repository secret, on the scanner's
+     command line, and is never written to a file.
+
+     One analysis covers both halves of the system. The scanner analyzes the C#
+     projects it sees being built and, by default, the React files in frontend/. -->
+<SonarQubeAnalysisProperties xmlns="http://www.sonarsource.com/msbuild/integration/2015/1">
+
+  <!-- Where the results go. Check the key and organization against what
+       SonarCloud shows on the project's Information page. -->
+  <Property Name="sonar.host.url">https://sonarcloud.io</Property>
+  <Property Name="sonar.organization">buildnexus-project</Property>
+  <Property Name="sonar.projectKey">BuildNexus-project_BuildNexus</Property>
+  <Property Name="sonar.projectName">BuildNexus</Property>
+
+  <!-- Coverage the test jobs already measured. The C# scanner reads OpenCover
+       (ci.yml makes coverlet write it next to the Cobertura files); the frontend
+       reads the lcov file vitest writes. -->
+  <Property Name="sonar.cs.opencover.reportsPaths">coverage/**/coverage.opencover.xml</Property>
+  <Property Name="sonar.javascript.lcov.reportPaths">frontend/coverage/lcov.info</Property>
+
+  <!-- Not analyzed: build output, installed packages, generated reports and the SQL
+       migration scripts. -->
+  <Property Name="sonar.exclusions">**/bin/**,**/obj/**,**/node_modules/**,**/coverage/**,**/dist/**,**/Migrations/*.sql</Property>
+  <Property Name="sonar.test.inclusions">**/*-tests/**,**/*.test.ts,**/*.test.tsx,frontend/src/test/**</Property>
+
+  <!-- Files that count as untested code only if they hold logic. Startup wiring and
+       type definitions would otherwise drag the coverage figure down. -->
+  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.test.ts,**/*.test.tsx,frontend/src/main.tsx,frontend/src/test/**</Property>
+
+  <!-- Make the CI step wait for SonarCloud's quality gate verdict and fail if the
+       gate fails, instead of finishing as soon as the upload is done. -->
+  <Property Name="sonar.qualitygate.wait">true</Property>
+
+</SonarQubeAnalysisProperties>
