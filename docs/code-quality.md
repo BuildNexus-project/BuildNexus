@@ -121,11 +121,19 @@ The false-positive and accepted decisions are recorded in SonarCloud with a comm
 
 ## SonarCloud measures
 
-| Measure | `main` before (automatic analysis) | Branch, first CI analysis | After fixes |
+| Measure | `main` before (automatic analysis) | Branch, first CI analysis | Branch, after fixes |
 |---|---|---|---|
-| Quality gate | not computed | Failed | |
-| Security rating | E (44 issues) | C (32 new) | |
-| Reliability | A (8 issues) | | |
-| Maintainability | A (81 issues) | | |
-| Duplication | 0.7% | 4.21% on new code | |
-| Coverage | not measured | 95.18% on new code | |
+| Quality gate | not computed | Failed | **Passed** |
+| Security | E, 44 open issues | C, 32 new vulnerabilities | **A, 0 vulnerabilities** |
+| Reliability | A, 8 open issues | A | **A, 0 bugs** |
+| Maintainability | A, 81 open issues | A | **A, 286 code smells, about 7 h 23 min of technical debt** |
+| Duplication, new code | 0.7% (whole project) | 4.21% | **0.8%** |
+| Duplication, whole project | | 11.4% | 8.7% |
+| Coverage, new code | not measured | 95.18% | **95.2%** |
+| Coverage, whole project | not measured | | 86.8% |
+
+Reading the table:
+
+- **Not an exact comparison.** The `main` column comes from SonarCloud's automatic analysis, which cannot see test results and scans differently. The branch columns come from the CI analysis, which excludes test code from the "sources" and reads real coverage. Use the branch columns to compare before and after.
+- **The gate looks at new code.** The whole-project duplication is still 8.7%, because the intentional per-service copies and older code are part of it. The gate measures only what the branch changed.
+- **Remaining smells (286)** are the maintainability backlog. They don't fail the gate and are the next thing to work through.
