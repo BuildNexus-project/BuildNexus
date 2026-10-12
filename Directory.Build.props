@@ -1,0 +1,25 @@
+<Project>
+
+  <!-- Applies to every project in the repository, tests included.
+
+       Microsoft.CodeAnalysis.NetAnalyzers (the CAxxxx rules) ships inside the .NET SDK, so
+       no package is referenced: these settings only switch more of its rules on.
+       "Recommended" is the stricter of the two levels the SDK offers; the default one
+       reports almost nothing. The rules show up as build warnings, never errors, so the
+       build and CI stay green and the warnings are a list to work through.
+       Which rules are quieter than the default, and why, is in .editorconfig. -->
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>Recommended</AnalysisMode>
+  </PropertyGroup>
+
+  <!-- Test projects (names ending in "Tests") stay at the SDK default level. At
+       "Recommended" they report several hundred CA1707 warnings alone, because test
+       method names use underscores on purpose (Method_does_X_when_Y). The stricter
+       level is for production code. -->
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('Tests'))">
+    <AnalysisMode>Default</AnalysisMode>
+  </PropertyGroup>
+
+</Project>
