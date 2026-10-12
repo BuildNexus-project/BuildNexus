@@ -10,11 +10,10 @@
      projects it sees being built and, by default, the React files in frontend/. -->
 <SonarQubeAnalysisProperties xmlns="http://www.sonarsource.com/msbuild/integration/2015/1">
 
-  <!-- Where the results go. Check the key and organization against what
-       SonarCloud shows on the project's Information page. -->
+  <!-- Where the results go. The project key and organization key are not here:
+       the scanner requires them on its command line, so they are in the `begin` step
+       of the static-analysis job in ci.yml. -->
   <Property Name="sonar.host.url">https://sonarcloud.io</Property>
-  <Property Name="sonar.organization">buildnexus-project</Property>
-  <Property Name="sonar.projectKey">BuildNexus-project_BuildNexus</Property>
   <Property Name="sonar.projectName">BuildNexus</Property>
 
   <!-- Coverage the test jobs already measured. The C# scanner reads OpenCover

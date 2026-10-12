@@ -18,7 +18,7 @@ How BuildNexus measures code quality automatically, what each number means, and 
 |---|---|
 | `Directory.Build.props` | Switches the stricter analyzer level (`AnalysisMode=Recommended`) on for every production project. Test projects stay at the default level. |
 | `.editorconfig` | Shared editor settings, and the two analyzer rules deliberately kept quiet (see below) |
-| `SonarQube.Analysis.xml` | SonarCloud settings: organization, project key, coverage report paths, exclusions, wait for the quality gate |
+| `SonarQube.Analysis.xml` | SonarCloud settings: coverage report paths, exclusions, wait for the quality gate |
 | `.github/workflows/ci.yml` | `static-analysis` job, both coverage formats, and the per-service coverage table in the Test report |
 
 The analyzers produce **warnings, never errors**, so the build stays green. They are a list to work through, not a gate.
@@ -58,7 +58,7 @@ The `static-analysis` job waits for the gate verdict and **fails if the gate fai
 Done once, by one person with admin access to the GitHub organization:
 
 1. Sign in at sonarcloud.io with GitHub, create or choose the organization, and import this repository.
-2. Check that the organization key and project key shown on SonarCloud match `sonar.organization` and `sonar.projectKey` in `SonarQube.Analysis.xml`. Edit the file if they differ.
+2. Check that the organization key and project key shown on SonarCloud (Administration, Information) match the `/o:` and `/k:` values in the `Begin the analysis` step of the `static-analysis` job in `ci.yml`. Edit that line if they differ.
 3. Under Administration, Analysis Method, turn **Automatic Analysis off**. CI analysis and automatic analysis cannot run together.
 4. Create a token (My Account, Security) and save it in the GitHub repository as the secret `SONAR_TOKEN` (Settings, Secrets and variables, Actions). **Never put the token in a file.**
 

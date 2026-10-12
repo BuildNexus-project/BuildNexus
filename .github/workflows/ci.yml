@@ -758,11 +758,15 @@ jobs:
         run: dotnet tool install --global dotnet-sonarscanner
 
       # begin -> build -> end is how the scanner works: it watches the build to see the
-      # C# code the compiler sees. /s: loads the committed settings; only the token
-      # is passed here, from the secret.
+      # C# code the compiler sees.
+      #   /k: and /o:  the SonarCloud project key and organization key. The scanner insists
+      #                on /k: here; it will not read it from the settings file. Both are
+      #                shown on SonarCloud under the project's Administration, Information.
+      #   /s:          the committed settings file (SonarQube.Analysis.xml)
+      #   /d:sonar.token  the only secret, passed from the SONAR_TOKEN repository secret
       - name: Begin the analysis
         if: steps.sonar.outputs.enabled == 'true'
-        run: dotnet sonarscanner begin /s:"$GITHUB_WORKSPACE/SonarQube.Analysis.xml" /d:sonar.token="$SONAR_TOKEN"
+        run: dotnet sonarscanner begin /k:"BuildNexus-project_BuildNexus" /o:"buildnexus-project" /s:"$GITHUB_WORKSPACE/SonarQube.Analysis.xml" /d:sonar.token="$SONAR_TOKEN"
 
       # The repository has no .sln, and the scanner wants one build to watch. So the
       # job makes a throwaway solution of every project and builds that once. It is
