@@ -9,6 +9,7 @@
 #   integration      Sprint 3  (below — US-30)
 #   end-to-end       Sprint 4  (below — US-31, manual trigger)
 #   docker build     Sprint 4  (below — SCRUM-40, one image per service)
+#   report           SE3112    (below — one summary page for the whole run)
 #   deploy           Sprint 4  (below — User Service SCRUM-52, Project Service SCRUM-53,
 #                               Design Service SCRUM-54, Construction Service SCRUM-55,
 #                               Payment Service SCRUM-56, API Gateway)
@@ -34,8 +35,25 @@ on:
   # And again on the way in, in case the target has moved since the last push.
   pull_request:
     branches: [develop, main]
-  # Starts the end-to-end job below by hand (Actions tab -> CI -> Run workflow).
+  # Starts the slow stages by hand (Actions tab -> CI -> Run workflow) and lets you
+  # pick which ones. They are slow enough that running them on every push would
+  # waste minutes, so each has a checkbox here instead. The end-to-end job reads
+  # run_e2e; the mutation and load jobs, added by their own stories, read the
+  # other two the same way: `if: github.event_name == 'workflow_dispatch' && inputs.run_mutation`.
   workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: 'Run the end-to-end tests (Selenium)'
+        type: boolean
+        default: true
+      run_mutation:
+        description: 'Run mutation testing'
+        type: boolean
+        default: false
+      run_load:
+        description: 'Run load testing (JMeter)'
+        type: boolean
+        default: false
 
 # A second push to the same branch makes the run in progress obsolete.
 concurrency:
@@ -163,12 +181,12 @@ jobs:
       # per service, so a project's own file cannot be confused with another's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
-          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/payment-service
-          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --filter "Category!=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/construction-service
+          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/payment-service
+          dotnet test api-gateway-tests/ApiGateway.Tests.csproj -c Release --filter "Category!=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/api-gateway
 
       # Kept as a build artifact rather than only living on the runner: the raw
       # Cobertura files are what a merged, human-readable report is built from
@@ -239,12 +257,19 @@ jobs:
       - name: Install
         run: npm ci
 
+      # oxlint, the same check scripts/run-all-tests.sh runs locally. Warnings are
+      # printed but do not fail the job; an error does.
+      - name: Lint
+        run: npm run lint
+
       # `vitest run --coverage` (US-33) — the one-shot runner, instrumented.
       # Plain `vitest` would watch and the job would never finish; V8 does the
       # instrumentation itself, so this measures exactly what ran rather than a
       # separate pass over transformed source.
+      # The extra flags also write a JSON results file, which the test-report job
+      # reads to count tests. The default reporter keeps the normal console output.
       - name: Test
-        run: npm run test:coverage
+        run: npm run test:coverage -- --reporter=default --reporter=json --outputFile.json=coverage/test-results.json
 
       # The json-summary reporter writes one small file with the four overall
       # percentages — turned into a short table in the job's own summary page,
@@ -404,11 +429,11 @@ jobs:
       # directory, kept apart from the unit stage's.
       - name: Test
         run: |
-          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/user-service
-          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/project-service
-          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/design-service
-          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/construction-service
-          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category=Integration" --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/payment-service
+          dotnet test services/user-service-tests/UserService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/user-service
+          dotnet test services/project-service-tests/ProjectService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/project-service
+          dotnet test services/design-service-tests/DesignService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/design-service
+          dotnet test services/construction-service-tests/ConstructionService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/construction-service
+          dotnet test services/payment-service-tests/PaymentService.Tests.csproj -c Release --filter "Category=Integration" --logger trx --collect:"XPlat Code Coverage" --results-directory ./coverage/integration/payment-service
 
       - name: Upload raw integration coverage
         if: always()
@@ -493,7 +518,7 @@ jobs:
   backend-e2e-tests:
     name: End-to-end tests (Selenium)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
     needs: backend-integration-tests
     timeout-minutes: 30
 
@@ -634,6 +659,77 @@ jobs:
           tags: buildnexus/${{ matrix.service }}:ci
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+  # ---------------------------------------------------- mutation testing ----
+  # INSERTION POINT for the mutation-testing job (branch feature/SE3112-04-mutation-testing).
+  # Add the job here as `mutation-tests:` with
+  #   if: github.event_name == 'workflow_dispatch' && inputs.run_mutation
+  # It is slow, so it runs by hand only. Then add `mutation-tests` to the `needs`
+  # list of `test-report` below and a row for it in scripts/ci-test-summary.sh.
+
+  # ------------------------------------------------------- load testing ----
+  # INSERTION POINT for the load-testing job (branch feature/SE3112-05-load-testing).
+  # Add the job here as `load-tests:` with
+  #   if: github.event_name == 'workflow_dispatch' && inputs.run_load
+  # It starts the docker compose stack, so it runs by hand only. Then add
+  # `load-tests` to the `needs` list of `test-report` below and a row for it in
+  # scripts/ci-test-summary.sh.
+
+  # ----------------------------------------------------- static analysis ----
+  # INSERTION POINT for the static-analysis job (branch feature/SE3112-02-code-quality-sonar).
+  # Add the job here as `static-analysis:`. It is cheap, so it can run on every push.
+  # Then add `static-analysis` to the `needs` list of `test-report` below and a row
+  # for it in scripts/ci-test-summary.sh.
+
+  # ------------------------------------------------------------- report ----
+  # One page that answers "did the pipeline pass, and how many tests ran" for the
+  # whole run. Each stage above already publishes its own coverage summary; this
+  # puts the verdicts side by side on the run's summary page.
+  #
+  # `if: always()`, so the report is written even when a stage failed, which is
+  # exactly when it is wanted. The job itself then fails if any stage did.
+  test-report:
+    name: Test report
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests, backend-integration-tests, frontend-unit-tests, docker-build]
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The raw backend files hold each project's .trx results as well as its
+      # coverage (both are written to the same --results-directory). A stage that
+      # never got as far as uploading has nothing to download, which is not an
+      # error here: its row just shows dashes.
+      - name: Download backend unit test results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage-raw
+          path: reports/unit
+
+      - name: Download backend integration test results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-integration-coverage-raw
+          path: reports/integration
+
+      - name: Download frontend test results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: reports/frontend
+
+      - name: Write the combined summary
+        env:
+          UNIT_RESULT: ${{ needs.backend-unit-tests.result }}
+          INTEGRATION_RESULT: ${{ needs.backend-integration-tests.result }}
+          FRONTEND_RESULT: ${{ needs.frontend-unit-tests.result }}
+          DOCKER_RESULT: ${{ needs.docker-build.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/ci-test-summary.sh reports >> "$GITHUB_STEP_SUMMARY"
 
   # --------------------------------------------------------------- deploy ----
   # Which services actually changed.
