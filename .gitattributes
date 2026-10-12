@@ -7,3 +7,6 @@ infra/performance-tests/fixtures/*.pdf binary
 # checking-out machine - a CRLF-mangled shebang line makes bash fail with
 # "$'\r': command not found" before the script's own logic ever runs.
 *.sh text eol=lf
+
+# Shell scripts must keep Unix line endings, or the shebang line fails on Linux (CI).
+*.sh text eol=lf

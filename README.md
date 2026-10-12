@@ -156,3 +156,61 @@ Every test run also measures coverage (US-33):
 Both publish their full report as a CI build artifact (`backend-coverage-report`, `frontend-coverage-report`) on every run, pass or fail — not only living in the job log.
 
 **Team target: a rough 70%**, agreed as a goal rather than a gate — CI reports the number on every run but does not fail the build on it. Backend suites are already fairly thorough after US-29; the frontend currently measures at roughly 90% lines. Revisit turning this into an enforced minimum once a few sprints of real numbers exist to set one sensibly, rather than picking a gate before anyone has seen the data.
+
+## Test automation pipeline
+
+SE3112 testing pipeline. One workflow, `.github/workflows/ci.yml`, runs every automated check, and one script, `scripts/run-all-tests.sh`, runs the same stages on a laptop. Both end in a single PASS/FAIL table.
+
+### Stages
+
+| # | Stage | What it checks | Runs |
+|---|---|---|---|
+| 1 | Build | Backend and frontend compile | Every push and PR |
+| 2 | Unit tests | xUnit (6 projects) and Vitest, with coverage | Every push and PR |
+| 3 | Integration tests | xUnit tests that need real MySQL and Kafka (started from docker compose) | Every push and PR, after unit tests |
+| 4 | Docker build | All six service images build | Every push and PR |
+| 5 | End-to-end tests | Selenium drives the real UI against the whole stack | By hand |
+| 6 | Test report | One summary page: verdict and test count per stage, links to the coverage reports | Every push and PR, always |
+
+Mutation testing, load testing and static analysis are added to the same workflow by the individual branches listed below. Each has a marked insertion point in `ci.yml`, and mutation and load run by hand only.
+
+### Run it locally
+
+You need the .NET 10 SDK, Node 22 (`nvm use`), Docker Desktop, and `infra/.env` (copy `infra/.env.example`). From the repository root, in Git Bash or any Linux or macOS shell:
+
+```bash
+scripts/run-all-tests.sh                  # all stages
+scripts/run-all-tests.sh unit             # only the backend unit tests
+scripts/run-all-tests.sh unit frontend    # any combination of: unit integration frontend
+```
+
+It prints a table like this at the end (times vary by machine), and exits non-zero if any stage failed:
+
+```
+Stage                        Result Time     Tests
+---------------------------- ------ -------- -----
+Backend unit tests           PASS   68s      1232
+Backend integration tests    PASS   66s      335
+Frontend lint                PASS   1s       -
+Frontend tests               PASS   ...      796
+```
+
+The frontend stages need the Node version in `.nvmrc`. On any other version the script stops with a message telling you to run `nvm use`, instead of reporting hundreds of confusing failures.
+
+The integration stage starts the six databases and Kafka itself and stops them afterwards. If something on your machine already uses port 3306 (a local MySQL), it moves `user-db` to 3308 automatically.
+
+### Run it in CI
+
+- **Automatically:** every push and pull request runs stages 1 to 4 and 6.
+- **By hand:** Actions tab, then CI, then **Run workflow**. Tick the slow stages you want: end-to-end, mutation testing, load testing.
+- **Reading the result:** open the run. The **Test report** job's summary shows every stage side by side, and the coverage reports (`backend-coverage-report`, `backend-combined-coverage-report`, `frontend-coverage-report`) are under **Artifacts**.
+
+### Who did which feature
+
+| Area | Tool | Student | Branch |
+|---|---|---|---|
+| Test automation pipeline (group) | GitHub Actions, `scripts/run-all-tests.sh` | | `feature/SE3112-01-test-automation-pipeline` |
+| Unit testing and mocking | xUnit, Moq | | `feature/SE3112-03-unit-testing-mocking` |
+| Mutation testing | Stryker.NET | | `feature/SE3112-04-mutation-testing` |
+| Load and performance testing | JMeter | | `feature/SE3112-05-load-testing` |
+| Code quality and metrics | SonarCloud, ReportGenerator | | `feature/SE3112-02-code-quality-sonar` |
