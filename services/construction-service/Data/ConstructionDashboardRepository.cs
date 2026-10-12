@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.ConstructionService.Models;
+using System.Globalization;
 
 namespace BuildNexus.ConstructionService.Data;
 
@@ -127,8 +128,8 @@ public class ConstructionDashboardRepository : IConstructionDashboardRepository
             // An aggregate query always returns exactly one row.
             await reader.ReadAsync(cancellationToken);
 
-            total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total")));
-            overdue = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("overdue")));
+            total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total")), CultureInfo.InvariantCulture);
+            overdue = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("overdue")), CultureInfo.InvariantCulture);
         }
 
         var items = new List<OutstandingMilestone>();
@@ -211,8 +212,8 @@ public class ConstructionDashboardRepository : IConstructionDashboardRepository
 
         while (await reader.ReadAsync(cancellationToken))
         {
-            var total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total_milestones")));
-            var completed = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed_milestones")));
+            var total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total_milestones")), CultureInfo.InvariantCulture);
+            var completed = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed_milestones")), CultureInfo.InvariantCulture);
             var phase = reader.GetOrdinal("phase_status");
 
             rows.Add(new ConstructionProgressReportRow
@@ -223,8 +224,8 @@ public class ConstructionDashboardRepository : IConstructionDashboardRepository
                     : Enum.Parse<ConstructionPhaseStatus>(reader.GetString(phase)),
                 TotalMilestones = total,
                 CompletedMilestones = completed,
-                InProgressMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("in_progress_milestones"))),
-                NotStartedMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("not_started_milestones"))),
+                InProgressMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("in_progress_milestones")), CultureInfo.InvariantCulture),
+                NotStartedMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("not_started_milestones")), CultureInfo.InvariantCulture),
                 ProgressPercent = ProgressPercentage.Of(completed, total)
             });
         }

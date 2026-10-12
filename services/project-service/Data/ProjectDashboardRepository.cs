@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.ProjectService.Models;
+using System.Globalization;
 
 namespace BuildNexus.ProjectService.Data;
 
@@ -61,7 +62,7 @@ public class ProjectDashboardRepository : IProjectDashboardRepository
             {
                 Status = Enum.Parse<ProjectStatus>(reader.GetString(reader.GetOrdinal("status"))),
                 // COUNT(*) is a BIGINT; the value is a tally of projects, not a key.
-                Count = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("project_count")))
+                Count = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("project_count")), CultureInfo.InvariantCulture)
             });
         }
 

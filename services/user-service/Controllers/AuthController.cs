@@ -332,7 +332,7 @@ public class AuthController : ControllerBase
         Role = user.Role.ToString()
     };
 
-    private IActionResult EmailAlreadyRegistered(string email)
+    private ConflictObjectResult EmailAlreadyRegistered(string email)
     {
         _logger.LogInformation("Registration rejected: {Email} is already registered.", email);
 
@@ -347,14 +347,14 @@ public class AuthController : ControllerBase
     /// <summary>
     /// The one answer <c>forgot-password</c> ever gives.
     /// </summary>
-    private IActionResult ResetRequestAccepted() =>
+    private AcceptedResult ResetRequestAccepted() =>
         Accepted(new MessageResponse { Message = ResetRequestedMessage });
 
     /// <summary>
     /// Refuses a reset link. As with a failed login, the real reason goes to the
     /// log and the caller sees one message covering all of them.
     /// </summary>
-    private IActionResult InvalidResetLink(string reason)
+    private BadRequestObjectResult InvalidResetLink(string reason)
     {
         _logger.LogWarning("Password reset refused: {Reason}.", reason);
 
@@ -370,7 +370,7 @@ public class AuthController : ControllerBase
     /// The real reason is written to the log for operators; the caller only ever
     /// sees one generic message.
     /// </summary>
-    private IActionResult InvalidCredentials(string email, string reason)
+    private UnauthorizedObjectResult InvalidCredentials(string email, string reason)
     {
         _logger.LogWarning("Login failed for {Email}: {Reason}.", email, reason);
 

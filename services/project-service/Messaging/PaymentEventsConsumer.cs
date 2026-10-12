@@ -231,7 +231,7 @@ public sealed class PaymentEventsConsumer : BackgroundService
             envelope.EventId, payload.ProjectId);
     }
 
-    private async Task DelayAsync(CancellationToken stoppingToken)
+    private static async Task DelayAsync(CancellationToken stoppingToken)
     {
         try
         {

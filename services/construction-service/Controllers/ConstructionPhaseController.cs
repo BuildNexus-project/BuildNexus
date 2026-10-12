@@ -199,7 +199,7 @@ public class ConstructionPhaseController : ControllerBase
     /// precondition failed can do it without matching on English prose.
     /// </para>
     /// </remarks>
-    private IActionResult Refused(ConstructionTransitionOutcome outcome)
+    private static ObjectResult Refused(ConstructionTransitionOutcome outcome)
     {
         var (title, detail) = Describe(outcome);
 

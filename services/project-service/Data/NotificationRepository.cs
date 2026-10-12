@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.ProjectService.Models;
+using System.Globalization;
 
 namespace BuildNexus.ProjectService.Data;
 
@@ -109,7 +110,7 @@ public class NotificationRepository : INotificationRepository
         AddParameter(command, "@userId", userId);
 
         // COUNT(*) is a BIGINT; the value is a tally of notifications, not a key.
-        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
     }
 
     public async Task<bool> MarkReadAsync(

@@ -140,8 +140,8 @@ public class PaymentKafkaIntegrationTests
         // The invoice announced itself as well, since US-24 — so this picks the payment's
         // event out rather than assuming the invoice has only one.
         var stored = Assert.Single(
-            (await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id))
-                .Where(e => e.EventType == PaymentEventTypes.PaymentReceived));
+            (await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id)),
+            e => e.EventType == PaymentEventTypes.PaymentReceived);
         Assert.False(stored.IsPublished);
 
         using (var publisher = new KafkaPaymentEventPublisher(
@@ -168,8 +168,8 @@ public class PaymentKafkaIntegrationTests
         // and a second dispatcher (another replica, or the stack running beside this
         // test) may have sent and counted it too.
         var row = Assert.Single(
-            (await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id))
-                .Where(e => e.EventType == PaymentEventTypes.PaymentReceived));
+            (await _fixture.OutboxRepository.ListForInvoiceAsync(invoice.Id)),
+            e => e.EventType == PaymentEventTypes.PaymentReceived);
         Assert.True(row.IsPublished);
         Assert.True(row.AttemptCount >= 1);
         Assert.Null(row.LastError);

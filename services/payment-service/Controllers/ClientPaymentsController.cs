@@ -118,7 +118,7 @@ public class ClientPaymentsController : ControllerBase
     /// an endpoint just to fill <c>Location</c> would exceed scope. The Client's
     /// own invoice listing is where the payment becomes visible.
     /// </remarks>
-    private IActionResult Created(Guid projectId, RecordPaymentResponse response) =>
+    private CreatedAtActionResult Created(Guid projectId, RecordPaymentResponse response) =>
         CreatedAtAction(
             actionName: nameof(ClientInvoicesController.List),
             controllerName: "ClientInvoices",
@@ -138,7 +138,7 @@ public class ClientPaymentsController : ControllerBase
     /// prose, and <c>outstandingAmount</c> says what may actually be paid — so a
     /// screen can offer to correct the figure rather than only report the error.
     /// </remarks>
-    private IActionResult Refused(PaymentRecordingResult result)
+    private static ObjectResult Refused(PaymentRecordingResult result)
     {
         var (title, detail) = Describe(result);
 

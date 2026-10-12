@@ -2,6 +2,7 @@ using System.Data.Common;
 using BuildNexus.ConstructionService.Messaging;
 using BuildNexus.ConstructionService.Models;
 using MySqlConnector;
+using System.Globalization;
 
 namespace BuildNexus.ConstructionService.Data;
 
@@ -417,7 +418,7 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         command.CommandText = sql;
         AddParameter(command, "@projectId", projectId);
 
-        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -448,8 +449,8 @@ public class ConstructionPhaseRepository : IConstructionPhaseRepository
         await reader.ReadAsync(cancellationToken);
 
         return (
-            Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total"))),
-            Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed"))));
+            Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total")), CultureInfo.InvariantCulture),
+            Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed")), CultureInfo.InvariantCulture));
     }
 
     private static void AddParameter(DbCommand command, string name, object value)

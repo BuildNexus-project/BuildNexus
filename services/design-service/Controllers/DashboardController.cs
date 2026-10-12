@@ -144,7 +144,7 @@ public class DashboardController : ControllerBase
     /// A Project Service that could not answer is not a Client with no projects —
     /// saying "nothing to show" would be a wrong answer that looks right.
     /// </summary>
-    private IActionResult ProjectsUnavailable() =>
+    private ObjectResult ProjectsUnavailable() =>
         Problem(
             statusCode: StatusCodes.Status502BadGateway,
             title: "Projects could not be listed",

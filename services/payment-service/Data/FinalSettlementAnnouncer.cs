@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.PaymentService.Messaging;
+using System.Globalization;
 
 namespace BuildNexus.PaymentService.Data;
 
@@ -147,7 +148,7 @@ internal static class FinalSettlementAnnouncer
 
         var result = await command.ExecuteScalarAsync(cancellationToken);
 
-        return result is null or DBNull ? 0m : Convert.ToDecimal(result);
+        return result is null or DBNull ? 0m : Convert.ToDecimal(result, CultureInfo.InvariantCulture);
     }
 
     private static async Task MarkAnnouncedAsync(

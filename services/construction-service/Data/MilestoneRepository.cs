@@ -3,6 +3,7 @@ using System.Data.Common;
 using BuildNexus.ConstructionService.Messaging;
 using BuildNexus.ConstructionService.Models;
 using MySqlConnector;
+using System.Globalization;
 
 namespace BuildNexus.ConstructionService.Data;
 
@@ -433,8 +434,8 @@ public class MilestoneRepository : IMilestoneRepository
         // Aggregate queries always return one row.
         await reader.ReadAsync(cancellationToken);
 
-        var total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total")));
-        var completed = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed")));
+        var total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total")), CultureInfo.InvariantCulture);
+        var completed = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed")), CultureInfo.InvariantCulture);
 
         return new ProjectProgress
         {
