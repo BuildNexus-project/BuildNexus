@@ -319,13 +319,26 @@ public class AdminUserDirectoryTests
         {
             fullName = $"US-37 {role}",
             email,
-            password = Password,
-            role
+            phoneNumber = "0771234567",
+            password = Password
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
-        return ((await ReadAsync<UserResponse>(response)).Id, email);
+        var account = await ReadAsync<UserResponse>(response);
+        if (role != PlatformRoles.Client)
+        {
+            using var admin = await SignedInAsAdminAsync();
+            var update = await admin.PutAsJsonAsync($"/api/users/{account.Id}", new
+            {
+                account.FullName,
+                email,
+                role
+            });
+            Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        }
+
+        return (account.Id, email);
     }
 
     /// <summary>

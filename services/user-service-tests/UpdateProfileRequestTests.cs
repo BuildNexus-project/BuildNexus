@@ -12,7 +12,7 @@ public class UpdateProfileRequestTests
     [Fact]
     public void Accepts_a_name_with_contact_details()
     {
-        var request = Request(phoneNumber: "+94 77 123 4567", contactAddress: "12 Galle Road, Colombo 03");
+        var request = Request(phoneNumber: "+94771234567", contactAddress: "12 Galle Road, Colombo 03");
 
         Assert.Empty(Validate(request));
     }
@@ -52,9 +52,8 @@ public class UpdateProfileRequestTests
     [Theory]
     [InlineData("0771234567")]
     [InlineData("+94771234567")]
-    [InlineData("(011) 234-5678")]
-    [InlineData("011 234 5678")]
-    public void Accepts_the_usual_ways_of_writing_a_number(string phoneNumber)
+    [InlineData(" +94771234567 ")]
+    public void Accepts_a_local_mobile_number_or_its_country_code_form(string phoneNumber)
     {
         Assert.Empty(Validate(Request(phoneNumber: phoneNumber)));
     }
@@ -63,6 +62,16 @@ public class UpdateProfileRequestTests
     [InlineData("call me")]          // not a number at all
     [InlineData("12345")]            // too few digits to be one
     [InlineData("+")]                // a country code prefix and nothing else
+    [InlineData("077123456")]
+    [InlineData("07712345678")]
+    [InlineData("0112345678")]
+    [InlineData("+9477123456")]
+    [InlineData("+947712345678")]
+    [InlineData("+94112345678")]
+    [InlineData("+940771234567")]
+    [InlineData("94771234567")]
+    [InlineData("+94 77 123 4567")]
+    [InlineData("077-123-4567")]
     [InlineData("077-123-4567 ext 8")] // letters are not separators
     [InlineData("07712345678901234567890123456789")] // past the 30-character column
     public void Rejects_something_that_is_not_a_usable_number(string phoneNumber)

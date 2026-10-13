@@ -8,6 +8,16 @@ type Values = { email: string; password: string }
 const FALLBACK = 'Something went wrong. Please try again.'
 
 describe('applyApiErrorToForm', () => {
+  it('maps a combined server name error to a visible name field', () => {
+    const setError = vi.fn()
+    const error = new ApiError(400, { fieldErrors: { FullName: ['Name is too long.'] } })
+
+    applyApiErrorToForm<{ firstName: string; lastName: string }>(error, setError, FALLBACK, {
+      fullName: 'lastName',
+    })
+
+    expect(setError).toHaveBeenCalledWith('lastName', { type: 'server', message: 'Name is too long.' })
+  })
   it('returns the fallback message and touches no field for a non-ApiError', () => {
     const setError = vi.fn()
 

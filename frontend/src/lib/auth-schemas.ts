@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { ROLES, SELECTABLE_ROLES } from './roles'
+import { ROLES } from './roles'
 
 /**
  * The rules a password has to meet, wherever one is chosen — signing up or
@@ -18,19 +18,41 @@ const emailSchema = z
   .email('Enter a valid email address.')
   .max(255, 'Email must not exceed 255 characters.')
 
+/** Phone number format, using the same rules for signup and profile edits. */
+const phoneNumberSchema = z
+  .string()
+  .trim()
+  .max(30, 'Phone number must not exceed 30 characters.')
+  .regex(
+    /^(?:|07[0-9]{8}|\+947[0-9]{8})$/,
+    'Invalid mobile number',
+  )
+
 /**
- * Mirrors the User Service's own registration rules, so most mistakes are
- * caught before a request is made. The service revalidates everything.
+ * Checks registration before sending it to the service. The two name fields
+ * are combined into the full name stored by the service, with its 150-character limit.
  */
 export const registerSchema = z.object({
-  fullName: z
+  firstName: z
     .string()
     .trim()
-    .min(2, 'Full name must be at least 2 characters.')
-    .max(150, 'Full name must not exceed 150 characters.'),
+    .min(1, 'First name is required.')
+    .max(150, 'First name must not exceed 150 characters.'),
+  lastName: z
+    .string()
+    .trim()
+    .min(1, 'Last name is required.')
+    .max(150, 'Last name must not exceed 150 characters.'),
   email: emailSchema,
+  phoneNumber: phoneNumberSchema.min(1, 'Phone number is required.'),
   password: passwordSchema,
-  role: z.enum(SELECTABLE_ROLES, 'Choose the role that describes you.'),
+  confirmPassword: z.string().min(1, 'Confirm your password.'),
+}).refine((values) => `${values.firstName} ${values.lastName}`.length <= 150, {
+  message: 'First and last name together must not exceed 150 characters.',
+  path: ['lastName'],
+}).refine((values) => !values.confirmPassword || values.password === values.confirmPassword, {
+  message: 'Passwords do not match.',
+  path: ['confirmPassword'],
 })
 
 export type RegisterValues = z.infer<typeof registerSchema>
@@ -93,18 +115,10 @@ export const profileSchema = z.object({
     .min(2, 'Full name must be at least 2 characters.')
     .max(150, 'Full name must not exceed 150 characters.'),
   /**
-   * Blank is allowed and clears the stored number. Anything else must carry at
-   * least seven digits and nothing but digits, spaces, brackets, hyphens and a
-   * leading + — the same pattern the service applies.
+   * Blank clears the stored number. Otherwise require 07 and eight digits,
+   * or +947 and eight digits, matching the service's signup and profile rules.
    */
-  phoneNumber: z
-    .string()
-    .trim()
-    .max(30, 'Phone number must not exceed 30 characters.')
-    .regex(
-      /^$|^(?=(?:[^0-9]*[0-9]){7,})\+?[0-9 ()-]+$/,
-      'Phone number must contain at least 7 digits and may contain only digits, spaces, brackets, hyphens and a leading +.',
-    ),
+  phoneNumber: phoneNumberSchema,
   /** Blank clears the stored address. */
   contactAddress: z.string().trim().max(255, 'Contact address must not exceed 255 characters.'),
 })
@@ -121,8 +135,8 @@ export type ProfileValues = z.infer<typeof profileSchema>
  * the whole difference between the two, and the reason the profile form tells
  * the user to ask an administrator.
  *
- * `ROLES` and not `SELECTABLE_ROLES`: an administrator may grant Admin, and this
- * is the only path to a role self-service registration refuses.
+ * An administrator may grant any platform role. Self-service registration
+ * always creates a Client account.
  */
 export const adminUserSchema = z.object({
   fullName: z

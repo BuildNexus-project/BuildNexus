@@ -20,21 +20,55 @@ public sealed class BuildNexusApp(BrowserSession browser)
     public const string DefaultPassword = "E2ePass123!";
 
     /// <summary>Registers an account through <c>/register</c> and waits for the confirmation.</summary>
-    public Account Register(string fullName, string email, string role, string roleLabel)
+    public Account Register(string fullName, string email)
     {
         browser.GoTo("/register");
 
-        browser.Type(By.Id("fullName"), fullName, "the full name field");
+        var names = fullName.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        browser.Type(By.Id("firstName"), names[0], "the first name field");
+        browser.Type(By.Id("lastName"), names[1], "the last name field");
         browser.Type(By.Id("email"), email, "the email field");
+        browser.Type(By.Id("phoneNumber"), "771234567", "the phone number field");
         browser.Type(By.Id("password"), DefaultPassword, "the password field");
-        ChooseFromSelect(By.Id("role"), roleLabel, "the role picker");
+        browser.Type(By.Id("confirmPassword"), DefaultPassword, "the confirm password field");
         browser.Click(By.CssSelector("form button[type='submit']"), "the Create account button");
 
         browser.WaitForVisible(
             By.XPath("//*[normalize-space()='Account created']"),
             $"the 'Account created' confirmation for {email}");
 
-        return new Account(fullName, email, DefaultPassword, role);
+        return new Account(fullName, email, DefaultPassword, "Client");
+    }
+
+    /// <summary>As the signed-in Admin, changes an account's role through the user directory.</summary>
+    public Account ChangeRole(Account account, string role, string roleLabel)
+    {
+        browser.GoTo("/admin/users");
+        var row = By.XPath($"//tr[.//td[normalize-space()='{account.Email}']]");
+        var pageLabel = By.XPath("//p[starts-with(normalize-space(), 'Page ')]");
+        browser.WaitForVisible(pageLabel, "the user directory to load");
+
+        while (browser.Driver.FindElements(row).Count == 0)
+        {
+            var currentPage = browser.Driver.FindElement(pageLabel).Text;
+            var next = browser.Driver.FindElement(By.XPath("//button[normalize-space()='Next']"));
+            Assert.True(next.Enabled, $"Account {account.Email} was not found in the user directory.");
+            browser.Click(By.XPath("//button[normalize-space()='Next']"), "the next page of users");
+            browser.UntilTrue(
+                driver => driver.FindElements(pageLabel).Any(element => element.Text != currentPage),
+                "the next page of users to load");
+        }
+
+        browser.Click(
+            By.XPath($"//tr[.//td[normalize-space()='{account.Email}']]//button[normalize-space()='Edit']"),
+            $"the Edit button for {account.Email}");
+        ChooseFromSelect(By.Id("role"), roleLabel, "the account role picker");
+        browser.Click(By.XPath("//button[normalize-space()='Save changes']"), "the Save changes button");
+        browser.UntilTrue(
+            driver => !driver.FindElements(By.CssSelector("[role='dialog']")).Any(element => element.Displayed),
+            "the edit dialog to close after saving the role");
+
+        return account with { Role = role };
     }
 
     /// <summary>Signs in through <c>/login</c> and waits until the signed-in header is showing.</summary>

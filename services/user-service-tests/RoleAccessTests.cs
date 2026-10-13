@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using BuildNexus.UserService.Authorization;
+using BuildNexus.UserService.Contracts;
 using Microsoft.AspNetCore.Http;
 
 namespace BuildNexus.UserService.Tests;
@@ -156,7 +157,7 @@ public class RoleAccessTests
         return client;
     }
 
-    private static async Task<string> RegisterAndLogInAsync(HttpClient client, string role)
+    private async Task<string> RegisterAndLogInAsync(HttpClient client, string role)
     {
         var email = $"{UserServiceFactory.TestEmailPrefix}{role.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com";
 
@@ -164,11 +165,24 @@ public class RoleAccessTests
         {
             fullName = $"Role Matrix {role}",
             email,
-            password = Password,
-            role
+            phoneNumber = "0771234567",
+            password = Password
         });
 
         Assert.Equal(HttpStatusCode.Created, registration.StatusCode);
+
+        if (role != PlatformRoles.Client)
+        {
+            var account = await registration.Content.ReadFromJsonAsync<UserResponse>();
+            using var admin = await SignedInAsAsync(PlatformRoles.Admin);
+            var update = await admin.PutAsJsonAsync($"/api/users/{account!.Id}", new
+            {
+                account.FullName,
+                email,
+                role
+            });
+            Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        }
 
         return await LogInAsync(client, email, Password);
     }

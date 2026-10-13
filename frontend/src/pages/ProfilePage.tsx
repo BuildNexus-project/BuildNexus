@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { PhoneNumberInput } from '@/components/PhoneNumberInput'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
@@ -39,6 +40,7 @@ export function ProfilePage() {
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     setError,
@@ -127,14 +129,21 @@ export function ProfilePage() {
 
               <Field>
                 <FieldLabel htmlFor="phoneNumber">Phone number</FieldLabel>
-                <Input
-                  id="phoneNumber"
-                  type="tel"
-                  autoComplete="tel"
-                  aria-invalid={Boolean(errors.phoneNumber)}
-                  {...register('phoneNumber')}
+                <Controller
+                  control={control}
+                  name="phoneNumber"
+                  render={({ field }) => (
+                    <PhoneNumberInput
+                      name={field.name}
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                      id="phoneNumber"
+                      aria-invalid={Boolean(errors.phoneNumber)}
+                      onValueChange={field.onChange}
+                    />
+                  )}
                 />
-                <FieldDescription>Optional. Leave empty to remove it.</FieldDescription>
                 <FieldError errors={[errors.phoneNumber]} />
               </Field>
 

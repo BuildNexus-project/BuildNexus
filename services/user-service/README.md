@@ -70,7 +70,7 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 
 | Method | Route                    | Allowed roles                            |
 |--------|--------------------------|------------------------------------------|
-| POST   | `/api/auth/register`     | Anonymous (Client, Architect, PM only)   |
+| POST   | `/api/auth/register`     | Anonymous (creates a Client account)     |
 | POST   | `/api/auth/login`        | Anonymous                                |
 | POST   | `/api/auth/forgot-password` | Anonymous                             |
 | POST   | `/api/auth/reset-password`  | Anonymous                             |
@@ -88,6 +88,16 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 The live list, with request and response bodies, is the service's Swagger UI at
 `/swagger`.
 
+`POST /api/auth/register` requires full name, email, password and phone number.
+Missing, blank or invalid phone numbers are refused with `400`. Every new
+account starts as a Client. A supplied role is ignored; only an Admin can
+assign Architect, ProjectManager or Admin through `PUT /api/users/{id}`.
+
+Phone numbers must contain exactly 10 digits starting with `07`, such as
+`0771234567`, or use `+94` in place of the leading `0`, such as `+94771234567`.
+The same format is enforced when editing a profile. Spaces or punctuation
+inside the number are refused.
+
 `PUT /api/users/me` edits the caller's own full name, phone number and contact
 address, and nothing else. Email and role are **not** self-editable — that is the
 team's decision for US-02, taken because the email is the login identity and the
@@ -97,7 +107,7 @@ statement behind the endpoint does not list those columns at all. Changing them
 is an administrator's job.
 
 Sending `""` for a phone number or address clears it: the value is stored as
-`NULL`, which is also what a brand-new account has.
+`NULL`. A new account has the phone number supplied during registration.
 
 `GET /api/users/directory` is the project-staff lookup: the active Architects
 and Project Managers, name and role only. A Client is refused — a customer has
