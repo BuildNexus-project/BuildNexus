@@ -14,6 +14,11 @@ the API Gateway are not, which is why the plan targets the three deployed
 services directly with `auth_*`/`project_*`/`design_*` host overrides instead
 of one Gateway host.
 
+> **Note (2026-10-04):** the API Gateway has been deployed to Azure since this
+> run, so "it isn't deployed yet" below describes the day of the run, not today.
+> The numbers are unchanged and remain direct-to-service, i.e. without the
+> gateway hop. Construction Service and Payment Service are still not deployed.
+
 ## Run details
 
 | | |

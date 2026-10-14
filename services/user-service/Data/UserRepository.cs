@@ -1,6 +1,7 @@
 using System.Data.Common;
 using BuildNexus.UserService.Models;
 using MySqlConnector;
+using System.Globalization;
 
 namespace BuildNexus.UserService.Data;
 
@@ -37,7 +38,7 @@ public class UserRepository : IUserRepository
         AddParameter(command, "@email", email);
 
         var result = await command.ExecuteScalarAsync();
-        return Convert.ToInt64(result) == 1;
+        return Convert.ToInt64(result, CultureInfo.InvariantCulture) == 1;
     }
 
     public async Task<User?> GetByEmailAsync(string email)
@@ -76,7 +77,7 @@ public class UserRepository : IUserRepository
         AddParameter(command, "@role", nameof(UserRole.Admin));
 
         var result = await command.ExecuteScalarAsync();
-        return Convert.ToInt64(result) == 1;
+        return Convert.ToInt64(result, CultureInfo.InvariantCulture) == 1;
     }
 
     public async Task<PagedResult<User>> ListPageAsync(UserRole? role, int page, int pageSize)
@@ -97,7 +98,7 @@ public class UserRepository : IUserRepository
             AddParameter(countCommand, "@role", role.Value.ToString());
         }
 
-        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
 
         await using var pageCommand = connection.CreateCommand();
         // LIMIT and OFFSET are bound like every other value. The controller has

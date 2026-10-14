@@ -1237,6 +1237,164 @@ describe('ProjectDetailPage — Milestones section (US-12)', () => {
     expect(progressGets).toHaveLength(2)
   })
 
+  describe('due dates (US-21)', () => {
+    /** A milestone already on the project, with whatever date and status a test wants. */
+    function dated(overrides: Record<string, unknown> = {}) {
+      return milestone({ dueDate: null, ...overrides })
+    }
+
+    /** The responses up to and including the milestone list and its progress, for a project with one milestone. */
+    function withOneMilestone(row: Record<string, unknown>, ...after: Response[]) {
+      return renderPage(
+        asProjectManager,
+        apiResponse(200, designApprovedProject()),
+        phaseNotStarted(),
+        apiResponse(200, [row]),
+        apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+        ...after,
+      )
+    }
+
+    it('adding a milestone with a due date sends the date to the service', async () => {
+      const requests = renderPage(
+        asProjectManager,
+        apiResponse(200, designApprovedProject()),
+        phaseNotStarted(),
+        apiResponse(200, []),
+        apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
+        apiResponse(201, dated({ dueDate: '2026-11-03' })),
+        apiResponse(200, progressRow({ totalMilestones: 1, completedMilestones: 0, progressPercent: 0 })),
+      )
+
+      const panel = await milestonesPanel()
+      await within(panel).findByText(/No milestones defined yet/i)
+
+      fireEvent.change(screen.getByLabelText('Add a milestone'), { target: { value: 'Foundation poured' } })
+      fireEvent.change(screen.getByLabelText('Due date (optional)'), { target: { value: '2026-11-03' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+      await waitFor(() => {
+        const post = requests.find(
+          (request) => request.path === `/api/construction/projects/${PROJECT_ID}/milestones` && request.method === 'POST',
+        )
+        expect(post?.body).toEqual({ name: 'Foundation poured', dueDate: '2026-11-03' })
+      })
+    })
+
+    it('labels the date as optional, so a milestone without one is plainly allowed', async () => {
+      renderPage(
+        asProjectManager,
+        apiResponse(200, designApprovedProject()),
+        phaseNotStarted(),
+        apiResponse(200, []),
+        apiResponse(200, progressRow({ totalMilestones: 0, completedMilestones: 0, progressPercent: 0 })),
+      )
+
+      const panel = await milestonesPanel()
+      await within(panel).findByText(/No milestones defined yet/i)
+
+      expect(screen.getByLabelText('Due date (optional)')).toHaveAttribute('type', 'date')
+    })
+
+    it('shows each milestone’s due date in a date field beside it', async () => {
+      withOneMilestone(dated({ dueDate: '2026-12-01' }))
+
+      const panel = await milestonesPanel()
+
+      expect(await within(panel).findByLabelText('Due date of Foundation poured')).toHaveValue('2026-12-01')
+    })
+
+    it('shows an empty date field for a milestone with no date', async () => {
+      withOneMilestone(dated())
+
+      const panel = await milestonesPanel()
+
+      expect(await within(panel).findByLabelText('Due date of Foundation poured')).toHaveValue('')
+    })
+
+    it('changing a due date saves it straight away and updates the row', async () => {
+      const requests = withOneMilestone(dated(), apiResponse(200, dated({ dueDate: '2026-12-01' })))
+
+      const panel = await milestonesPanel()
+      const field = await within(panel).findByLabelText('Due date of Foundation poured')
+
+      fireEvent.change(field, { target: { value: '2026-12-01' } })
+
+      await waitFor(() => {
+        const put = requests.find((request) => request.method === 'PUT')
+        expect(put?.path).toBe(`/api/construction/milestones/${MILESTONE_ID}/due-date`)
+        expect(put?.body).toEqual({ dueDate: '2026-12-01' })
+      })
+      await waitFor(() => expect(within(panel).getByLabelText('Due date of Foundation poured')).toHaveValue('2026-12-01'))
+    })
+
+    it('does not re-read the progress rollup after a date change, because a date moves no percentage', async () => {
+      const requests = withOneMilestone(dated(), apiResponse(200, dated({ dueDate: '2026-12-01' })))
+
+      const panel = await milestonesPanel()
+      fireEvent.change(await within(panel).findByLabelText('Due date of Foundation poured'), {
+        target: { value: '2026-12-01' },
+      })
+
+      await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true))
+
+      const progressGets = requests.filter(
+        (request) => request.path === `/api/construction/projects/${PROJECT_ID}/progress`,
+      )
+      expect(progressGets).toHaveLength(1)
+    })
+
+    it('clearing the date sends null', async () => {
+      const requests = withOneMilestone(dated({ dueDate: '2026-12-01' }), apiResponse(200, dated()))
+
+      const panel = await milestonesPanel()
+      fireEvent.change(await within(panel).findByLabelText('Due date of Foundation poured'), {
+        target: { value: '' },
+      })
+
+      await waitFor(() => {
+        const put = requests.find((request) => request.method === 'PUT')
+        expect(put?.body).toEqual({ dueDate: null })
+      })
+    })
+
+    it('says Overdue beside an unfinished milestone whose date has passed', async () => {
+      withOneMilestone(dated({ dueDate: '2020-01-01', status: 'InProgress' }))
+
+      const panel = await milestonesPanel()
+
+      expect(await within(panel).findByText('Overdue')).toBeInTheDocument()
+    })
+
+    it.each([
+      ['a completed milestone, however old its date', { dueDate: '2020-01-01', status: 'Completed' }],
+      ['a milestone due in the future', { dueDate: '2999-01-01', status: 'NotStarted' }],
+      ['a milestone with no date', { dueDate: null, status: 'NotStarted' }],
+    ])('does not say Overdue for %s', async (_what, row) => {
+      withOneMilestone(dated(row))
+
+      const panel = await milestonesPanel()
+      await within(panel).findByLabelText('Due date of Foundation poured')
+
+      expect(within(panel).queryByText('Overdue')).not.toBeInTheDocument()
+    })
+
+    it('shows the service’s reason when a date cannot be saved, and leaves the row as it was', async () => {
+      withOneMilestone(
+        dated(),
+        apiResponse(400, { title: 'Bad Request', detail: 'The date was not a real day.', status: 400 }),
+      )
+
+      const panel = await milestonesPanel()
+      fireEvent.change(await within(panel).findByLabelText('Due date of Foundation poured'), {
+        target: { value: '2026-12-01' },
+      })
+
+      expect(await within(panel).findByRole('alert')).toHaveTextContent('The date was not a real day.')
+      expect(within(panel).getByLabelText('Due date of Foundation poured')).toHaveValue('')
+    })
+  })
+
   it('surfaces the service’s 409 detail verbatim when a name is already taken', async () => {
     renderPage(
       asProjectManager,

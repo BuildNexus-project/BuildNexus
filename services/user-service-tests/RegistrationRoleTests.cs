@@ -1,12 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using BuildNexus.UserService.Contracts;
 using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace BuildNexus.UserService.Tests;
 
 /// <summary>
-/// Covers the privilege boundary on registration: nobody may hand themselves the
-/// Admin role, and the bootstrap Admin the seeder creates can actually log in.
+/// Covers the privilege boundary on registration: every signup creates a Client,
+/// and the bootstrap Admin the seeder creates can actually log in.
 /// </summary>
 [Trait("Category", "Integration")]
 [Collection(UserServiceCollection.Name)]
@@ -23,34 +24,43 @@ public class RegistrationRoleTests
     [InlineData("Admin")]
     [InlineData("admin")]
     [InlineData("ADMIN")]
-    public async Task Register_rejects_an_attempt_to_self_assign_Admin(string role)
+    [InlineData("Architect")]
+    [InlineData("ProjectManager")]
+    public async Task Register_ignores_a_self_assigned_role_and_creates_a_Client(string role)
     {
+        var email = $"{UserServiceFactory.TestEmailPrefix}{Guid.NewGuid():N}@example.com";
         var response = await _client.PostAsJsonAsync("/api/auth/register", new
         {
             fullName = "Escalation Attempt",
-            email = $"{UserServiceFactory.TestEmailPrefix}{Guid.NewGuid():N}@example.com",
+            email,
+            phoneNumber = "0771234567",
             password = "Str0ngPass",
             role
         });
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("Client", (await response.Content.ReadFromJsonAsync<UserResponse>())!.Role);
+
+        var login = await _client.PostAsJsonAsync("/api/auth/login", new { email, password = "Str0ngPass" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var body = await login.Content.ReadFromJsonAsync<LoginResponse>();
+        var token = new JsonWebTokenHandler().ReadJsonWebToken(body!.AccessToken);
+        Assert.Equal("Client", token.GetClaim("role").Value);
     }
 
     [Fact]
-    public async Task Register_still_accepts_the_three_self_service_roles()
+    public async Task Register_without_a_role_creates_a_Client()
     {
-        foreach (var role in new[] { "Client", "Architect", "ProjectManager" })
+        var response = await _client.PostAsJsonAsync("/api/auth/register", new
         {
-            var response = await _client.PostAsJsonAsync("/api/auth/register", new
-            {
-                fullName = "Legitimate User",
-                email = $"{UserServiceFactory.TestEmailPrefix}{role.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com",
-                password = "Str0ngPass",
-                role
-            });
+            fullName = "Legitimate User",
+            email = $"{UserServiceFactory.TestEmailPrefix}{Guid.NewGuid():N}@example.com",
+            phoneNumber = "0771234567",
+            password = "Str0ngPass"
+        });
 
-            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        }
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("Client", (await response.Content.ReadFromJsonAsync<UserResponse>())!.Role);
     }
 
     [Fact]

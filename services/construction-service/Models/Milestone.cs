@@ -41,6 +41,17 @@ public class Milestone
     /// </summary>
     public required MilestoneStatus Status { get; init; }
 
+    /// <summary>
+    /// The calendar day the Project Manager wants this finished by, or <c>null</c> when they
+    /// have not said. Optional and additive: a milestone with no date is created, moved and
+    /// counted exactly as US-12 defined, and is simply never late.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="DateOnly"/>, not a timestamp — "due on the 5th" is the 5th wherever it is
+    /// read, with no time of day or timezone to be an hour off in.
+    /// </remarks>
+    public DateOnly? DueDate { get; init; }
+
     public required DateTime CreatedAtUtc { get; init; }
 
     /// <summary>Stamped on every status change, so a caller can see when it last moved.</summary>

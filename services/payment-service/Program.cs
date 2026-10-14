@@ -1,4 +1,5 @@
 using System.Text;
+using BuildNexus.PaymentService.ApiDocs;
 using BuildNexus.PaymentService.Authorization;
 using BuildNexus.PaymentService.Configuration;
 using BuildNexus.PaymentService.Data;
@@ -7,7 +8,6 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,7 +26,6 @@ builder.Services.AddControllers()
                 namingPolicy: null,
                 allowIntegerValues: false));
     });
-builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
@@ -36,6 +35,7 @@ builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IPaymentHistoryRepository, PaymentHistoryRepository>();
 builder.Services.AddScoped<IPaymentReportRepository, PaymentReportRepository>();
+builder.Services.AddScoped<IPaymentDashboardRepository, PaymentDashboardRepository>();
 builder.Services.AddScoped<IConstructionCompletionRepository, ConstructionCompletionRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
@@ -47,6 +47,10 @@ builder.Services.AddOptions<KafkaOptions>()
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    .Validate(o => o.RequestTimeoutMs is null or > 0, "Kafka:RequestTimeoutMs must be greater than zero when set.")
+    .Validate(
+        o => o.HasConsistentSaslSettings(),
+        "Kafka:SecurityProtocol SaslSsl or SaslPlaintext needs Kafka:SaslMechanism, Kafka:SaslUsername and Kafka:SaslPassword all set, and those three must not be set without it.")
     .ValidateOnStart();
 
 // How fast the outbox drains. Both settings have working defaults, so there is
@@ -138,25 +142,7 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "BuildNexus Payment Service", Version = "v1" });
-
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Paste the access token returned by the User Service's /api/auth/login."
-    });
-
-    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
-    {
-        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
-    });
-});
+builder.Services.AddServiceSwagger();
 
 var app = builder.Build();
 

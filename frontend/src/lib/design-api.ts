@@ -1,5 +1,5 @@
 import type { ApiFetchOptions } from './api'
-import { ApiError } from './api'
+import { ApiError, apiUrl } from './api'
 
 /** The token-attaching fetch handed out by the auth context. */
 type AuthFetch = <T>(path: string, options?: Omit<ApiFetchOptions, 'token'>) => Promise<T>
@@ -184,7 +184,7 @@ export async function downloadDesignVersionFile(
   token: string | null,
   versionId: string,
 ): Promise<Blob> {
-  const response = await fetch(`/api/designs/versions/${versionId}/file`, {
+  const response = await fetch(apiUrl(`/api/designs/versions/${versionId}/file`), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
 

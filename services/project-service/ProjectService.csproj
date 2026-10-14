@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>BuildNexus.ProjectService</RootNamespace>
     <AssemblyName>BuildNexus.ProjectService</AssemblyName>
+    <!-- Feeds the /// comments on the controllers into Swagger UI. CS1591 (missing
+         comment on a public member) and CS1573 (a /// that documents some parameters
+         but not all) are silenced: the goal is richer API docs, not a comment on every
+         public type or parameter. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

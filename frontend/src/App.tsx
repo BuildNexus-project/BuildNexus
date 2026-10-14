@@ -13,14 +13,24 @@ import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { MyProjectCostsPage } from '@/pages/MyProjectCostsPage'
 import { NewProjectPage } from '@/pages/NewProjectPage'
+import { NotificationsPage } from '@/pages/NotificationsPage'
+import { PlatformOversightPage } from '@/pages/PlatformOversightPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ProjectCostsPage } from '@/pages/ProjectCostsPage'
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
+import { ProjectStatusReportPage } from '@/pages/ProjectStatusReportPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { StaffDirectoryPage } from '@/pages/StaffDirectoryPage'
-import { ADMIN_ROLES, CLIENT_ROLES, COST_MANAGEMENT_ROLES, PROJECT_STAFF_ROLES, REPORTING_ROLES } from '@/lib/roles'
+import {
+  ADMIN_ROLES,
+  CLIENT_ROLES,
+  COST_MANAGEMENT_ROLES,
+  NOTIFICATION_ROLES,
+  PROJECT_STAFF_ROLES,
+  REPORTING_ROLES,
+} from '@/lib/roles'
 
 export default function App() {
   return (
@@ -42,6 +52,16 @@ export default function App() {
             <ProtectedRoute>
               <HomePage />
             </ProtectedRoute>
+          }
+        />
+        {/* The full history behind the dashboard's notifications panel. Only Clients and
+            Architects are ever sent any, so it mirrors the Project Service's gate. */}
+        <Route
+          path="/notifications"
+          element={
+            <RoleRoute allowedRoles={NOTIFICATION_ROLES}>
+              <NotificationsPage />
+            </RoleRoute>
           }
         />
         <Route
@@ -138,6 +158,16 @@ export default function App() {
             </RoleRoute>
           }
         />
+        {/* Admin only, matching the Project Service's own gate on the system-wide list.
+            The one place an Admin sees every project and opens the three reports from. */}
+        <Route
+          path="/admin/oversight"
+          element={
+            <RoleRoute allowedRoles={ADMIN_ROLES}>
+              <PlatformOversightPage />
+            </RoleRoute>
+          }
+        />
         {/* Admin and Project Manager, so not under /admin: the combined report is as much
             the PM's view of their builds and their billing as it is an admin one. */}
         <Route
@@ -153,6 +183,14 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={ADMIN_ROLES}>
               <DesignApprovalReportPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/admin/reports/project-status"
+          element={
+            <RoleRoute allowedRoles={ADMIN_ROLES}>
+              <ProjectStatusReportPage />
             </RoleRoute>
           }
         />

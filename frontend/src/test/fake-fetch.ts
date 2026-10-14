@@ -47,6 +47,35 @@ function formDataToObject(form: FormData): Record<string, FormDataEntryValue> {
 }
 
 /**
+ * Like {@link stubFetch}, but answers by path rather than by order — for a page that
+ * asks several services for several things at once, where the order the answers are
+ * wanted in is not the order the requests happen to be made in.
+ *
+ * A path nothing was stubbed for answers 404 rather than throwing, so the page under
+ * test sees an ordinary failed request and the test fails on what it asserts, not on a
+ * stack trace from the stub.
+ *
+ * Undo it with `vi.unstubAllGlobals()`.
+ */
+export function stubRoutes(routes: Record<string, Response | Error>): RecordedRequest[] {
+  const requests: RecordedRequest[] = []
+
+  vi.stubGlobal('fetch', (path: string, init: RequestInit = {}) => {
+    requests.push({
+      path,
+      method: init.method,
+      body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+    })
+
+    const answer = routes[path] ?? apiResponse(404, { title: `No route was stubbed for ${path}.` })
+
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
+  })
+
+  return requests
+}
+
+/**
  * Replaces `fetch` for the duration of a test and records what the page asked
  * for.
  *

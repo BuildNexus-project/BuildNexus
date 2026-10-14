@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.ConstructionService.Models;
+using System.Globalization;
 
 namespace BuildNexus.ConstructionService.Data;
 
@@ -65,8 +66,8 @@ public class ConstructionReportRepository : IConstructionReportRepository
 
     private static ConstructionProgressReportRow Map(DbDataReader reader)
     {
-        var total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total_milestones")));
-        var completed = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed_milestones")));
+        var total = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("total_milestones")), CultureInfo.InvariantCulture);
+        var completed = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("completed_milestones")), CultureInfo.InvariantCulture);
 
         return new ConstructionProgressReportRow
         {
@@ -74,9 +75,9 @@ public class ConstructionReportRepository : IConstructionReportRepository
             PhaseStatus = ReadPhaseStatus(reader, "phase_status"),
             TotalMilestones = total,
             CompletedMilestones = completed,
-            InProgressMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("in_progress_milestones"))),
-            NotStartedMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("not_started_milestones"))),
-            ProgressPercent = CalculatePercent(completed, total)
+            InProgressMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("in_progress_milestones")), CultureInfo.InvariantCulture),
+            NotStartedMilestones = Convert.ToInt32(reader.GetValue(reader.GetOrdinal("not_started_milestones")), CultureInfo.InvariantCulture),
+            ProgressPercent = ProgressPercentage.Of(completed, total)
         };
     }
 
@@ -92,17 +93,4 @@ public class ConstructionReportRepository : IConstructionReportRepository
             ? null
             : Enum.Parse<ConstructionPhaseStatus>(reader.GetString(ordinal));
     }
-
-    /// <summary>
-    /// The same calculation <see cref="MilestoneRepository"/> uses, so a project's line in
-    /// this report and its own progress screen cannot disagree.
-    /// </summary>
-    /// <remarks>
-    /// Computed here rather than in SQL for that reason alone — one definition of the
-    /// percentage, in C#, rather than a second one in a report query that could round
-    /// differently. The zero guard is unreachable given the INNER JOIN, and kept because
-    /// a divide-by-zero in a report is not a failure the caller should have to discover.
-    /// </remarks>
-    private static decimal CalculatePercent(int completed, int total) =>
-        total == 0 ? 0m : Math.Round((decimal)completed / total * 100m, 2);
 }

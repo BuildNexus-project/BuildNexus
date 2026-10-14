@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.PaymentService.Models;
+using System.Globalization;
 
 namespace BuildNexus.PaymentService.Data;
 
@@ -108,8 +109,8 @@ public class PaymentReportRepository : IPaymentReportRepository
         await reader.ReadAsync(cancellationToken);
 
         return (
-            Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("total"))),
-            Convert.ToInt32(reader.GetValue(reader.GetOrdinal("row_count"))));
+            Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("total")), CultureInfo.InvariantCulture),
+            Convert.ToInt32(reader.GetValue(reader.GetOrdinal("row_count")), CultureInfo.InvariantCulture));
     }
 
     private static void AddParameter(DbCommand command, string name, object? value)

@@ -35,6 +35,13 @@ export type Milestone = {
   projectId: string
   name: string
   status: MilestoneStatus
+  /**
+   * The calendar day the Project Manager wants it finished by, as `yyyy-MM-dd`, or `null`
+   * when none has been set. Optional and additive: a milestone with no date behaves exactly
+   * as it always did, and is never late. No time of day and no timezone — "due on the 5th"
+   * is the 5th wherever it is read.
+   */
+  dueDate: string | null
   /** ISO-8601, as the service serialises it. */
   createdAtUtc: string
   updatedAtUtc: string
@@ -126,6 +133,8 @@ export function fetchProjectProgressSummary(authFetch: AuthFetch, projectId: str
  */
 export type CreateMilestonePayload = {
   name: string
+  /** `yyyy-MM-dd`. Leave it out for a milestone with no due date. */
+  dueDate?: string
 }
 
 /**
@@ -146,6 +155,21 @@ export function createMilestone(
   return authFetch<Milestone>(`/api/construction/projects/${projectId}/milestones`, {
     method: 'POST',
     json: payload,
+  })
+}
+
+/**
+ * Sets, changes or clears a milestone's due date (US-21).
+ *
+ * Project-Manager only. `null` clears it. A milestone may be given a date at any point —
+ * including the ones planted from the template, which start without one, and ones already
+ * completed. An unknown milestone id comes back as {@link ApiError} with status 404, and a
+ * value that is not a real `yyyy-MM-dd` day as 400.
+ */
+export function setMilestoneDueDate(authFetch: AuthFetch, milestoneId: string, dueDate: string | null) {
+  return authFetch<Milestone>(`/api/construction/milestones/${milestoneId}/due-date`, {
+    method: 'PUT',
+    json: { dueDate },
   })
 }
 

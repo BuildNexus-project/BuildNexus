@@ -3,10 +3,11 @@ import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
+import { NotificationBell } from '@/components/NotificationBell'
 import { Button } from '@/components/ui/button'
 import { initialsOf } from '@/lib/initials'
 import { DASHBOARD_ITEM, NAV_ITEMS, activeNavItem, type NavItem } from '@/lib/nav'
-import { ROLE_LABELS } from '@/lib/roles'
+import { NOTIFICATION_ROLES, ROLE_LABELS } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
 /**
@@ -59,6 +60,8 @@ export function Header() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
+          {NOTIFICATION_ROLES.includes(user.role) && <NotificationBell />}
+
           <Link
             to="/profile"
             aria-label="Your profile"

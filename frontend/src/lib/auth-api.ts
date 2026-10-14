@@ -1,6 +1,6 @@
 import type { ApiFetchOptions } from './api'
 import { apiFetch } from './api'
-import type { Role, SelectableRole } from './roles'
+import type { Role } from './roles'
 
 export type UserProfile = {
   id: string
@@ -113,8 +113,8 @@ type AuthFetch = <T>(path: string, options?: Omit<ApiFetchOptions, 'token'>) => 
 export type RegisterPayload = {
   fullName: string
   email: string
+  phoneNumber: string
   password: string
-  role: SelectableRole
 }
 
 export type LoginPayload = {
@@ -144,7 +144,7 @@ export type AuthResponse = {
   user: UserProfile
 }
 
-/** Creates an account. Throws {@link ApiError} with status 409 if the email is taken. */
+/** Creates a Client account. Throws {@link ApiError} with status 409 if the email is taken. */
 export function registerUser(payload: RegisterPayload) {
   return apiFetch<UserProfile>('/api/auth/register', { method: 'POST', json: payload })
 }

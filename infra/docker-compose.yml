@@ -389,6 +389,10 @@ services:
       # Kafka uses. The internal listener, since this runs on the compose
       # network. This service consumes design-events; it publishes nothing.
       Kafka__BootstrapServers: kafka:9092
+      # US-21 narrows a Project Manager's dashboard to the projects they are assigned
+      # to by asking the Project Service, forwarding the caller's own token. The
+      # internal listener, since this runs on the compose network.
+      Services__ProjectService__BaseUrl: http://project-service:8080/
     ports:
       - "5004:8080"
     depends_on:
@@ -397,6 +401,10 @@ services:
       # Start order only. Kafka being down means DesignApproved events pile up
       # unconsumed until it is back — not that this service fails to boot.
       kafka:
+        condition: service_started
+      # Start order only. The Project Service being down means a Project Manager's
+      # dashboard answers 502, not that this service fails to boot.
+      project-service:
         condition: service_started
 
   payment-service:

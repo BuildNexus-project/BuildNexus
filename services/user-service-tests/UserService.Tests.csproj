@@ -8,6 +8,14 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!-- An optional, git-ignored file that sets USER_DB_PORT for this machine — see
+       UserServiceFactory. `dotnet test` and Visual Studio both pick it up from here, so it
+       does not have to be exported in every shell. Absent on CI, which is the point: CI
+       uses the default port. -->
+  <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)local.runsettings')">
+    <RunSettingsFilePath>$(MSBuildThisFileDirectory)local.runsettings</RunSettingsFilePath>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />

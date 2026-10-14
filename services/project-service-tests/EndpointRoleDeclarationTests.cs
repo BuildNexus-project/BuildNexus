@@ -105,6 +105,48 @@ public class EndpointRoleDeclarationTests
         Assert.Equal([PlatformRoles.Client, PlatformRoles.Admin], RolesFor("CancelProject"));
     }
 
+    [Fact]
+    public void The_project_status_report_and_its_export_are_the_admins_alone()
+    {
+        // US-18: the whole pipeline is an Admin's view. A Client sees their own
+        // projects, and staff see the ones they are assigned to — neither sees
+        // every project at once. Pinned rather than left to whoever edits the
+        // controller next.
+        Assert.Equal([PlatformRoles.Admin], RolesFor("GetStatusReport"));
+        Assert.Equal([PlatformRoles.Admin], RolesFor("ExportStatusReport"));
+    }
+
+    [Fact]
+    public void The_platform_oversight_list_is_the_admins_alone()
+    {
+        // US-38: every project on the platform at once is an Admin's view, the
+        // same as the report it links to. Pinned rather than left to whoever
+        // edits the controller next.
+        Assert.Equal([PlatformRoles.Admin], RolesFor("GetOversight"));
+    }
+
+    [Fact]
+    public void Each_dashboard_endpoint_is_gated_to_exactly_its_own_role()
+    {
+        // US-21: a dashboard is the view of one role's own work, so each shape is
+        // open to that role alone. A Client is not shown the Admin's system-wide
+        // count, and an Architect is not shown a Client's projects. Pinned rather
+        // than left to whoever edits the controller next.
+        Assert.Equal([PlatformRoles.Client], RolesFor("GetClientDashboard"));
+        Assert.Equal([PlatformRoles.Architect], RolesFor("GetArchitectDashboard"));
+        Assert.Equal([PlatformRoles.Admin], RolesFor("GetAdminDashboard"));
+    }
+
+    [Fact]
+    public void Notifications_are_for_clients_and_architects_alone()
+    {
+        // US-26: the story is the Client's and the Architect's, and nothing is ever stored for
+        // anyone else. Pinned rather than left to whoever edits the controller next.
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Architect], RolesFor("ListNotifications"));
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Architect], RolesFor("MarkNotificationRead"));
+        Assert.Equal([PlatformRoles.Client, PlatformRoles.Architect], RolesFor("MarkAllNotificationsRead"));
+    }
+
     /// <summary>Every controller action in the service, found by its HTTP verb attribute.</summary>
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()

@@ -145,6 +145,18 @@ public class EndpointRoleDeclarationTests
             RolesForActionOn<Controllers.ClientPaymentHistoryController>("Get"));
     }
 
+    [Fact]
+    public void The_dashboard_payments_due_are_the_clients_alone()
+    {
+        // US-21 AC-1: what a Client still owes is theirs to see. Staff read the
+        // per-project cost view and the portfolio report instead, and neither is a
+        // Client's dashboard. Pinned rather than left to whoever edits the controller
+        // next.
+        Assert.Equal(
+            [PlatformRoles.Client],
+            RolesForActionOn<Controllers.DashboardController>("GetClientDashboard"));
+    }
+
     private static IEnumerable<MethodInfo> Endpoints() =>
         typeof(PlatformRoles).Assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)

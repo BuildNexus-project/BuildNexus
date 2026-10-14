@@ -17,8 +17,34 @@ namespace BuildNexus.UserService.Tests;
 /// </remarks>
 public class UserServiceFactory : WebApplicationFactory<Program>
 {
-    public const string ConnectionString =
-        "Server=localhost;Port=3306;Database=buildnexus_user_db;User Id=buildnexus;Password=buildnexus-dev;";
+    /// <summary>
+    /// The environment variable that says which host port <c>user-db</c> is on. Unset
+    /// means the standard <see cref="DefaultPort"/>, which is what CI publishes.
+    /// </summary>
+    public const string PortVariable = "USER_DB_PORT";
+
+    /// <summary>MySQL's standard port, and where <c>infra/docker-compose.yml</c> publishes <c>user-db</c>.</summary>
+    public const string DefaultPort = "3306";
+
+    /// <summary>
+    /// The development database, on <see cref="PortVariable"/> or <see cref="DefaultPort"/>.
+    /// </summary>
+    /// <remarks>
+    /// The port is not a constant because it is the one thing that differs between
+    /// machines. A native MySQL service already holds 3306 on some developers' machines,
+    /// and a local, git-ignored <c>infra/docker-compose.override.yml</c> moves
+    /// <c>user-db</c> to 3308 there; the tests then reached that MySQL instead of the
+    /// container and every one of them failed at login. Everything else — database name,
+    /// user, password — is the same published development value everywhere, so it stays
+    /// fixed. CI sets nothing and gets 3306.
+    /// <para>
+    /// <c>user-service-tests/local.runsettings</c> (git-ignored, optional) is the place to
+    /// set it for a machine, so it does not have to be exported in every shell.
+    /// </para>
+    /// </remarks>
+    public static readonly string ConnectionString =
+        $"Server=localhost;Port={Environment.GetEnvironmentVariable(PortVariable) ?? DefaultPort};"
+        + "Database=buildnexus_user_db;User Id=buildnexus;Password=buildnexus-dev;";
 
     /// <summary>Prefix every account a test creates, so cleanup can find them.</summary>
     public const string TestEmailPrefix = "test-";

@@ -62,8 +62,8 @@ public sealed class ConstructionEventsConsumer : BackgroundService
     /// appended.
     /// </summary>
     /// <remarks>
-    /// Deliberately <em>not</em> the bare <c>Kafka:ConsumerGroupId</c> that
-    /// <see cref="DesignEventsConsumer"/> uses. Every member of a Kafka consumer
+    /// Deliberately <em>not</em> the bare <c>Kafka:ConsumerGroupId</c>, just as
+    /// <see cref="ProjectEventsConsumer"/> appends its own topic. Every member of a Kafka consumer
     /// group is expected to subscribe to the same topics; two members of one
     /// group subscribing to different topics makes each rebalance revoke the
     /// other's partitions, and the two consumers would take turns being
@@ -80,18 +80,10 @@ public sealed class ConstructionEventsConsumer : BackgroundService
         // long-running one.
         await Task.Yield();
 
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = GroupId,
-            // Commit explicitly, only after a message is handled — so a crash
-            // mid-handling re-delivers rather than skips.
-            EnableAutoCommit = false,
-            // A brand-new group reads the topic from the start, so a build that
-            // started before this consumer first ran is still invoiced rather
-            // than silently never billed.
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        };
+        // Broker address and, for Azure Event Hubs, the SASL/TLS settings; commits stay
+        // explicit (only after a message is handled, so a crash re-delivers rather than
+        // skips) and a brand-new group reads the topic from the start.
+        var config = KafkaBrokerSettings.BuildConsumerConfig(_options, GroupId);
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(Topic);
@@ -322,7 +314,7 @@ public sealed class ConstructionEventsConsumer : BackgroundService
         }
     }
 
-    private async Task DelayAsync(CancellationToken stoppingToken)
+    private static async Task DelayAsync(CancellationToken stoppingToken)
     {
         try
         {

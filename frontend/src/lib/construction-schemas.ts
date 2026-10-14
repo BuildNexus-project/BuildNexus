@@ -1,14 +1,17 @@
 import { z } from 'zod'
 
 import { MILESTONE_STATUSES } from './construction-api'
+import { isRealDay } from './milestone-dates'
 
 /**
- * The create-milestone form: just a name. The project id is in the URL and
- * the initial status is server-decided — neither belongs in the payload.
- * Mirrors the Construction Service's own `CreateMilestoneRequest`
- * (`[Required]`, `[StringLength(150)]`), so most mistakes are caught before
- * a request is made. The service revalidates everything, so its answer is
- * still the one that counts.
+ * The create-milestone form: a name, and optionally the day it should be finished by. The
+ * project id is in the URL and the initial status is server-decided — neither belongs in the
+ * payload. Mirrors the Construction Service's own `CreateMilestoneRequest` (`[Required]`,
+ * `[StringLength(150)]`, an optional date), so most mistakes are caught before a request is
+ * made. The service revalidates everything, so its answer is still the one that counts.
+ *
+ * The due date arrives from a date input as `yyyy-MM-dd`, or an empty string when the field
+ * was left alone — which means "no date", not "an invalid one".
  */
 export const createMilestoneSchema = z.object({
   name: z
@@ -16,6 +19,12 @@ export const createMilestoneSchema = z.object({
     .trim()
     .min(1, 'A milestone name is required.')
     .max(150, 'Milestone name must not exceed 150 characters.'),
+  dueDate: z
+    .string()
+    .optional()
+    .refine((value) => value === undefined || value === '' || isRealDay(value), {
+      message: 'Enter a real date, as day, month and year.',
+    }),
 })
 
 export type CreateMilestoneValues = z.infer<typeof createMilestoneSchema>

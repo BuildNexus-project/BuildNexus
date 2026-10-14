@@ -1,5 +1,6 @@
 using System.Data.Common;
 using BuildNexus.DesignService.Models;
+using System.Globalization;
 
 namespace BuildNexus.DesignService.Data;
 
@@ -66,9 +67,9 @@ public class DesignReportRepository : IDesignReportRepository
             {
                 // MySqlConnector surfaces CHAR(36) as a Guid, not a string.
                 ProjectId = reader.GetGuid(reader.GetOrdinal("project_id")),
-                DocumentCount = Convert.ToInt32(reader["document_count"]),
-                ApprovedDocumentCount = Convert.ToInt32(reader["approved_document_count"]),
-                TotalVersionCount = Convert.ToInt32(reader["total_version_count"]),
+                DocumentCount = Convert.ToInt32(reader["document_count"], CultureInfo.InvariantCulture),
+                ApprovedDocumentCount = Convert.ToInt32(reader["approved_document_count"], CultureInfo.InvariantCulture),
+                TotalVersionCount = Convert.ToInt32(reader["total_version_count"], CultureInfo.InvariantCulture),
                 AverageVersionsToApproval = GetNullableDouble(reader, "average_versions_to_approval"),
                 AverageHoursToApproval = GetNullableDouble(reader, "average_hours_to_approval")
             });
@@ -81,6 +82,6 @@ public class DesignReportRepository : IDesignReportRepository
     {
         var ordinal = reader.GetOrdinal(column);
         // AVG() comes back as DECIMAL from MySQL; Convert handles that and NULL.
-        return reader.IsDBNull(ordinal) ? null : Convert.ToDouble(reader.GetValue(ordinal));
+        return reader.IsDBNull(ordinal) ? null : Convert.ToDouble(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
     }
 }

@@ -93,6 +93,18 @@ function problemExtensions(problem: ProblemDetails): Record<string, unknown> {
   )
 }
 
+/**
+ * The gateway's origin, fixed at build time. Empty in dev, where the Vite proxy
+ * handles `/api`; set in the deploy workflow, because a static host has no proxy
+ * and a relative `/api` call would hit the static site itself.
+ */
+const GATEWAY_URL = ((import.meta.env.VITE_GATEWAY_URL as string | undefined) ?? '').replace(/\/+$/, '')
+
+/** Resolves an `/api/...` path against the gateway, or leaves it relative when none is configured. */
+export function apiUrl(path: string): string {
+  return `${GATEWAY_URL}${path}`
+}
+
 export type ApiFetchOptions = RequestInit & {
   /** Access token to send as `Authorization: Bearer`. */
   token?: string | null
@@ -104,13 +116,14 @@ export type ApiFetchOptions = RequestInit & {
  * Calls the API and returns the parsed body, throwing {@link ApiError} on any
  * non-2xx response.
  *
- * Paths are relative (`/api/auth/login`); the dev server proxies them to the
- * User Service, so calls are same-origin and no CORS handling is needed.
+ * Paths are relative (`/api/auth/login`). In dev, with no `VITE_GATEWAY_URL`,
+ * they stay same-origin and the dev server proxies them to the gateway. In a
+ * production build they are prefixed with the gateway's origin by {@link apiUrl}.
  */
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const { token, json, headers, ...init } = options
 
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}),

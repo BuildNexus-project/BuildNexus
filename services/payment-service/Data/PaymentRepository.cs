@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using BuildNexus.PaymentService.Messaging;
 using BuildNexus.PaymentService.Models;
+using System.Globalization;
 
 namespace BuildNexus.PaymentService.Data;
 
@@ -209,7 +210,7 @@ public class PaymentRepository : IPaymentRepository
 
         var result = await command.ExecuteScalarAsync(cancellationToken);
 
-        return result is null or DBNull ? 0m : Convert.ToDecimal(result);
+        return result is null or DBNull ? 0m : Convert.ToDecimal(result, CultureInfo.InvariantCulture);
     }
 
     private static async Task InsertPaymentAsync(

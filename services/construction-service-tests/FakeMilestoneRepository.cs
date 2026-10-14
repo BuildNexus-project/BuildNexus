@@ -15,6 +15,12 @@ public sealed class FakeMilestoneRepository : IMilestoneRepository
     /// <summary>One entry per <see cref="CreateAsync"/> call, in order.</summary>
     public List<CreateCall> CreateCalls { get; } = [];
 
+    /// <summary>One entry per <see cref="SetDueDateAsync"/> call, in order.</summary>
+    public List<SetDueDateCall> SetDueDateCalls { get; } = [];
+
+    /// <summary>What <see cref="SetDueDateAsync"/> returns. Null simulates the milestone id being unknown.</summary>
+    public Milestone? NextDueDateMilestone { get; set; }
+
     /// <summary>What <see cref="CreateAsync"/> returns when it does not throw. Null simulates the design-approval gate refusing.</summary>
     public Milestone? NextCreatedMilestone { get; set; }
 
@@ -36,9 +42,10 @@ public sealed class FakeMilestoneRepository : IMilestoneRepository
     public Task<Milestone?> CreateAsync(
         Guid projectId,
         string name,
+        DateOnly? dueDate = null,
         CancellationToken cancellationToken = default)
     {
-        CreateCalls.Add(new CreateCall(projectId, name));
+        CreateCalls.Add(new CreateCall(projectId, name, dueDate));
 
         if (CreateThrows is not null)
         {
@@ -46,6 +53,15 @@ public sealed class FakeMilestoneRepository : IMilestoneRepository
         }
 
         return Task.FromResult(NextCreatedMilestone);
+    }
+
+    public Task<Milestone?> SetDueDateAsync(
+        Guid milestoneId,
+        DateOnly? dueDate,
+        CancellationToken cancellationToken = default)
+    {
+        SetDueDateCalls.Add(new SetDueDateCall(milestoneId, dueDate));
+        return Task.FromResult(NextDueDateMilestone);
     }
 
     public Task<Milestone?> UpdateStatusAsync(
@@ -86,7 +102,9 @@ public sealed class FakeMilestoneRepository : IMilestoneRepository
         CancellationToken cancellationToken = default) =>
         Task.FromResult(NextProgress);
 
-    public readonly record struct CreateCall(Guid ProjectId, string Name);
+    public readonly record struct CreateCall(Guid ProjectId, string Name, DateOnly? DueDate = null);
+
+    public readonly record struct SetDueDateCall(Guid MilestoneId, DateOnly? DueDate);
 
     public readonly record struct UpdateStatusCall(Guid MilestoneId, MilestoneStatus NewStatus);
 

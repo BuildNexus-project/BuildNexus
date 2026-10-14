@@ -20,12 +20,15 @@ public class MilestonesControllerTests
     private static readonly Guid MilestoneId = Guid.Parse("11111111-0000-4000-8000-000000000001");
     private static readonly DateTime Now = new(2026, 3, 2, 10, 0, 0, DateTimeKind.Utc);
 
-    private static Milestone SampleMilestone(MilestoneStatus status = MilestoneStatus.NotStarted) => new()
+    private static Milestone SampleMilestone(
+        MilestoneStatus status = MilestoneStatus.NotStarted,
+        DateOnly? dueDate = null) => new()
     {
         Id = MilestoneId,
         ProjectId = ProjectId,
         Name = "Foundation poured",
         Status = status,
+        DueDate = dueDate,
         CreatedAtUtc = Now,
         UpdatedAtUtc = Now
     };
@@ -308,5 +311,122 @@ public class MilestonesControllerTests
         var problem = Assert.IsAssignableFrom<ProblemDetails>(objectResult.Value);
         Assert.Contains("design", problem.Detail!, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("approved", problem.Detail!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---------- Due dates (US-21) ----------
+
+    [Fact]
+    public async Task Create_passes_the_due_date_to_the_repository()
+    {
+        var due = new DateOnly(2026, 11, 3);
+        var repository = new FakeMilestoneRepository { NextCreatedMilestone = SampleMilestone(dueDate: due) };
+        var controller = new MilestonesController(repository);
+
+        await controller.Create(
+            ProjectId,
+            new CreateMilestoneRequest { Name = "Foundation poured", DueDate = due },
+            default);
+
+        Assert.Equal(due, Assert.Single(repository.CreateCalls).DueDate);
+    }
+
+    [Fact]
+    public async Task Create_without_a_due_date_passes_none_and_so_behaves_exactly_as_before()
+    {
+        var repository = new FakeMilestoneRepository { NextCreatedMilestone = SampleMilestone() };
+        var controller = new MilestonesController(repository);
+
+        await controller.Create(ProjectId, new CreateMilestoneRequest { Name = "Foundation poured" }, default);
+
+        Assert.Null(Assert.Single(repository.CreateCalls).DueDate);
+    }
+
+    [Fact]
+    public async Task Create_returns_the_milestone_with_the_due_date_it_was_given()
+    {
+        var due = new DateOnly(2026, 11, 3);
+        var repository = new FakeMilestoneRepository { NextCreatedMilestone = SampleMilestone(dueDate: due) };
+        var controller = new MilestonesController(repository);
+
+        var result = await controller.Create(
+            ProjectId,
+            new CreateMilestoneRequest { Name = "Foundation poured", DueDate = due },
+            default);
+
+        var body = Assert.IsType<MilestoneResponse>(Assert.IsType<CreatedAtActionResult>(result).Value);
+        Assert.Equal(due, body.DueDate);
+    }
+
+    [Fact]
+    public async Task List_carries_each_milestones_due_date_or_none()
+    {
+        var repository = new FakeMilestoneRepository
+        {
+            ListRows = [SampleMilestone(dueDate: new DateOnly(2026, 11, 3)), SampleMilestone()]
+        };
+        var controller = new MilestonesController(repository);
+
+        var result = Assert.IsType<OkObjectResult>(await controller.List(ProjectId, default));
+
+        var rows = Assert.IsAssignableFrom<IEnumerable<MilestoneResponse>>(result.Value).ToList();
+        Assert.Equal(new DateOnly(2026, 11, 3), rows[0].DueDate);
+        Assert.Null(rows[1].DueDate);
+    }
+
+    [Fact]
+    public async Task SetDueDate_sets_the_date_and_returns_the_milestone_as_it_now_stands()
+    {
+        var due = new DateOnly(2026, 12, 1);
+        var repository = new FakeMilestoneRepository { NextDueDateMilestone = SampleMilestone(dueDate: due) };
+        var controller = new MilestonesController(repository);
+
+        var result = await controller.SetDueDate(MilestoneId, new SetMilestoneDueDateRequest { DueDate = due }, default);
+
+        var body = Assert.IsType<MilestoneResponse>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(due, body.DueDate);
+
+        var call = Assert.Single(repository.SetDueDateCalls);
+        Assert.Equal(MilestoneId, call.MilestoneId);
+        Assert.Equal(due, call.DueDate);
+    }
+
+    [Fact]
+    public async Task SetDueDate_with_no_date_clears_it()
+    {
+        var repository = new FakeMilestoneRepository { NextDueDateMilestone = SampleMilestone() };
+        var controller = new MilestonesController(repository);
+
+        var result = await controller.SetDueDate(MilestoneId, new SetMilestoneDueDateRequest { DueDate = null }, default);
+
+        Assert.Null(Assert.IsType<MilestoneResponse>(Assert.IsType<OkObjectResult>(result).Value).DueDate);
+        Assert.Null(Assert.Single(repository.SetDueDateCalls).DueDate);
+    }
+
+    [Fact]
+    public async Task SetDueDate_returns_404_for_a_milestone_that_does_not_exist()
+    {
+        var repository = new FakeMilestoneRepository { NextDueDateMilestone = null };
+        var controller = new MilestonesController(repository);
+
+        var result = await controller.SetDueDate(
+            MilestoneId, new SetMilestoneDueDateRequest { DueDate = new DateOnly(2026, 12, 1) }, default);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task SetDueDate_refuses_a_body_the_binder_rejected_and_never_reaches_the_repository()
+    {
+        // A date that is not a real yyyy-MM-dd day is refused by the model binder, which
+        // leaves ModelState invalid before the action runs.
+        var repository = new FakeMilestoneRepository { NextDueDateMilestone = SampleMilestone() };
+        var controller = new MilestonesController(repository);
+        controller.ModelState.AddModelError("dueDate", "The value is not a valid date.");
+
+        var result = await controller.SetDueDate(MilestoneId, new SetMilestoneDueDateRequest(), default);
+
+        var problem = Assert.IsType<ValidationProblemDetails>(Assert.IsAssignableFrom<ObjectResult>(result).Value);
+        Assert.Contains("dueDate", problem.Errors.Keys);
+        Assert.Empty(repository.SetDueDateCalls);
     }
 }

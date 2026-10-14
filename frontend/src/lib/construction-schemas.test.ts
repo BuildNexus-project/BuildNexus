@@ -33,6 +33,38 @@ describe('createMilestoneSchema', () => {
   })
 })
 
+describe('createMilestoneSchema — due date', () => {
+  it('is optional: a name alone is still a valid milestone', () => {
+    expect(createMilestoneSchema.safeParse({ name: 'Foundation poured' }).success).toBe(true)
+  })
+
+  it('treats an empty date input as no date, not as an invalid one', () => {
+    // A date input that was left alone reads as an empty string.
+    expect(createMilestoneSchema.safeParse({ name: 'Foundation poured', dueDate: '' }).success).toBe(true)
+  })
+
+  it('accepts a real day', () => {
+    expect(createMilestoneSchema.safeParse({ name: 'Foundation poured', dueDate: '2026-11-03' }).success).toBe(true)
+  })
+
+  it('refuses a day that does not exist, however well-formed — the service refuses it too', () => {
+    const result = createMilestoneSchema.safeParse({ name: 'Foundation poured', dueDate: '2026-02-30' })
+
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0].message).toBe('Enter a real date, as day, month and year.')
+  })
+
+  it('refuses something that is not a date at all', () => {
+    expect(createMilestoneSchema.safeParse({ name: 'Foundation poured', dueDate: 'next Friday' }).success).toBe(false)
+  })
+
+  it('names the date field, so the message lands beside it', () => {
+    const result = createMilestoneSchema.safeParse({ name: 'Foundation poured', dueDate: '2026-13-01' })
+
+    expect(result.error?.issues[0].path).toEqual(['dueDate'])
+  })
+})
+
 describe('updateMilestoneStatusSchema', () => {
   it('accepts NotStarted', () => {
     expect(updateMilestoneStatusSchema.safeParse({ status: 'NotStarted' }).success).toBe(true)

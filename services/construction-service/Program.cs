@@ -1,13 +1,14 @@
 using System.Text;
+using BuildNexus.ConstructionService.ApiDocs;
 using BuildNexus.ConstructionService.Authorization;
 using BuildNexus.ConstructionService.Configuration;
 using BuildNexus.ConstructionService.Data;
 using BuildNexus.ConstructionService.Messaging;
+using BuildNexus.ConstructionService.Projects;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,7 +29,6 @@ builder.Services.AddControllers()
                 namingPolicy: null,
                 allowIntegerValues: false));
     });
-builder.Services.AddEndpointsApiExplorer();
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
@@ -39,6 +39,7 @@ builder.Services.AddScoped<IConstructionPhaseRepository, ConstructionPhaseReposi
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 builder.Services.AddScoped<IPaymentSettlementRepository, PaymentSettlementRepository>();
 builder.Services.AddScoped<IConstructionReportRepository, ConstructionReportRepository>();
+builder.Services.AddScoped<IConstructionDashboardRepository, ConstructionDashboardRepository>();
 
 // Broker address, validated at startup: a consumer that cannot say where Kafka
 // is will read nothing, and DesignApproved events would pile up unnoticed.
@@ -47,7 +48,35 @@ builder.Services.AddOptions<KafkaOptions>()
     .Validate(o => !string.IsNullOrWhiteSpace(o.BootstrapServers), "Kafka:BootstrapServers must be configured.")
     .Validate(o => !string.IsNullOrWhiteSpace(o.ConsumerGroupId), "Kafka:ConsumerGroupId must be configured.")
     .Validate(o => o.MessageTimeoutMs > 0, "Kafka:MessageTimeoutMs must be greater than zero.")
+    .Validate(
+        o => o.HasConsistentSaslSettings(),
+        "Kafka:SecurityProtocol SaslSsl or SaslPlaintext needs Kafka:SaslMechanism, Kafka:SaslUsername and Kafka:SaslPassword all set, and those three must not be set without it.")
     .ValidateOnStart();
+
+// The Project Service, asked over HTTP - with the caller's own token - which projects a
+// Project Manager is assigned to (US-21). This service records who owns a project but not
+// which Project Manager runs it, and must not grow a copy. Its address is validated at
+// startup for the same reason the JWT settings are: a service that cannot reach it would
+// refuse every Project Manager dashboard at runtime, and a log line after the first one is
+// too late.
+builder.Services.AddOptions<ProjectServiceOptions>()
+    .Bind(builder.Configuration.GetSection(ProjectServiceOptions.SectionName))
+    .Validate(
+        o => Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _),
+        "Services:ProjectService:BaseUrl must be an absolute URL.")
+    .Validate(o => o.TimeoutSeconds > 0, "Services:ProjectService:TimeoutSeconds must be greater than zero.")
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<IProjectDirectoryClient, HttpProjectDirectoryClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<ProjectServiceOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+});
+
+// What "today" is, asked of a clock rather than read off the wall, so whether a milestone is
+// overdue can be decided against a fixed day in a test.
+builder.Services.AddSingleton(TimeProvider.System);
 
 // How fast the outbox drains. Both settings have working defaults, so there is
 // nothing to validate on start — an outbox nobody configured should still drain.
@@ -144,25 +173,7 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "BuildNexus Construction Service", Version = "v1" });
-
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Paste the access token returned by the User Service's /api/auth/login."
-    });
-
-    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
-    {
-        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
-    });
-});
+builder.Services.AddServiceSwagger();
 
 var app = builder.Build();
 

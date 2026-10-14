@@ -70,7 +70,7 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 
 | Method | Route                    | Allowed roles                            |
 |--------|--------------------------|------------------------------------------|
-| POST   | `/api/auth/register`     | Anonymous (Client, Architect, PM only)   |
+| POST   | `/api/auth/register`     | Anonymous (creates a Client account)     |
 | POST   | `/api/auth/login`        | Anonymous                                |
 | POST   | `/api/auth/forgot-password` | Anonymous                             |
 | POST   | `/api/auth/reset-password`  | Anonymous                             |
@@ -79,7 +79,24 @@ Either way the service listens on `http://localhost:5001`, with Swagger UI at
 | GET    | `/api/users/directory`   | Architect, ProjectManager                |
 | GET    | `/api/users`             | Admin                                    |
 | GET    | `/api/users/{id}`        | Admin                                    |
+| PUT    | `/api/users/{id}`        | Admin                                    |
+| PATCH  | `/api/users/{id}/status` | Admin                                    |
+| GET    | `/api/users/dashboard/admin` | Admin                                |
+| GET    | `/api/internal/users/{id}` | Other services only — `X-Internal-Api-Key`, not a user token |
 | GET    | `/health`                | Anonymous                                |
+
+The live list, with request and response bodies, is the service's Swagger UI at
+`/swagger`.
+
+`POST /api/auth/register` requires full name, email, password and phone number.
+Missing, blank or invalid phone numbers are refused with `400`. Every new
+account starts as a Client. A supplied role is ignored; only an Admin can
+assign Architect, ProjectManager or Admin through `PUT /api/users/{id}`.
+
+Phone numbers must contain exactly 10 digits starting with `07`, such as
+`0771234567`, or use `+94` in place of the leading `0`, such as `+94771234567`.
+The same format is enforced when editing a profile. Spaces or punctuation
+inside the number are refused.
 
 `PUT /api/users/me` edits the caller's own full name, phone number and contact
 address, and nothing else. Email and role are **not** self-editable — that is the
@@ -90,7 +107,7 @@ statement behind the endpoint does not list those columns at all. Changing them
 is an administrator's job.
 
 Sending `""` for a phone number or address clears it: the value is stored as
-`NULL`, which is also what a brand-new account has.
+`NULL`. A new account has the phone number supplied during registration.
 
 `GET /api/users/directory` is the project-staff lookup: the active Architects
 and Project Managers, name and role only. A Client is refused — a customer has
@@ -101,6 +118,16 @@ Deactivated accounts are left out, since they cannot be given work.
 `GET /api/users` is the Admin roster and deliberately does the opposite: it
 lists every account, deactivated ones included, because that is the one view an
 administrator needs to see them in.
+
+`GET /api/users/dashboard/admin` is the user half of the Admin's dashboard
+(US-21): `{ totalUsers, activeUsers, inactiveUsers, roles[] }`, with one
+`{ role, count }` entry per platform role in the platform's order, **including
+roles nobody holds**. A deactivated account counts in the total — it is still an
+account an Admin administers — and is reported separately so the two numbers can
+be told apart. It is one `GROUP BY role, is_active` query
+(`UserDashboardRepository`), so every figure is a sum of its lines and the cost
+does not grow with the number of accounts. The project count on the same
+dashboard is the Project Service's data; the page joins the two.
 
 Self-service registration cannot create an `Admin`: the handler rejects that role
 with `400` before hashing anything. Role names must be sent in their exact
@@ -248,6 +275,13 @@ explicitly `[AllowAnonymous]`, or names a role the platform does not have. An
 endpoint added in a later story is held to that rule without anyone having to
 remember this file.
 
+`AdminUserDashboardTests` walks the user counts over a stand-in query (totals,
+the active/inactive split, roles in platform order with zeros filled in, and an
+empty system), and `EndpointRoleDeclarationTests` pins the dashboard endpoint to
+Admin. `UserDashboardRepositoryDatabaseTests` proves the grouping against the
+real database, asserted as a difference before and after because the database
+also holds the seeded Admin and whatever else has been registered.
+
 `RegistrationRoleTests` and `RoleAccessTests` boot the real host and need the
 development database running (`cd ../../infra && docker compose up -d user-db`).
 `RoleAccessTests` is the US-03 matrix: for each of the four roles it signs in for
@@ -255,6 +289,24 @@ real and checks both an action the role is allowed and an action it is not. Both
 classes share `UserServiceCollection` so they never run at the same time — the
 factory's cleanup removes every `test-` account when it is disposed, which would
 otherwise delete accounts the other class is still signed in as.
+
+The database tests reach `user-db` on port **3306**, where the compose file
+publishes it and where CI finds it. If a native MySQL already holds 3306 on your
+machine and your git-ignored `infra/docker-compose.override.yml` moves `user-db`
+elsewhere, every database test fails at login — it is talking to the wrong MySQL.
+Tell the tests where it went with the `USER_DB_PORT` environment variable, or put
+it once in `user-service-tests/local.runsettings` (also git-ignored, picked up
+automatically by `dotnet test` and Visual Studio):
+
+```xml
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <USER_DB_PORT>3308</USER_DB_PORT>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>
+```
 
 Protected routes expect `Authorization: Bearer <token>`. Tokens are validated on
 issuer, audience, signature and lifetime with no clock skew, so an expired or

@@ -797,7 +797,7 @@ public class ProjectsController : ControllerBase
     /// A bad assignee — unknown, or the wrong role. Returned as a field error so
     /// the offending control in the form is the one that lights up.
     /// </summary>
-    private IActionResult AssigneeRejected(string field, string message)
+    private ActionResult AssigneeRejected(string field, string message)
     {
         _logger.LogWarning("Assignment refused: {Field} — {Message}", field, message);
 
@@ -811,7 +811,7 @@ public class ProjectsController : ControllerBase
     /// The project changed under the caller between the read and the write —
     /// moved off Pending, or removed. Same wording as a status-change conflict.
     /// </summary>
-    private IActionResult ProjectMovedOn() =>
+    private ObjectResult ProjectMovedOn() =>
         Problem(
             statusCode: StatusCodes.Status409Conflict,
             title: "The project has moved on",
@@ -819,7 +819,7 @@ public class ProjectsController : ControllerBase
                     + "Reload it to see where it stands now.");
 
     /// <summary>No project with that id — as far as this service is concerned, it does not exist.</summary>
-    private IActionResult ProjectNotFound(Guid id) =>
+    private ObjectResult ProjectNotFound(Guid id) =>
         Problem(
             statusCode: StatusCodes.Status404NotFound,
             title: "Project not found",
@@ -830,7 +830,7 @@ public class ProjectsController : ControllerBase
     /// caller and the project, so an unexpected refusal can be traced rather
     /// than guessed at.
     /// </summary>
-    private IActionResult NotOnThisProject(Guid projectId, Guid userId, string action)
+    private ObjectResult NotOnThisProject(Guid projectId, Guid userId, string action)
     {
         _logger.LogWarning(
             "Refused {UserId} in role {Role} on project {ProjectId}: not the owning client, assigned staff, or an Admin.",
@@ -850,7 +850,7 @@ public class ProjectsController : ControllerBase
     /// actually is and what it may do next, because "invalid transition" on its
     /// own tells the caller nothing they can act on.
     /// </summary>
-    private IActionResult InvalidTransition(Project project, ProjectStatus target)
+    private ObjectResult InvalidTransition(Project project, ProjectStatus target)
     {
         var allowed = ProjectStatusTransitions.NextFrom(project.Status);
 

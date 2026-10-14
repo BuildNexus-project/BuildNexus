@@ -11,46 +11,94 @@ import {
 
 describe('registerSchema', () => {
   const valid = {
-    fullName: 'Ada Perera',
+    firstName: 'Ada',
+    lastName: 'Perera',
     email: 'ada@example.com',
+    phoneNumber: '0771234567',
     password: 'Passw0rd',
-    role: 'Client',
+    confirmPassword: 'Passw0rd',
   }
 
   it('accepts a well-formed registration', () => {
     expect(registerSchema.safeParse(valid).success).toBe(true)
   })
 
+  it.each([
+    ['', 'Confirm your password.'],
+    ['Different1', 'Passwords do not match.'],
+  ])('requires a matching password confirmation (%s)', (confirmPassword, message) => {
+    const result = registerSchema.safeParse({ ...valid, confirmPassword })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(['confirmPassword'])
+      expect(result.error.issues[0].message).toBe(message)
+    }
+  })
+
+  it.each(['0771234567', '0712345678', '+94771234567', ' +94771234567 '])('accepts a valid phone number (%s)', (phoneNumber) => {
+    expect(registerSchema.parse({ ...valid, phoneNumber }).phoneNumber).toBe(phoneNumber.trim())
+  })
+
+  it.each([undefined, null, '', '   '])('requires a phone number (%s)', (phoneNumber) => {
+    const result = registerSchema.safeParse({ ...valid, phoneNumber })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(['phoneNumber'])
+    }
+  })
+
+  it.each([
+    '12345', 'call me', '077123456', '07712345678', '0171234567',
+    '+9477123456', '+947712345678', '+94112345678', '+940771234567',
+    '94771234567', '+94 77 123 4567', '077-123-4567', '(077)1234567',
+    '077-123-4567 ext 8', '1'.repeat(31),
+  ])('refuses an invalid phone number (%s)', (phoneNumber) => {
+    const result = registerSchema.safeParse({ ...valid, phoneNumber })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual(['phoneNumber'])
+    }
+  })
+
   it('refuses a password shorter than 8 characters', () => {
-    const result = registerSchema.safeParse({ ...valid, password: 'Pw0rd1' })
+    const result = registerSchema.safeParse({ ...valid, password: 'Pw0rd1', confirmPassword: 'Pw0rd1' })
 
     expect(result.success).toBe(false)
   })
 
   it('refuses a password with no digit', () => {
-    const result = registerSchema.safeParse({ ...valid, password: 'NoDigitsHere' })
+    const result = registerSchema.safeParse({ ...valid, password: 'NoDigitsHere', confirmPassword: 'NoDigitsHere' })
 
     expect(result.success).toBe(false)
   })
 
   it('refuses a password with no letter', () => {
-    const result = registerSchema.safeParse({ ...valid, password: '12345678' })
+    const result = registerSchema.safeParse({ ...valid, password: '12345678', confirmPassword: '12345678' })
 
     expect(result.success).toBe(false)
   })
 
-  it('refuses a full name shorter than 2 characters', () => {
-    expect(registerSchema.safeParse({ ...valid, fullName: 'A' }).success).toBe(false)
+  it.each(['firstName', 'lastName'] as const)('requires %s', (field) => {
+    const result = registerSchema.safeParse({ ...valid, [field]: '   ' })
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error.issues[0].path).toEqual([field])
+  })
+
+  it('trims both name fields before saving', () => {
+    expect(registerSchema.parse({ ...valid, firstName: ' Ada ', lastName: ' Perera ' })).toEqual(valid)
+  })
+
+  it('respects the stored full name limit including the separating space', () => {
+    expect(registerSchema.safeParse({ ...valid, firstName: 'a'.repeat(75), lastName: 'b'.repeat(74) }).success).toBe(true)
+    expect(registerSchema.safeParse({ ...valid, firstName: 'a'.repeat(75), lastName: 'b'.repeat(75) }).success).toBe(false)
   })
 
   it('refuses a malformed email', () => {
     expect(registerSchema.safeParse({ ...valid, email: 'not-an-email' }).success).toBe(false)
   })
 
-  it('refuses Admin — self-registration cannot mint one', () => {
-    // Mirrors the User Service, which refuses a self-assigned Admin role with a
-    // 400. SELECTABLE_ROLES is what keeps this schema from ever accepting it.
-    expect(registerSchema.safeParse({ ...valid, role: 'Admin' }).success).toBe(false)
+  it.each(['Architect', 'ProjectManager', 'Admin'])('does not include a supplied %s role in registration', (role) => {
+    expect(registerSchema.parse({ ...valid, role })).toEqual(valid)
   })
 })
 
@@ -64,7 +112,7 @@ describe('loginSchema', () => {
     // tell a badly-formed password apart from a wrong one. "short" is under 8
     // characters and has no digit — registerSchema refuses it, login does not.
     expect(registerSchema.safeParse({
-      fullName: 'Ada Perera', email: 'ada@example.com', password: 'short', role: 'Client',
+      firstName: 'Ada', lastName: 'Perera', email: 'ada@example.com', phoneNumber: '0771234567', password: 'short', confirmPassword: 'short',
     }).success).toBe(false)
     expect(loginSchema.safeParse({ email: 'ada@example.com', password: 'short' }).success).toBe(true)
   })
@@ -127,12 +175,12 @@ describe('profileSchema', () => {
     expect(profileSchema.safeParse(valid).success).toBe(true)
   })
 
-  it('accepts a phone number with at least 7 digits and the allowed punctuation', () => {
-    expect(profileSchema.safeParse({ ...valid, phoneNumber: '+94 77 123 4567' }).success).toBe(true)
+  it.each(['0771234567', '+94771234567'])('accepts a mobile number (%s)', (phoneNumber) => {
+    expect(profileSchema.safeParse({ ...valid, phoneNumber }).success).toBe(true)
   })
 
-  it('refuses a phone number with fewer than 7 digits', () => {
-    expect(profileSchema.safeParse({ ...valid, phoneNumber: '12345' }).success).toBe(false)
+  it.each(['077123456', '07712345678', '0112345678', '+940771234567', '+94 77 123 4567'])('refuses a phone number with the wrong format (%s)', (phoneNumber) => {
+    expect(profileSchema.safeParse({ ...valid, phoneNumber }).success).toBe(false)
   })
 
   it('refuses a phone number with letters', () => {

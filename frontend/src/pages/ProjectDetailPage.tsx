@@ -41,6 +41,7 @@ import {
   isStaleStateRefusal,
   MILESTONE_STATUS_LABELS,
   MILESTONE_STATUSES,
+  setMilestoneDueDate,
   startConstruction,
   updateMilestoneStatus,
   type ConstructionPhase,
@@ -61,6 +62,7 @@ import {
   type ProjectEvent,
   type ProjectStatusChange,
 } from '@/lib/project-api'
+import { isMilestoneOverdue } from '@/lib/milestone-dates'
 import { deliveryOf, needsAttention } from '@/lib/project-events'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/lib/project-status'
 import { ADMIN_ROLES, COST_MANAGEMENT_ROLES, ROLE_LABELS, STATUS_CHANGE_ROLES } from '@/lib/roles'
@@ -272,7 +274,7 @@ function MilestonesSection({
     formState: { errors, isSubmitting },
   } = useForm<CreateMilestoneValues>({
     resolver: zodResolver(createMilestoneSchema),
-    defaultValues: { name: '' },
+    defaultValues: { name: '', dueDate: '' },
   })
 
   // The service refuses milestone reads and writes for a project whose
@@ -376,13 +378,18 @@ function MilestonesSection({
     setFormError(null)
 
     try {
-      const created = await createMilestone(authFetch, projectId, { name: values.name })
+      // A blank date input means "no date", so it is left out of the request rather than
+      // sent empty — an empty string is not a day to the service, it is a malformed one.
+      const created = await createMilestone(authFetch, projectId, {
+        name: values.name,
+        ...(values.dueDate ? { dueDate: values.dueDate } : {}),
+      })
 
       // Append locally rather than refetch the list — the service ordered the
       // rows oldest-first and this new one is the newest, so it belongs at
       // the end. One fewer request, one less flicker for the PM.
       setMilestones((previous) => (previous ? [...previous, created] : [created]))
-      reset({ name: '' })
+      reset({ name: '', dueDate: '' })
 
       await refreshProgress()
     } catch (error) {
@@ -419,6 +426,34 @@ function MilestonesSection({
       await refreshProgress()
     } catch (error) {
       setUpdateError(apiErrorMessage(error, 'Could not update this milestone. Please try again.'))
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  /**
+   * Saves a milestone's due date the moment it is changed, the way its status is: the date
+   * input is the control, and an empty one clears the date.
+   *
+   * Nothing else about the milestone moves, so unlike a status change there is no rollup to
+   * re-read — the percentage is milestones completed over planned, and a date is neither.
+   */
+  async function onDueDateChange(milestone: Milestone, next: string) {
+    if (next === (milestone.dueDate ?? '')) {
+      return
+    }
+
+    setUpdateError(null)
+    setUpdatingId(milestone.id)
+
+    try {
+      const updated = await setMilestoneDueDate(authFetch, milestone.id, next === '' ? null : next)
+
+      setMilestones((previous) =>
+        previous ? previous.map((row) => (row.id === updated.id ? updated : row)) : null,
+      )
+    } catch (error) {
+      setUpdateError(apiErrorMessage(error, 'Could not save this due date. Please try again.'))
     } finally {
       setUpdatingId(null)
     }
@@ -597,6 +632,7 @@ function MilestonesSection({
             <TableRow>
               <TableHead>Milestone</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Due</TableHead>
               <TableHead>Last updated</TableHead>
             </TableRow>
           </TableHeader>
@@ -634,6 +670,19 @@ function MilestonesSection({
                     </SelectContent>
                   </Select>
                 </TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="date"
+                      className="w-full sm:w-40"
+                      aria-label={`Due date of ${milestone.name}`}
+                      value={milestone.dueDate ?? ''}
+                      disabled={updatingId !== null}
+                      onChange={(event) => void onDueDateChange(milestone, event.target.value)}
+                    />
+                    {isMilestoneOverdue(milestone) && <Badge variant="destructive">Overdue</Badge>}
+                  </div>
+                </TableCell>
                 <TableCell className="text-muted-foreground text-xs">
                   {formatMoment(milestone.updatedAtUtc)}
                 </TableCell>
@@ -663,6 +712,16 @@ function MilestonesSection({
             {...register('name')}
           />
           <FieldError errors={[errors.name]} />
+        </Field>
+        <Field className="sm:w-44">
+          <FieldLabel htmlFor="milestoneDueDate">Due date (optional)</FieldLabel>
+          <Input
+            id="milestoneDueDate"
+            type="date"
+            aria-invalid={Boolean(errors.dueDate)}
+            {...register('dueDate')}
+          />
+          <FieldError errors={[errors.dueDate]} />
         </Field>
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? 'Adding…' : 'Add'}

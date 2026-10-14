@@ -59,7 +59,7 @@ public class MilestonesController : ControllerBase
 
         try
         {
-            var milestone = await _repository.CreateAsync(projectId, name, cancellationToken);
+            var milestone = await _repository.CreateAsync(projectId, name, request.DueDate, cancellationToken);
 
             if (milestone is null)
             {
@@ -194,6 +194,41 @@ public class MilestonesController : ControllerBase
         }
 
         return Ok(MilestoneResponse.From(milestone));
+    }
+
+    /// <summary>
+    /// Sets, changes or clears a milestone's due date (US-21). Allowed roles: ProjectManager.
+    /// </summary>
+    /// <remarks>
+    /// <c>{ "dueDate": "2026-10-05" }</c> sets it and <c>{ "dueDate": null }</c> clears it. Its
+    /// own endpoint rather than a field on the status change: the milestones planted by the
+    /// template have no date, and this is how they get one. A date is optional — a milestone
+    /// without one behaves exactly as US-12 defined, and is never late.
+    /// </remarks>
+    /// <response code="200">The milestone as it now stands.</response>
+    /// <response code="400">The date was not a real <c>yyyy-MM-dd</c> day.</response>
+    /// <response code="401">The token was missing, expired or otherwise invalid.</response>
+    /// <response code="403">The caller is not a Project Manager.</response>
+    /// <response code="404">No milestone has that id.</response>
+    [HttpPut("api/construction/milestones/{id:guid}/due-date")]
+    [ProducesResponseType(typeof(MilestoneResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetDueDate(
+        Guid id,
+        [FromBody] SetMilestoneDueDateRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!ModelState.IsValid)
+        {
+            return ValidationProblem(ModelState);
+        }
+
+        var milestone = await _repository.SetDueDateAsync(id, request.DueDate, cancellationToken);
+
+        return milestone is null ? NotFound() : Ok(MilestoneResponse.From(milestone));
     }
 
     /// <summary>

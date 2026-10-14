@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 
 namespace BuildNexus.ConstructionService.Data;
 
@@ -68,7 +69,7 @@ public class ProjectOwnerRepository : IProjectOwnerRepository
         // width MySqlConnector picks without pinning this to one CLR type.
         var result = await command.ExecuteScalarAsync(cancellationToken);
 
-        return result is not null && Convert.ToInt64(result) == 1;
+        return result is not null && Convert.ToInt64(result, CultureInfo.InvariantCulture) == 1;
     }
 
     private static void AddParameter(DbCommand command, string name, object value)

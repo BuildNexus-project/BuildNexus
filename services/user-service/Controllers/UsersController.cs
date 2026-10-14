@@ -386,7 +386,7 @@ public class UsersController : ControllerBase
     /// a field error so the offending control in the form is the one that lights
     /// up, rather than a banner above it.
     /// </summary>
-    private IActionResult SelfInflicted(string reason, string message, string field)
+    private ActionResult SelfInflicted(string reason, string message, string field)
     {
         _logger.LogWarning("Admin self-edit refused: {Reason}.", reason);
 
@@ -396,7 +396,7 @@ public class UsersController : ControllerBase
         }));
     }
 
-    private IActionResult EmailAlreadyRegistered(string email)
+    private ConflictObjectResult EmailAlreadyRegistered(string email)
     {
         _logger.LogInformation("Account update rejected: {Email} is already registered.", email);
 

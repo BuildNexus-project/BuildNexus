@@ -24,7 +24,9 @@ describe('NAV_ITEMS', () => {
     '/my-costs': CLIENT_ROLES,
     '/directory': PROJECT_STAFF_ROLES,
     '/admin/users': ADMIN_ROLES,
+    '/admin/oversight': ADMIN_ROLES,
     '/admin/reports/design-approval': ADMIN_ROLES,
+    '/admin/reports/project-status': ADMIN_ROLES,
     '/reports/construction-payment': REPORTING_ROLES,
   }
 
@@ -112,6 +114,10 @@ describe('breadcrumbsFor', () => {
     expect(breadcrumbsFor('/profile')).toEqual([{ label: 'Profile' }])
   })
 
+  it('has a trail for the notification history, reached from the bell rather than a nav item', () => {
+    expect(breadcrumbsFor('/notifications')).toEqual([{ label: 'Notifications' }])
+  })
+
   it('links every step but the last', () => {
     expect(breadcrumbsFor('/projects/new')).toEqual([
       { label: 'Projects', to: '/projects' },
@@ -138,10 +144,21 @@ describe('breadcrumbsFor', () => {
     ])
   })
 
+  it('has a trail for the oversight screen', () => {
+    expect(breadcrumbsFor('/admin/oversight')).toEqual([{ label: 'Oversight' }])
+  })
+
   it('leads to the combined report through Reports', () => {
     expect(breadcrumbsFor('/reports/construction-payment')).toEqual([
       { label: 'Reports' },
       { label: 'Construction & payment' },
+    ])
+  })
+
+  it('leads to the project status report through Reports', () => {
+    expect(breadcrumbsFor('/admin/reports/project-status')).toEqual([
+      { label: 'Reports' },
+      { label: 'Project status' },
     ])
   })
 

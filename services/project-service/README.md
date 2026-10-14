@@ -73,10 +73,30 @@ per schema.
 
 ## Endpoints
 
-| Method | Route            | Allowed roles |
-|--------|------------------|---------------|
-| POST   | `/api/projects` | Client        |
-| GET    | `/health`       | Anonymous     |
+| Method | Route                                        | Allowed roles                            |
+|--------|----------------------------------------------|------------------------------------------|
+| POST   | `/api/projects`                              | Client                                   |
+| GET    | `/api/projects`                              | Client, Architect, ProjectManager, Admin |
+| GET    | `/api/projects/{id}`                         | Client, Architect, ProjectManager, Admin |
+| PATCH  | `/api/projects/{id}/status`                  | Architect, ProjectManager, Admin         |
+| POST   | `/api/projects/{id}/cancellation`            | Client, Admin                            |
+| PUT    | `/api/projects/{id}/architect`               | Admin                                    |
+| PUT    | `/api/projects/{id}/project-manager`         | Admin                                    |
+| GET    | `/api/projects/{id}/events`                  | Admin                                    |
+| GET    | `/api/projects/oversight`                    | Admin                                    |
+| GET    | `/api/projects/reports/status`               | Admin                                    |
+| GET    | `/api/projects/reports/status/export`        | Admin                                    |
+| GET    | `/api/projects/dashboard/client`             | Client                                   |
+| GET    | `/api/projects/dashboard/architect`          | Architect                                |
+| GET    | `/api/projects/dashboard/admin`              | Admin                                    |
+| GET    | `/api/projects/notifications`                | Client, Architect                        |
+| POST   | `/api/projects/notifications/{id}/read`      | Client, Architect                        |
+| POST   | `/api/projects/notifications/read-all`       | Client, Architect                        |
+| GET    | `/health`                                    | Anonymous                                |
+
+The report, oversight, dashboard and notification endpoints are described in
+their own sections below, and the live list with request and response bodies is
+the service's Swagger UI at `/swagger`.
 
 `POST /api/projects` is US-05: a Client describes the building they want and
 the project is created with status `Pending`, waiting on the company to pick it
@@ -110,6 +130,252 @@ The frontend never calls this service directly: every `/api/projects` call goes
 through the API Gateway on `http://localhost:5000`, which validates the token
 and proxies it here unchanged. This service re-validates it and enforces its own
 role checks — the gateway makes no authorization decisions.
+
+## Project status report (US-18)
+
+An Admin-only view of the whole pipeline: every project grouped by its current
+status, with the count and budget total of each group.
+
+| Method | Route                                  | Allowed roles |
+|--------|----------------------------------------|---------------|
+| GET    | `/api/projects/reports/status`         | Admin         |
+| GET    | `/api/projects/reports/status/export`  | Admin         |
+
+Both take the same optional filters, which combine:
+
+| Query parameter | Meaning |
+|-----------------|---------|
+| `status`        | Only these statuses. Repeat it (`?status=Pending&status=Designing`) or comma-separate (`?status=Pending,Designing`). Names are not case-sensitive; a number is not a status. Omit it for every status. |
+| `from`, `to`    | First and last day to include, as `yyyy-MM-dd`. Both are inclusive whole days in UTC, so `from=to` is one day. Either may be left off. |
+
+The date range is on `created_at` — the day the Client submitted the project.
+`updated_at` moves with every status change, so a range over it would answer
+"what was touched" rather than "what came in".
+
+An unknown status, a date that is not a date, or a `from` after `to` is a `400`
+with the reason under `errors.filter`, never a quietly widened report: an Admin
+who misspells a status must not be handed the whole pipeline as if it were the
+slice they asked for.
+
+`GET /api/projects/reports/status` answers:
+
+```json
+{
+  "generatedAt": "2026-09-30T08:00:00Z",
+  "totalProjects": 3,
+  "totalBudget": 147500000.00,
+  "groups": [
+    {
+      "status": "Pending",
+      "count": 1,
+      "totalBudget": 18500000.00,
+      "projects": [
+        { "id": "…", "name": "Beachfront villa", "location": "Galle",
+          "status": "Pending", "budget": 18500000.00,
+          "createdAt": "2026-09-02T09:00:00", "updatedAt": "2026-09-02T09:00:00" }
+      ]
+    }
+  ]
+}
+```
+
+`groups` has one entry per status in scope, in lifecycle order (`Pending`,
+`Designing`, `DesignApproved`, `Construction`, `Completed`, `Cancelled`) — and a
+status with nothing in it is still there with `count: 0`, so the report keeps its
+shape from one week to the next. A `status` filter limits which groups appear.
+Projects inside a group are newest first, with `id` breaking a tie so two runs
+over unchanged data read the same.
+
+`GET /api/projects/reports/status/export` is the same report as a CSV download,
+`project-status-report-<yyyy-MM-dd>.csv`: one row per project, grouped in
+lifecycle order, with the columns `Status, Project ID, Name, Location, Budget,
+Created (UTC), Last updated (UTC)`. Three details are deliberate:
+
+- **Quoting.** A project name is whatever a Client typed, commas and quotes
+  included, so a field containing one is quoted with inner quotes doubled
+  (RFC 4180).
+- **Formulas.** An Admin opens the file in Excel, so text starting with `=`, `+`,
+  `-` or `@` is prefixed with an apostrophe and reads as plain text rather than
+  running.
+- **Encoding.** The file starts with a UTF-8 byte-order mark, so a spreadsheet
+  reads non-ASCII names correctly instead of guessing.
+
+Filtering is done by MySQL, with every value — including the status list — as a
+bound parameter; grouping and ordering are done in code
+(`ProjectStatusReportBuilder`), where they can be tested without a database. The
+query lives in its own `IProjectReportRepository`, apart from the one a request
+that writes goes through.
+
+The React screen is `/admin/reports/project-status`. It exports the filter that
+is *applied*, not one that has been ticked and not yet applied, so the file is
+always the report on screen. No gateway change is needed: the existing
+`/api/projects/{**catch-all}` route already covers these paths.
+
+## Platform oversight (US-38)
+
+An Admin-only list of every project on the platform, for the one screen that
+also links to the reports.
+
+| Method | Route                     | Allowed roles |
+|--------|---------------------------|---------------|
+| GET    | `/api/projects/oversight` | Admin         |
+
+Each row carries the project's status, its assigned Architect and Project
+Manager (id and name), its `updatedAt` — the "last updated" date — and an
+`isStalled` flag. The envelope adds `totalProjects`, `stalledCount`,
+`generatedAt` and `stalledAfterDays`, so the screen quotes the service's
+threshold rather than keeping its own copy.
+
+- **Cancelled projects are included**, unlike `GET /api/projects`: this is the
+  whole-platform view, and the status says which are closed out.
+- **Names are looked up, never stored**, through the same `IUserNameResolver` the
+  project detail uses. A name that cannot be found is `null` with the id still
+  present, so a User Service outage never stops the list.
+- **Stalled** (`ProjectStallPolicy`): a project that is not `Completed` or
+  `Cancelled` and whose `updated_at` is 14 or more days old. A `Pending` project
+  nobody has picked up counts — that is the neglect the screen is for. The rule
+  lives in one class and every row is judged at one instant, so the flags and
+  the count cannot disagree. The 14 days is a constant, not configuration; the
+  BA has not been asked yet whether it should be.
+- It reuses the existing `ListAllAsync` query (no new SQL) and lives in its own
+  `OversightController`, like `ReportsController`, because it reads across every
+  project. No gateway change: `/api/projects/{**catch-all}` already covers it.
+
+The React screen is `/admin/oversight`.
+
+## Role dashboards (US-21)
+
+The Project Service's slice of each role's dashboard — the part only it knows:
+which projects a Client submitted, which an Architect is assigned to, and how
+many projects the system holds in each status. The other slices of the same
+dashboards come from the other services; the page joins them on the project id
+(see `frontend/README.md`, *Role dashboards*).
+
+| Method | Route                               | Allowed roles |
+|--------|-------------------------------------|---------------|
+| GET    | `/api/projects/dashboard/client`    | Client        |
+| GET    | `/api/projects/dashboard/architect` | Architect     |
+| GET    | `/api/projects/dashboard/admin`     | Admin         |
+
+One endpoint per role rather than one that switches on the caller's role, so
+each response shape is declared, gated and documented on its own. Each is gated
+to exactly its own role, and `EndpointRoleDeclarationTests` pins that.
+
+- **Client** — `{ activeCount, projects[] }`: the projects the caller submitted.
+- **Architect** — `{ assignedCount, projects[] }`: the projects they are assigned to.
+- **Admin** — `{ totalCount, groups[] }`: every project, and one `{ status, count }`
+  entry per status in lifecycle order, **including statuses nothing is in**, so
+  the shape does not change with the data.
+
+**Active** means neither `Completed` nor `Cancelled`. The two per-person lists
+are active projects only, most recently moved first (`updated_at`). The Admin
+total counts every project, whatever its status.
+
+None of these takes an id. Who is asking decides what comes back, and it is
+always the token's own `sub` — a Client cannot ask for another Client's
+dashboard because there is nowhere to say whose. A Client with nothing under
+way gets an empty list and a count of `0`, which is the truthful answer rather
+than a refusal.
+
+All three are ADO.NET reads in `ProjectDashboardRepository`, kept apart from
+`IProjectRepository` the way the report query is. The Admin counts are a single
+`GROUP BY status`, so the cost does not grow with the pipeline.
+
+## In-app notifications (US-26)
+
+A Client or Architect is told, on their next visit, when a design is approved, a
+milestone is completed or a payment is received on one of their projects.
+Nothing is pushed: a consumer stores a row per person when the event happens, and
+the dashboard reads those rows the next time it loads.
+
+| Method | Route                                     | Allowed roles       |
+|--------|-------------------------------------------|---------------------|
+| GET    | `/api/projects/notifications`             | Client, Architect   |
+| POST   | `/api/projects/notifications/{id}/read`   | Client, Architect   |
+| POST   | `/api/projects/notifications/read-all`    | Client, Architect   |
+
+- **List** — `{ unreadCount, hasMore, notifications[] }`, newest first, paged by
+  `?skip=` (default 0) and `?take=` (default 20, 1 to 50). `hasMore` says whether
+  there are older ones beyond this page: ask again with `skip` advanced by the
+  length of `notifications`. `unreadCount` is every unread notification the
+  caller has, not the length of the page, so "12 new" stays true when only 20 are
+  shown. A `skip` or `take` out of range is a `400` naming it — never quietly
+  clamped, since a caller that asked for 500 and was handed 50 would believe it
+  had reached the end. Each notification is
+  `{ id, projectId, eventType, message, occurredAt, isRead }`; `occurredAt` is
+  UTC with a `Z`. Pages follow on with no overlap or gap because the order is
+  `occurred_at` newest first with the id as the tie-break, so it is the same on
+  every read.
+- **Mark read** — `204`, and repeating it is harmless (it keeps the time it was
+  first read). A notification that is not the caller's answers `404`, exactly as
+  one that does not exist does, so a guessed id confirms nothing.
+- **Mark all read** — `204`, even when nothing was unread.
+
+None takes a user id: whose notifications these are is always the token's own
+`sub`. Admin and Project Manager get `403` — nothing is ever stored for them.
+No gateway change is needed; `/api/projects/{**catch-all}` already covers it.
+
+### What is stored, and for whom
+
+`NotificationEventsConsumer` reads three topics owned by other services and turns
+three event types into notifications. Anything else on those topics is ignored.
+
+| Topic                 | `eventType`          | Message                                                  |
+|-----------------------|----------------------|----------------------------------------------------------|
+| `design-events`       | `DesignApproved`     | `Design "<name>" (version <n>) was approved on "<project>".` |
+| `construction-events` | `MilestoneCompleted` | `Milestone "<name>" was completed on "<project>".`       |
+| `payment-events`      | `PaymentReceived`    | `A payment was received on "<project>".`                 |
+
+An event names a project, never the people, and the people are in this service's
+own `projects` table — which is why the notifications live here and not in a
+service of their own. Each event notifies the project's **Client** and its
+**assigned Architect** (just the Client while no Architect is assigned). The
+Project Manager and Admin are not told. The person who caused the event is told
+too: a Client who pays gets a receipt.
+
+**The payment amount is deliberately not in the message.** The Architect is a
+recipient and the Payment Service refuses them every one of its endpoints, so a
+figure here would show them what they may not otherwise see.
+
+`NotificationMapper` holds those rules and is pure, so they are unit-tested with
+no database or broker; the consumer is the plumbing around it. Resilience follows
+the other consumers here: an unreadable message is logged and committed past, an
+unknown project is logged and skipped, and a database failure leaves the offset
+uncommitted so the message is retried.
+
+**Redelivery is safe.** `notifications` has a unique key on `(event_id, user_id)`
+— the id is the envelope's `eventId` — so Kafka delivering an event twice stores
+it once. The insert is `ON DUPLICATE KEY UPDATE`, not `INSERT IGNORE`: a missing
+project still fails loudly instead of being swallowed as a warning.
+
+**It reads under its own consumer group**, `<Kafka:ConsumerGroupId>-notifications`
+(`project-service-notifications` by default). Two readers sharing a group would
+split a topic's partitions between them, and each would see only some of the
+messages — and this service already reads `construction-events` and
+`payment-events` under groups of their own. A brand-new group reads each topic
+from the start, so the first run also notifies for older events; they are stamped
+with when the event happened, not when it was read.
+
+**Who is told is decided when the event is read, not when it happened.** An event
+names a project and never the people, so the Client and Architect are whoever the
+project has *now*. In steady state that is the same thing — events are read within
+moments — but a replay, or a reader that was down for a while, tells the Architect
+the project has today. An Architect assigned after a design was approved would be
+told of that approval on a replay, and one reassigned away would not. Nothing on
+any topic says who the Architect was at the time, so it cannot be done better from
+here.
+
+**Every Kafka client here connects to the broker the same way.** The producer and
+all three consumers build their librdkafka config through `KafkaBrokerSettings`,
+so the optional Azure Event Hubs login (`Kafka:SecurityProtocol`, `SaslMechanism`,
+`SaslUsername`, `SaslPassword`) and connection tuning reach every one of them. The
+consumers once did not receive them at all: against Event Hubs the service could
+publish and could not read. Unset, as locally, none of those keys is passed and a
+client is configured exactly as before. `request.timeout.ms` stays with the
+publisher — it is a producer-only setting.
+
+Schema: `Migrations/008_create_notifications_table.sql`. `user_id` is not a
+foreign key (the account lives in the User Service's database); `project_id` is.
 
 ## Events published (Kafka)
 
@@ -203,10 +469,23 @@ docker exec -it buildnexus-kafka /opt/kafka/bin/kafka-console-consumer.sh \
 cd ../project-service-tests && dotnet test
 ```
 
-**Every test in this project runs without MySQL and without Kafka.** The
+**Most tests in this project run without MySQL and without Kafka.** The
 repository and the event publisher are stood in for, so nothing has to be
-started first — which is also why the CI job runs this project without bringing
-up a `project-db` container the tests would never connect to.
+started first. The exceptions are tagged `[Trait("Category", "Integration")]`
+and need the real thing: `ProjectRepositoryDatabaseTests`,
+`ProjectPaymentStatusDatabaseTests`, `ProjectReportRepositoryDatabaseTests`,
+`ProjectDashboardRepositoryDatabaseTests` and
+`NotificationRepositoryDatabaseTests` run SQL against `project-db`, and
+`ProjectKafkaIntegrationTests` does a real round trip through the broker. Start
+them with `cd infra && docker compose up -d --wait project-db kafka`.
+
+```bash
+dotnet test --filter "Category!=Integration"   # what needs nothing running
+dotnet test --filter "Category=Integration"    # what needs project-db and kafka
+```
+
+CI runs the two groups as separate stages: the unit stage with no containers,
+then the integration stage once its databases and broker are healthy.
 
 `CreateProjectRequestTests` covers the validation rules: the required fields,
 the column bounds mirrored from `001_create_projects_table.sql`, and the
@@ -231,6 +510,55 @@ any endpoint neither declares its roles nor is explicitly `[AllowAnonymous]`, or
 names a role the platform does not have. An endpoint added in a later story is
 held to that rule without anyone having to remember this file.
 
+The US-18 report is covered in layers. `ProjectStatusReportBuilderTests` and
+`ProjectReportFilterTests` check the grouping, the ordering and the filter rules
+(what is accepted, what is refused, where the date range's edges fall) with no
+database. `ProjectStatusReportCsvTests` pins the CSV — columns, quoting, the
+formula guard, culture-independent numbers. `ProjectStatusReportEndpointTests`
+walks the acceptance criteria over a stand-in query: grouped by status, the
+filters reach the query, a bad filter is a `400` before anything is read, and the
+export carries the same report. `EndpointRoleDeclarationTests` pins both
+endpoints to Admin only. The SQL itself — the status list and the inclusive date
+boundaries — is only provable against the real engine, so
+`ProjectReportRepositoryDatabaseTests` runs against `project-db` (the same
+integration category as `ProjectRepositoryDatabaseTests`): start it first with
+`cd infra && docker compose up -d --wait project-db`.
+
+The US-38 oversight list is covered by `ProjectStallPolicyTests` (every open
+status, the exact 14-day edge, finished projects never stalled) and
+`ProjectOversightEndpointTests` (every project listed, cancelled kept, staff by
+id and name, a name that cannot be found, one lookup per person, an empty
+platform, the stalled flags and count) over a stand-in repository, with no
+database. `EndpointRoleDeclarationTests` pins it to Admin only.
+
+The US-21 dashboards are covered the same way. `ProjectDashboardEndpointTests`
+walks each role's dashboard over a stand-in query: what comes back, that an empty
+result is an empty dashboard and not an error, that the query is for the caller
+named in the token and not anyone else, and that a token with no usable `sub` is
+refused before anything is read. `ProjectDashboardRepositoryDatabaseTests` proves
+the SQL against `project-db` — ownership scoping, that completed and cancelled
+projects are left out, the newest-moved-first order, and the per-status count
+(asserted as a difference before and after, since the development database holds
+other projects).
+
+The US-26 notifications are covered in layers too. `NotificationMapperTests`
+pins which events count, who is told and what they are told — including that no
+amount reaches the message and that an unreadable event is refused — with no
+database or broker. `NotificationEventsConsumerTests` drives
+`HandleAsync` over stand-ins: each of the three events stores for the Client and
+the Architect, a redelivery stores nothing new, other events and unknown
+projects are left alone, and the commit-or-retry exception contract holds.
+`NotificationsEndpointTests` walks the acceptance criterion that a stored
+notification is visible on the person's next request, and that it is only theirs;
+it also pins the paging — pages that follow on, `hasMore`, the edges, and the
+`400` for a `skip` or `take` out of range. `KafkaConsumerConfigTests` pins what
+every consumer is built with, for the local broker and for Event Hubs, without a
+broker.
+`NotificationRepositoryDatabaseTests` proves the SQL against `project-db`: the
+unique key, the all-or-nothing batch, the foreign key and CHECK refusals, and
+that a second "mark read" keeps the first time. Each person in it is a fresh
+random id, so it shares the development database without reading anyone's rows.
+
 `MigrationScriptTests` checks the scripts are embedded (DbUp silently skips one
 that is not), sort into the order they must run in, do not switch database, and
 hold no foreign key into another service's schema.
@@ -245,8 +573,8 @@ hold no foreign key into another service's schema.
 - `Kafka:MessageTimeoutMs` — how long a publish may spend reaching the broker.
   Defaults to 5000; see [When the broker is down](#when-the-broker-is-down).
 - `Kafka:SecurityProtocol`, `Kafka:SaslMechanism`, `Kafka:SaslUsername`,
-  `Kafka:SaslPassword` — how the producer authenticates to the broker. **All
-  four are unset locally**, and then the producer speaks plaintext, which is what
+  `Kafka:SaslPassword` — how the producer and every consumer authenticate to the broker. **All
+  four are unset locally**, and then each client speaks plaintext, which is what
   the compose broker's `kafka:9092` listener expects — exactly as before these
   settings existed. Azure Event Hubs accepts only SASL over TLS, so the deployed
   service is given all four: `SaslSsl`, `Plain`, the literal username

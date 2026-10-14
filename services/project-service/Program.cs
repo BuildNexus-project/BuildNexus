@@ -1,4 +1,5 @@
 using System.Text;
+using BuildNexus.ProjectService.ApiDocs;
 using BuildNexus.ProjectService.Authorization;
 using BuildNexus.ProjectService.Configuration;
 using BuildNexus.ProjectService.Data;
@@ -8,16 +9,20 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
+
+// The clock, injected so a test can fix the moment a notification is marked read.
+builder.Services.AddSingleton(TimeProvider.System);
 
 // Data access (ADO.NET, direct SQL — no ORM)
 builder.Services.AddSingleton<IDbConnectionFactory, MySqlConnectionFactory>();
 builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
+builder.Services.AddScoped<IProjectReportRepository, ProjectReportRepository>();
+builder.Services.AddScoped<IProjectDashboardRepository, ProjectDashboardRepository>();
+builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
 
 // One producer for the process, held open. Building a Kafka producer starts
@@ -40,6 +45,11 @@ builder.Services.AddHostedService<ConstructionEventsConsumer>();
 // (US-24). The money stays in Payment Service; this keeps one derived fact locally so a project
 // can be read without asking that service anything. Nothing on any request path waits on it.
 builder.Services.AddHostedService<PaymentEventsConsumer>();
+
+// Reads design-events, construction-events and payment-events under a group of its own and stores
+// an in-app notification for the Client and Architect each DesignApproved, MilestoneCompleted or
+// PaymentReceived concerns (US-26). Publishes nothing, and nothing on any request path waits on it.
+builder.Services.AddHostedService<NotificationEventsConsumer>();
 
 // The User Service, asked over HTTP — with the Admin's own token — what role an
 // account holds before it is assigned to a project. Its address is validated at
@@ -180,25 +190,7 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "BuildNexus Project Service", Version = "v1" });
-
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Paste the access token returned by the User Service's /api/auth/login."
-    });
-
-    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
-    {
-        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
-    });
-});
+builder.Services.AddServiceSwagger();
 
 var app = builder.Build();
 
