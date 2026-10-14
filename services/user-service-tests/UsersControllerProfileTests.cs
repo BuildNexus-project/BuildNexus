@@ -25,18 +25,18 @@ public class UsersControllerProfileTests
         var result = await controller.UpdateCurrentUser(new UpdateProfileRequest
         {
             FullName = "Ada Perera-Silva",
-            PhoneNumber = "+94 77 123 4567",
+            PhoneNumber = "+94771234567",
             ContactAddress = "12 Galle Road, Colombo 03"
         });
 
         Assert.True(repository.ProfileWasUpdated);
         Assert.Equal("Ada Perera-Silva", user.FullName);
-        Assert.Equal("+94 77 123 4567", user.PhoneNumber);
+        Assert.Equal("+94771234567", user.PhoneNumber);
         Assert.Equal("12 Galle Road, Colombo 03", user.ContactAddress);
 
         var body = OkBody(result);
         Assert.Equal("Ada Perera-Silva", body.FullName);
-        Assert.Equal("+94 77 123 4567", body.PhoneNumber);
+        Assert.Equal("+94771234567", body.PhoneNumber);
         Assert.Equal("12 Galle Road, Colombo 03", body.ContactAddress);
     }
 

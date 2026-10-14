@@ -61,11 +61,15 @@ public static class WorkflowSetup
         var projectName = $"E2E House {run}";
         var documentName = $"FloorPlan {run}";
 
-        // Register: three people sign up through the real form. An Admin cannot, which is why the
-        // seeded one is used below.
-        var client = app.Register($"E2E Client {run}", $"e2e.client.{run}@buildnexus.test", "Client", "Client");
-        var architect = app.Register($"E2E Architect {run}", $"e2e.architect.{run}@buildnexus.test", "Architect", "Architect");
-        var projectManager = app.Register($"E2E Manager {run}", $"e2e.pm.{run}@buildnexus.test", "ProjectManager", "Project Manager");
+        // Every signup starts as a Client; the seeded Admin assigns the staff roles.
+        var client = app.Register($"E2E Client {run}", $"e2e.client.{run}@buildnexus.test");
+        var architect = app.Register($"E2E Architect {run}", $"e2e.architect.{run}@buildnexus.test");
+        var projectManager = app.Register($"E2E Manager {run}", $"e2e.pm.{run}@buildnexus.test");
+
+        app.SignIn(E2ESettings.AdminEmail, E2ESettings.AdminPassword);
+        architect = app.ChangeRole(architect, "Architect", "Architect");
+        projectManager = app.ChangeRole(projectManager, "ProjectManager", "Project Manager");
+        app.SignOut();
 
         // The Client submits a project.
         app.SignIn(client);

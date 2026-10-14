@@ -7,13 +7,15 @@ import { ApiError } from './api'
  *
  * Validation failures come back keyed by the server's property names
  * (`Email`, `Password`), which are the same fields lower-cased on this side, so
- * each message lands on the input that caused it. Anything without a field —
+ * each message lands on the input that caused it. Field aliases handle forms
+ * that split a server field into separate inputs. Anything without a field —
  * a duplicate email, a 500 — is returned for the caller to show at form level.
  */
 export function applyApiErrorToForm<T extends FieldValues>(
   error: unknown,
   setError: UseFormSetError<T>,
   fallbackMessage: string,
+  fieldAliases: Partial<Record<string, Path<T>>> = {},
 ): string | null {
   if (!(error instanceof ApiError)) {
     return fallbackMessage
@@ -23,7 +25,8 @@ export function applyApiErrorToForm<T extends FieldValues>(
 
   if (entries.length > 0) {
     for (const [property, messages] of entries) {
-      const field = (property.charAt(0).toLowerCase() + property.slice(1)) as Path<T>
+      const fieldName = property.charAt(0).toLowerCase() + property.slice(1)
+      const field = fieldAliases[fieldName] ?? (fieldName as Path<T>)
       setError(field, { type: 'server', message: messages.join(' ') })
     }
 

@@ -66,7 +66,7 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Registers a new account. Allowed roles: anonymous.
+    /// Registers a new account as a Client. Allowed roles: anonymous.
     /// </summary>
     /// <response code="201">The account was created.</response>
     /// <response code="400">The payload failed validation.</response>
@@ -77,21 +77,6 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        // Self-service registration must never mint an Admin. The match is exact
-        // and case-sensitive against the canonical role names, so "admin" is
-        // rejected here rather than reaching ck_users_role as a raw SQL error.
-        // Checked before hashing: no reason to spend 210k PBKDF2 iterations on a
-        // request that is already refused.
-        if (request.Role is not ("Client" or "Architect" or "ProjectManager"))
-        {
-            _logger.LogWarning("Registration rejected: role {Role} is not self-assignable.", request.Role);
-
-            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-            {
-                ["Role"] = ["Role must be one of: Client, Architect, ProjectManager."]
-            }));
-        }
-
         var email = NormaliseEmail(request.Email);
 
         if (await _userRepository.EmailExistsAsync(email))
@@ -105,9 +90,11 @@ public class AuthController : ControllerBase
             Id = Guid.NewGuid(),
             FullName = request.FullName.Trim(),
             Email = email,
+            PhoneNumber = request.PhoneNumber.Trim(),
             // The raw password is hashed here and never persisted or logged.
             PasswordHash = _passwordHasher.Hash(request.Password),
-            Role = Enum.Parse<UserRole>(request.Role),
+            // Roles are assigned by administrators, never by a signup payload.
+            Role = UserRole.Client,
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now

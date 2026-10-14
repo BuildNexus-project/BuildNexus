@@ -22,9 +22,8 @@ public class UpdateProfileRequest : IValidatableObject
     public string FullName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional. Permissive about formatting — spaces, brackets and hyphens are
-    /// all common ways to write the same number — but strict about content, and
-    /// long enough to be a real number rather than a stray digit.
+    /// A 10-digit mobile number beginning with 07, or the same number with
+    /// +94 replacing the leading 0. Blank clears the stored number.
     /// </summary>
     /// <remarks>
     /// A blank value is left to pass here and is stored as <c>NULL</c>: that is
@@ -33,8 +32,8 @@ public class UpdateProfileRequest : IValidatableObject
     /// selected and deleted can leave a stray space behind.
     /// </remarks>
     [StringLength(30, ErrorMessage = "Phone number must not exceed 30 characters.")]
-    [RegularExpression(@"^\s*$|^(?=(?:[^0-9]*[0-9]){7,})\s*\+?[0-9 ()\-]+$",
-        ErrorMessage = "Phone number must contain at least 7 digits and may contain only digits, spaces, brackets, hyphens and a leading +.")]
+    [RegularExpression(@"^\s*(?:07[0-9]{8}|\+947[0-9]{8})?\s*$",
+        ErrorMessage = "Invalid mobile number")]
     public string? PhoneNumber { get; set; }
 
     /// <summary>Optional postal or site address. Cleared the same way as the phone number.</summary>

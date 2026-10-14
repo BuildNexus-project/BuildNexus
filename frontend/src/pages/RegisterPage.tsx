@@ -4,22 +4,16 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from 'react-router-dom'
 
 import { AuthLayout } from '@/components/AuthLayout'
+import { PasswordInput } from '@/components/PasswordInput'
+import { PhoneNumberInput } from '@/components/PhoneNumberInput'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { ApiError } from '@/lib/api'
 import { registerUser } from '@/lib/auth-api'
 import { registerSchema, type RegisterValues } from '@/lib/auth-schemas'
 import { applyApiErrorToForm } from '@/lib/form-errors'
-import { ROLE_LABELS, SELECTABLE_ROLES } from '@/lib/roles'
 
 export function RegisterPage() {
   const [formError, setFormError] = useState<string | null>(null)
@@ -27,20 +21,25 @@ export function RegisterPage() {
 
   const {
     register,
-    handleSubmit,
     control,
+    handleSubmit,
     setError,
     formState: { errors, isSubmitting },
   } = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { fullName: '', email: '', password: '' },
+    defaultValues: { firstName: '', lastName: '', email: '', phoneNumber: '', password: '', confirmPassword: '' },
   })
 
   async function onSubmit(values: RegisterValues) {
     setFormError(null)
 
     try {
-      await registerUser(values)
+      await registerUser({
+        fullName: `${values.firstName} ${values.lastName}`,
+        email: values.email,
+        phoneNumber: values.phoneNumber,
+        password: values.password,
+      })
       setRegisteredEmail(values.email)
     } catch (error) {
       // A taken email is the one failure worth naming precisely, and it belongs
@@ -54,7 +53,9 @@ export function RegisterPage() {
       }
 
       setFormError(
-        applyApiErrorToForm(error, setError, 'Could not create your account. Please try again.'),
+        applyApiErrorToForm(error, setError, 'Could not create your account. Please try again.', {
+          fullName: 'lastName',
+        }),
       )
     }
   }
@@ -89,16 +90,33 @@ export function RegisterPage() {
 
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-5">
-            <Field>
-              <FieldLabel htmlFor="fullName">Full name</FieldLabel>
-              <Input
-                id="fullName"
-                autoComplete="name"
-                aria-invalid={Boolean(errors.fullName)}
-                {...register('fullName')}
-              />
-              <FieldError errors={[errors.fullName]} />
-            </Field>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="firstName">First name</FieldLabel>
+                <Input
+                  id="firstName"
+                  autoComplete="given-name"
+                  required
+                  maxLength={150}
+                  aria-invalid={Boolean(errors.firstName)}
+                  {...register('firstName')}
+                />
+                <FieldError errors={[errors.firstName]} />
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor="lastName">Last name</FieldLabel>
+                <Input
+                  id="lastName"
+                  autoComplete="family-name"
+                  required
+                  maxLength={150}
+                  aria-invalid={Boolean(errors.lastName)}
+                  {...register('lastName')}
+                />
+                <FieldError errors={[errors.lastName]} />
+              </Field>
+            </div>
 
             <Field>
               <FieldLabel htmlFor="email">Email</FieldLabel>
@@ -113,10 +131,30 @@ export function RegisterPage() {
             </Field>
 
             <Field>
+              <FieldLabel htmlFor="phoneNumber">Phone number</FieldLabel>
+              <Controller
+                control={control}
+                name="phoneNumber"
+                render={({ field }) => (
+                  <PhoneNumberInput
+                    name={field.name}
+                    value={field.value}
+                    onBlur={field.onBlur}
+                    ref={field.ref}
+                    id="phoneNumber"
+                    required
+                    aria-invalid={Boolean(errors.phoneNumber)}
+                    onValueChange={field.onChange}
+                  />
+                )}
+              />
+              <FieldError errors={[errors.phoneNumber]} />
+            </Field>
+
+            <Field>
               <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 autoComplete="new-password"
                 aria-invalid={Boolean(errors.password)}
                 {...register('password')}
@@ -125,27 +163,16 @@ export function RegisterPage() {
             </Field>
 
             <Field>
-              <FieldLabel htmlFor="role">Role</FieldLabel>
-              <Controller
-                control={control}
-                name="role"
-                render={({ field }) => (
-                  <Select value={field.value ?? null} onValueChange={field.onChange}>
-                    <SelectTrigger id="role" aria-invalid={Boolean(errors.role)} className="w-full">
-                      <SelectValue placeholder="Select your role" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {/* Admin is intentionally not offered — the service rejects it. */}
-                      {SELECTABLE_ROLES.map((role) => (
-                        <SelectItem key={role} value={role}>
-                          {ROLE_LABELS[role]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+              <FieldLabel htmlFor="confirmPassword">Confirm password</FieldLabel>
+              <PasswordInput
+                id="confirmPassword"
+                visibilityLabel="confirm password"
+                autoComplete="new-password"
+                required
+                aria-invalid={Boolean(errors.confirmPassword)}
+                {...register('confirmPassword')}
               />
-              <FieldError errors={[errors.role]} />
+              <FieldError errors={[errors.confirmPassword]} />
             </Field>
 
             {formError && (

@@ -32,7 +32,7 @@ public class PlatformRoleAttributeTests
     [Fact]
     public void IsValid_accepts_null_because_presence_is_RequiredAttributes_question()
     {
-        // The same attribute guards a required role on registration and an
+        // The same attribute guards a required role on an administrator's edit and an
         // optional one on a directory filter — absence is not this rule's call.
         Assert.True(_attribute.IsValid(null));
     }
