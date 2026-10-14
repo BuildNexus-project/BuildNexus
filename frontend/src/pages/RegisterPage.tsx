@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from 'react-router-dom'
 
 import { AuthLayout } from '@/components/AuthLayout'
+import { PasswordInput } from '@/components/PasswordInput'
 import { PhoneNumberInput } from '@/components/PhoneNumberInput'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,8 +18,6 @@ import { applyApiErrorToForm } from '@/lib/form-errors'
 export function RegisterPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null)
-  const [showPassword, setShowPassword] = useState(false)
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   const {
     register,
@@ -155,54 +153,25 @@ export function RegisterPage() {
 
             <Field>
               <FieldLabel htmlFor="password">Password</FieldLabel>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  aria-invalid={Boolean(errors.password)}
-                  className="pr-10"
-                  {...register('password')}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute inset-y-0 right-0 text-muted-foreground"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  aria-controls="password"
-                  onClick={() => setShowPassword((visible) => !visible)}
-                >
-                  {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                </Button>
-              </div>
+              <PasswordInput
+                id="password"
+                autoComplete="new-password"
+                aria-invalid={Boolean(errors.password)}
+                {...register('password')}
+              />
               <FieldError errors={[errors.password]} />
             </Field>
 
             <Field>
               <FieldLabel htmlFor="confirmPassword">Confirm password</FieldLabel>
-              <div className="relative">
-                <Input
-                  id="confirmPassword"
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  required
-                  aria-invalid={Boolean(errors.confirmPassword)}
-                  className="pr-10"
-                  {...register('confirmPassword')}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute inset-y-0 right-0 text-muted-foreground"
-                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                  aria-controls="confirmPassword"
-                  onClick={() => setShowConfirmPassword((visible) => !visible)}
-                >
-                  {showConfirmPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                </Button>
-              </div>
+              <PasswordInput
+                id="confirmPassword"
+                visibilityLabel="confirm password"
+                autoComplete="new-password"
+                required
+                aria-invalid={Boolean(errors.confirmPassword)}
+                {...register('confirmPassword')}
+              />
               <FieldError errors={[errors.confirmPassword]} />
             </Field>
 

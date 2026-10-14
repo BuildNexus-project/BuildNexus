@@ -10,7 +10,49 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+function fillValidRegistration() {
+  fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Ada' } })
+  fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Perera' } })
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ada@example.com' } })
+  fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '771234567' } })
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Passw0rd' } })
+  fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Passw0rd' } })
+}
+
 describe('RegisterPage', () => {
+  it('shows each password independently without submitting the form', () => {
+    const requests = stubFetch()
+    render(<MemoryRouter><RegisterPage /></MemoryRouter>)
+    fillValidRegistration()
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }))
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText('Confirm password')).toHaveAttribute('type', 'password')
+    fireEvent.click(screen.getByRole('button', { name: 'Show confirm password' }))
+    expect(screen.getByLabelText('Confirm password')).toHaveAttribute('type', 'text')
+    fireEvent.click(screen.getByRole('button', { name: 'Hide password' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide confirm password' }))
+    expect(screen.getByLabelText('Password')).toHaveValue('Passw0rd')
+    expect(screen.getByLabelText('Confirm password')).toHaveAttribute('type', 'password')
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each([
+    [apiResponse(409, { detail: 'This email is already registered.' }), 'This email is already registered.', 'Email'],
+    [apiResponse(409, {}), 'An account with this email address already exists.', 'Email'],
+    [apiResponse(400, { errors: { FullName: ['Name is too long.'] } }), 'Name is too long.', 'Last name'],
+    [apiResponse(503, { detail: 'Registration is temporarily unavailable.' }), 'Registration is temporarily unavailable.', null],
+    [new TypeError('Failed to fetch'), 'Could not create your account. Please try again.', null],
+  ])('reports a failed signup on the appropriate field or form', async (response, message, field) => {
+    const requests = stubFetch(response as Response | Error)
+    render(<MemoryRouter><RegisterPage /></MemoryRouter>)
+    fillValidRegistration()
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    expect(await screen.findByText(message as string)).toBeInTheDocument()
+    if (field) expect(screen.getByLabelText(field as string)).toHaveAttribute('aria-invalid', 'true')
+    expect(requests).toHaveLength(1)
+    expect(screen.queryByText('Account created')).not.toBeInTheDocument()
+  })
+
   it.each(['771234567', '712345678'])('creates an account using nine digits (%s) after the fixed country code', async (digits) => {
     const values = {
       fullName: 'Ada Perera',

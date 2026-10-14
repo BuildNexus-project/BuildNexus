@@ -24,7 +24,7 @@ const phoneNumberSchema = z
   .trim()
   .max(30, 'Phone number must not exceed 30 characters.')
   .regex(
-    /^(?:|07[0-9]{8}|\+947[0-9]{8})$/,
+    /^(?:07\d{8}|\+947\d{8})?$/,
     'Invalid mobile number',
   )
 

@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
 import { AuthLayout } from '@/components/AuthLayout'
+import { PasswordInput } from '@/components/PasswordInput'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -24,7 +24,6 @@ export function LoginPage() {
   // Where ProtectedRoute turned the visitor away from, if anywhere.
   const redirectTo = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/'
   const [formError, setFormError] = useState<string | null>(null)
-  const [showPassword, setShowPassword] = useState(false)
 
   const {
     register,
@@ -86,27 +85,12 @@ export function LoginPage() {
                   Forgot your password?
                 </Link>
               </div>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  aria-invalid={Boolean(errors.password)}
-                  className="pr-10"
-                  {...register('password')}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute inset-y-0 right-0 text-muted-foreground"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  aria-controls="password"
-                  onClick={() => setShowPassword((visible) => !visible)}
-                >
-                  {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                </Button>
-              </div>
+              <PasswordInput
+                id="password"
+                autoComplete="current-password"
+                aria-invalid={Boolean(errors.password)}
+                {...register('password')}
+              />
               <FieldError errors={[errors.password]} />
             </Field>
 

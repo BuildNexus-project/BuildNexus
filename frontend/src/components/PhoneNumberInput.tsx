@@ -35,16 +35,16 @@ export function PhoneNumberInput({ value, onValueChange, className, ...props }: 
         value={nationalNumber(value)}
         onChange={(event) => {
           const digits = event.target.value
-          if (/^[0-9]{0,9}$/.test(digits)) {
+          if (/^\d{0,9}$/.test(digits)) {
             onValueChange(digits ? `+94${digits}` : '')
           }
         }}
         onPaste={(event) => {
           const pasted = event.clipboardData.getData('text').trim()
-          if (/^(?:07[0-9]{8}|\+947[0-9]{8})$/.test(pasted)) {
+          if (/^(?:07\d{8}|\+947\d{8})$/.test(pasted)) {
             event.preventDefault()
             onValueChange(`+94${nationalNumber(pasted)}`)
-          } else if (!/^[0-9]{1,9}$/.test(pasted)) {
+          } else if (!/^\d{1,9}$/.test(pasted)) {
             event.preventDefault()
           }
         }}
