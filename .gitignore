@@ -6,6 +6,9 @@ obj/
 appsettings.Development.json
 appsettings.*.local.json
 coverage/
+# Stryker.NET mutation reports, written next to the test project on every run
+StrykerOutput/
+mutation-report/
 
 # ---------- Node / React (frontend) ----------
 node_modules/

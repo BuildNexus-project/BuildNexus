@@ -7,6 +7,8 @@
 #       needs.<job>.result: success, failure, cancelled or skipped
 #   STATIC_RAN  "true" if the SonarCloud analysis really ran, "false" if it was skipped
 #               because the SONAR_TOKEN secret is not set
+#   MUTATION_RESULT  needs.mutation-tests.result; "skipped" on every ordinary push,
+#               because mutation testing only runs by hand or on the weekly schedule
 #   RUN_URL     link to this workflow run, where the artifacts are listed
 # Arguments:
 #   $1  folder the artifacts were downloaded into (default: reports)
@@ -95,6 +97,11 @@ if [ "${STATIC_RAN:-}" = "false" ]; then
 else
   row "Static analysis (SonarCloud)" "${STATIC_RESULT:-}" "-" "-" "-"
 fi
+if [ "${MUTATION_RESULT:-skipped}" = "skipped" ]; then
+  echo "| Mutation tests (Stryker) | ⏭️ skipped, manual or weekly only | - | - | - |"
+else
+  row "Mutation tests (Stryker)" "${MUTATION_RESULT:-}" "-" "-" "-"
+fi
 echo
 
 per_service="$(coverage_table "$REPORTS/coverage")"
@@ -116,6 +123,9 @@ echo
 echo "- \`backend-coverage-report\`: unit tests only, HTML"
 echo "- \`backend-combined-coverage-report\`: unit + integration tests, HTML"
 echo "- \`frontend-coverage-report\`: frontend coverage, HTML"
+if [ "${MUTATION_RESULT:-skipped}" != "skipped" ]; then
+  echo "- \`mutation-report-<service>\`: Stryker mutation report, HTML"
+fi
 
 # Overall verdict: the job fails if any stage did.
 for result in "${UNIT_RESULT:-}" "${INTEGRATION_RESULT:-}" "${FRONTEND_RESULT:-}" "${DOCKER_RESULT:-}" "${STATIC_RESULT:-}"; do
@@ -123,3 +133,7 @@ for result in "${UNIT_RESULT:-}" "${INTEGRATION_RESULT:-}" "${FRONTEND_RESULT:-}
     exit 1
   fi
 done
+# Mutation testing is the one stage allowed to be skipped, since it does not run on a push.
+if [ "${MUTATION_RESULT:-skipped}" != "skipped" ] && [ "$MUTATION_RESULT" != "success" ]; then
+  exit 1
+fi

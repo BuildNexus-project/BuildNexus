@@ -1,0 +1,23 @@
+{
+  "stryker-config": {
+    "project": "UserService.csproj",
+    "test-projects": ["UserService.Tests.csproj"],
+    "test-case-filter": "Category!=Integration",
+    "mutate": [
+      "**/*.cs",
+      "!**/Program.cs",
+      "!**/Migrations/**/*.cs",
+      "!**/Contracts/**/*.cs",
+      "!**/ApiDocs/**/*.cs",
+      "!**/Data/**/*.cs",
+      "!**/obj/**/*.cs"
+    ],
+    "ignore-methods": ["*Log*"],
+    "reporters": ["html", "progress"],
+    "thresholds": {
+      "high": 80,
+      "low": 60,
+      "break": 50
+    }
+  }
+}
