@@ -1,143 +1,209 @@
 #!/usr/bin/env bash
-# Prepare real API data, then measure the JMeter workloads through the gateway.
-# Setup requests are outside the JTL; each run keeps its own logs and dashboard.
+# Resolve a named profile, prepare real API data, then enforce the JTL quality gate.
 set -euo pipefail
-
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-ENV_LABEL=local
-GATEWAY_PROTOCOL=http
-GATEWAY_HOST=localhost
-GATEWAY_PORT=5000
-JOURNEY_THREADS=2
-REPORT_THREADS=1
-FIXTURE_TIMEOUT=60
-ADMIN_EMAIL_VALUE="${ADMIN_EMAIL:-admin@buildnexus.local}"
-ADMIN_PASSWORD_VALUE="${ADMIN_PASSWORD:-ChangeMe123!}"
-JMETER_PROPERTIES=()
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo 'error: Bash 4+ is required (Git Bash on Windows is supported).' >&2
+  exit 2
+fi
 
+PROFILE=smoke
 for arg in "$@"; do
   case "$arg" in
     --help|-h)
       cat <<'USAGE'
-Usage: ./run-performance-tests.sh [-Jproperty=value ...]
+Usage: ./run-performance-tests.sh [-Jprofile=smoke|load|stress] [-Jproperty=value ...]
 
-Gateway: gateway_protocol=http gateway_host=localhost gateway_port=5000
-Workloads: project_threads=20 design_threads=10 journey_threads=2 report_threads=1
-Output: env_label=local (each run gets a separate timestamped directory)
-Setup: fixture_timeout=60 (seconds per Kafka projection)
+Default: smoke (6 users, 48 expected samples). Load assumes 20 users.
+Stress scales load users by 1,2,4,8 and stops at the first failed quality gate.
+Override -Jstress_multipliers=1,2 to run fewer steps.
 
-Set JMETER_CMD to the JMeter executable and PYTHON_CMD to Python 3 if needed.
+Use -Jgateway_host/-Jgateway_port/-Jgateway_protocol to select the gateway.
+Use -Jenv_label=local to choose the results parent; each run is preserved.
+Profile settings can be overridden with -Jproject_threads, -Jjourney_loops,
+-Jp95_login_ms, -Jmax_error_rate_pct, and the properties listed in README.md.
+Set JMETER_CMD and PYTHON_CMD if JMeter/Python 3.10+ are not on PATH.
 ADMIN_EMAIL/ADMIN_PASSWORD or -Jadmin_email/-Jadmin_password select the Admin.
-Use -Jjourney_threads=0 -Jreport_threads=0 to run the two legacy workloads only.
-See README.md for loop, ramp-up and think-time properties and short validation.
+Exit: 0 PASS, 1 execution/gate failure, 2 invalid configuration.
 USAGE
       exit 0 ;;
-    -Jenv_label=*) ENV_LABEL="${arg#-Jenv_label=}" ;;
-    -Jgateway_protocol=*) GATEWAY_PROTOCOL="${arg#-Jgateway_protocol=}" ;;
-    -Jgateway_host=*) GATEWAY_HOST="${arg#-Jgateway_host=}" ;;
-    -Jgateway_port=*) GATEWAY_PORT="${arg#-Jgateway_port=}" ;;
-    -Jjourney_threads=*) JOURNEY_THREADS="${arg#-Jjourney_threads=}" ;;
-    -Jreport_threads=*) REPORT_THREADS="${arg#-Jreport_threads=}" ;;
-    -Jfixture_timeout=*) FIXTURE_TIMEOUT="${arg#-Jfixture_timeout=}" ;;
-    -Jadmin_email=*) ADMIN_EMAIL_VALUE="${arg#-Jadmin_email=}" ;;
-    -Jadmin_password=*) ADMIN_PASSWORD_VALUE="${arg#-Jadmin_password=}" ;;
-    -Jauth_protocol=*) AUTH_PROTOCOL_VALUE="${arg#-Jauth_protocol=}" ;;
-    -Jauth_host=*) AUTH_HOST_VALUE="${arg#-Jauth_host=}" ;;
-    -Jauth_port=*) AUTH_PORT_VALUE="${arg#-Jauth_port=}" ;;
-    -Jproject_protocol=*) PROJECT_PROTOCOL_VALUE="${arg#-Jproject_protocol=}" ;;
-    -Jproject_host=*) PROJECT_HOST_VALUE="${arg#-Jproject_host=}" ;;
-    -Jproject_port=*) PROJECT_PORT_VALUE="${arg#-Jproject_port=}" ;;
-    -Jdesign_protocol=*) DESIGN_PROTOCOL_VALUE="${arg#-Jdesign_protocol=}" ;;
-    -Jdesign_host=*) DESIGN_HOST_VALUE="${arg#-Jdesign_host=}" ;;
-    -Jdesign_port=*) DESIGN_PORT_VALUE="${arg#-Jdesign_port=}" ;;
-    -Jfixture_csv=*) echo 'error: fixture_csv is managed by this runner.' >&2; exit 2 ;;
-    -J*=*) ;; # Other JMeter properties, including the existing service overrides.
-    *) echo 'error: use -Jproperty=value; see --help.' >&2; exit 2 ;;
-  esac
-  # JMeter logs every -J value at INFO. Credentials travel in the child process
-  # environment, and are JSON-encoded by the Admin login preprocessor.
-  case "$arg" in
-    -Jadmin_email=*|-Jadmin_password=*) ;;
-    *) JMETER_PROPERTIES+=("$arg") ;;
+    -Jprofile=*) PROFILE="${arg#-Jprofile=}" ;;
   esac
 done
+case "$PROFILE" in smoke|load|stress) ;; *) echo 'error: profile must be smoke, load or stress.' >&2; exit 2 ;; esac
 
+# Only public, supported settings may enter the retained properties file.
+is_setting_key() {
+  case "$1" in
+    profile|stress_multipliers|env_label|fixture_timeout|connect_timeout_ms|response_timeout_ms|max_error_rate_pct) return 0 ;;
+    gateway_protocol|gateway_host|gateway_port|auth_protocol|auth_host|auth_port|project_protocol|project_host|project_port|design_protocol|design_host|design_port) return 0 ;;
+  esac
+  [[ "$1" =~ ^(project|design|journey|report)_(threads|loops|rampup|think_ms)$ ]] \
+    || [[ "$1" =~ ^p95_(project_create|design_upload|login|project_list|project_detail|invoices|history|dashboard|progress|reports)_ms$ ]]
+}
+
+declare -A PERF_CONFIG=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%$'\r'}"
+  [[ -z "$line" || "$line" == \#* ]] && continue
+  key="${line%%=*}"
+  value="${line#*=}"
+  if [[ "$line" != *=* || "$value" =~ ^[[:space:]] || "$value" =~ [[:space:]]$ ]] \
+      || ! is_setting_key "$key"; then
+    echo 'error: invalid profile property; see profiles/.' >&2
+    exit 2
+  fi
+  PERF_CONFIG["$key"]="$value"
+done < "profiles/$PROFILE.properties"
+PERF_CONFIG[profile]="$PROFILE"
+PERF_CONFIG[multiplier]=1
+PERF_CONFIG[env_label]=local
+PERF_CONFIG[gateway_protocol]=http
+PERF_CONFIG[gateway_host]=localhost
+PERF_CONFIG[gateway_port]=5000
+ADMIN_EMAIL_VALUE="${ADMIN_EMAIL:-admin@buildnexus.local}"
+ADMIN_PASSWORD_VALUE="${ADMIN_PASSWORD:-ChangeMe123!}"
+
+for arg in "$@"; do
+  case "$arg" in
+    -Jadmin_email=*) ADMIN_EMAIL_VALUE="${arg#-Jadmin_email=}"; continue ;;
+    -Jadmin_password=*) ADMIN_PASSWORD_VALUE="${arg#-Jadmin_password=}"; continue ;;
+    -J*=*) key="${arg#-J}"; key="${key%%=*}"; value="${arg#*=}" ;;
+    *) echo 'error: use -Jproperty=value; see --help.' >&2; exit 2 ;;
+  esac
+  if ! is_setting_key "$key" || [[ "$value" == *$'\n'* || "$value" == *$'\r'* \
+      || "$value" =~ ^[[:space:]] || "$value" =~ [[:space:]]$ ]]; then
+    echo 'error: unsupported property or surrounding/multiline whitespace; see --help.' >&2
+    exit 2
+  fi
+  PERF_CONFIG["$key"]="$value"
+done
+for target in auth project design; do
+  for field in protocol host port; do
+    key="${target}_${field}"
+    gateway_key="gateway_${field}"
+    if [[ -z "${PERF_CONFIG[$key]+present}" ]]; then
+      PERF_CONFIG["$key"]="${PERF_CONFIG[$gateway_key]}"
+    fi
+  done
+done
+ENV_LABEL="${PERF_CONFIG[env_label]}"
 if [[ ! "$ENV_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then
   echo 'error: env_label must be 1-64 letters, digits, hyphens or underscores.' >&2
   exit 2
 fi
-if [[ "$GATEWAY_PROTOCOL" != http && "$GATEWAY_PROTOCOL" != https ]] \
-    || [[ ! "$GATEWAY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
-    || [[ ! "$GATEWAY_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( GATEWAY_PORT > 65535 )); then
-  echo 'error: supply an http/https gateway, a hostname and a port from 1 to 65535.' >&2
-  exit 2
-fi
-for count in "$JOURNEY_THREADS" "$REPORT_THREADS"; do
-  if [[ ! "$count" =~ ^(0|[1-9][0-9]{0,3})$ ]]; then
-    echo 'error: journey_threads and report_threads must be integers from 0 to 9999.' >&2
-    exit 2
-  fi
-done
 
-JMETER_CMD="${JMETER_CMD:-jmeter}"
-# Invoke the launcher: command -v is unreliable for Windows .bat executables.
-if ! "$JMETER_CMD" --version >/dev/null 2>&1; then
-  echo "error: could not run '$JMETER_CMD'; install JMeter or set JMETER_CMD." >&2
+if [[ -z "${PYTHON_CMD:-}" ]]; then
+  if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+    PYTHON_CMD=python3
+  else
+    PYTHON_CMD=python
+  fi
+fi
+if ! "$PYTHON_CMD" -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+  echo 'error: Python 3.10+ is required; set PYTHON_CMD.' >&2
   exit 1
-fi
-
-FIXTURE_USERS=$JOURNEY_THREADS
-if (( REPORT_THREADS > FIXTURE_USERS )); then FIXTURE_USERS=$REPORT_THREADS; fi
-if (( FIXTURE_USERS > 0 )); then
-  if [[ -z "${PYTHON_CMD:-}" ]]; then
-    if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
-      PYTHON_CMD=python3
-    else
-      PYTHON_CMD=python
-    fi
-  fi
-  if ! "$PYTHON_CMD" -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
-    echo 'error: Python 3.10+ is required to prepare cross-service fixtures; set PYTHON_CMD.' >&2
-    exit 1
-  fi
 fi
 
 mkdir -p "results/$ENV_LABEL"
 RESULTS_DIR=$(mktemp -d "results/$ENV_LABEL/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
-REPORT_DIR="$RESULTS_DIR/report"
-RESULTS_FILE="$RESULTS_DIR/results.jtl"
 FIXTURE_FILE="$RESULTS_DIR/fixtures.csv"
-# The CSV contains generated test passwords. Keep it out of retained artifacts,
-# including when fixture preparation or JMeter fails. Never delete prior runs.
 cleanup() { rm -f -- "$FIXTURE_FILE"; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-BASE_URL="$GATEWAY_PROTOCOL://$GATEWAY_HOST:$GATEWAY_PORT"
-echo "Run directory: $RESULTS_DIR"
+# Every step saves the exact public settings used for both JMeter and its gate.
+write_config() {
+  local output="$1" factor="$2" setting resolved
+  for setting in "${!PERF_CONFIG[@]}"; do
+    resolved="${PERF_CONFIG[$setting]}"
+    case "$setting" in
+      project_threads|design_threads|journey_threads|report_threads)
+        if [[ "$factor" != 1 ]]; then resolved=$(( 10#$resolved * factor )); fi ;;
+      multiplier) resolved="$factor" ;;
+    esac
+    printf '%s=%s\n' "$setting" "$resolved"
+  done | LC_ALL=C sort > "$output"
+}
+write_config "$RESULTS_DIR/effective.properties" 1
+"$PYTHON_CMD" check-performance.py --validate-config "$RESULTS_DIR/effective.properties" >/dev/null
+
+SCALE_FACTORS=(1)
+if [[ "$PROFILE" == stress ]]; then
+  IFS=',' read -r -a SCALE_FACTORS <<< "${PERF_CONFIG[stress_multipliers]}"
+fi
+LAST_FACTOR="${SCALE_FACTORS[${#SCALE_FACTORS[@]}-1]}"
+for group in project design journey report; do
+  key="${group}_threads"
+  if (( 10#${PERF_CONFIG[$key]} * LAST_FACTOR > 9999 )); then
+    echo 'error: a stress step exceeds the supported maximum of 9999 threads per group.' >&2
+    exit 2
+  fi
+done
+FIXTURE_USERS=$(( 10#${PERF_CONFIG[journey_threads]} * LAST_FACTOR ))
+REPORT_FIXTURES=$(( 10#${PERF_CONFIG[report_threads]} * LAST_FACTOR ))
+if (( REPORT_FIXTURES > FIXTURE_USERS )); then FIXTURE_USERS=$REPORT_FIXTURES; fi
+
+JMETER_CMD="${JMETER_CMD:-jmeter}"
+if ! "$JMETER_CMD" --version >/dev/null 2>&1; then
+  echo "error: could not run '$JMETER_CMD'; install JMeter or set JMETER_CMD." >&2
+  exit 1
+fi
+BASE_URL="${PERF_CONFIG[gateway_protocol]}://${PERF_CONFIG[gateway_host]}:${PERF_CONFIG[gateway_port]}"
+echo "Profile: $PROFILE; run directory: $RESULTS_DIR"
 if (( FIXTURE_USERS > 0 )); then
   echo "Preparing $FIXTURE_USERS Client/project fixtures through $BASE_URL..."
   ADMIN_EMAIL="$ADMIN_EMAIL_VALUE" ADMIN_PASSWORD="$ADMIN_PASSWORD_VALUE" \
-    "$PYTHON_CMD" prepare-fixtures.py --base-url "$BASE_URL" \
-    --users "$FIXTURE_USERS" --output "$FIXTURE_FILE" --poll-timeout "$FIXTURE_TIMEOUT"
+    "$PYTHON_CMD" prepare-fixtures.py --base-url "$BASE_URL" --users "$FIXTURE_USERS" \
+    --output "$FIXTURE_FILE" --poll-timeout "${PERF_CONFIG[fixture_timeout]}"
 fi
 
-echo "Running JMeter through $BASE_URL (individual service overrides remain available)..."
-ADMIN_EMAIL="$ADMIN_EMAIL_VALUE" ADMIN_PASSWORD="$ADMIN_PASSWORD_VALUE" \
-  "$JMETER_CMD" -n -t project-performance-test-plan.jmx \
-  -l "$RESULTS_FILE" -j "$RESULTS_DIR/jmeter.log" -e -o "$REPORT_DIR" \
-  "${JMETER_PROPERTIES[@]}" \
-  "-Jfixture_csv=$FIXTURE_FILE" \
-  "-Jauth_protocol=${AUTH_PROTOCOL_VALUE:-$GATEWAY_PROTOCOL}" \
-  "-Jauth_host=${AUTH_HOST_VALUE:-$GATEWAY_HOST}" "-Jauth_port=${AUTH_PORT_VALUE:-$GATEWAY_PORT}" \
-  "-Jproject_protocol=${PROJECT_PROTOCOL_VALUE:-$GATEWAY_PROTOCOL}" \
-  "-Jproject_host=${PROJECT_HOST_VALUE:-$GATEWAY_HOST}" "-Jproject_port=${PROJECT_PORT_VALUE:-$GATEWAY_PORT}" \
-  "-Jdesign_protocol=${DESIGN_PROTOCOL_VALUE:-$GATEWAY_PROTOCOL}" \
-  "-Jdesign_host=${DESIGN_HOST_VALUE:-$GATEWAY_HOST}" "-Jdesign_port=${DESIGN_PORT_VALUE:-$GATEWAY_PORT}"
+LAST_GATE_STATUS=0
+run_step() {
+  local step_dir="$1" factor="$2" jmeter_status=0
+  mkdir -p "$step_dir"
+  write_config "$step_dir/effective.properties" "$factor"
+  echo "Running $PROFILE at concurrency multiplier $factor..."
+  # -q loads the resolved profile. Managed CSV output settings make gate input
+  # deterministic. Credentials stay in the child environment, outside logs.
+  ADMIN_EMAIL="$ADMIN_EMAIL_VALUE" ADMIN_PASSWORD="$ADMIN_PASSWORD_VALUE" \
+    "$JMETER_CMD" -n -t project-performance-test-plan.jmx \
+    -q "$step_dir/effective.properties" \
+    -l "$step_dir/results.jtl" -j "$step_dir/jmeter.log" -e -o "$step_dir/report" \
+    "-Jfixture_csv=$FIXTURE_FILE" \
+    -Jjmeter.save.saveservice.output_format=csv \
+    -Jjmeter.save.saveservice.print_field_names=true \
+    -Jjmeter.save.saveservice.timestamp_format=ms \
+    -Jjmeter.save.saveservice.time=true -Jjmeter.save.saveservice.label=true \
+    -Jjmeter.save.saveservice.successful=true \
+    -Jjmeter.save.saveservice.assertion_results_failure_message=true \
+    || jmeter_status=$?
+  if "$PYTHON_CMD" check-performance.py --config "$step_dir/effective.properties" \
+      --results "$step_dir/results.jtl" --output-dir "$step_dir" \
+      --jmeter-exit-code "$jmeter_status" --dashboard "$step_dir/report/index.html"; then
+    LAST_GATE_STATUS=0
+  else
+    LAST_GATE_STATUS=$?
+  fi
+  echo "Summary: $step_dir/summary.md"
+  echo "HTML dashboard: $step_dir/report/index.html"
+}
 
-echo
-echo "Raw results:    $RESULTS_FILE"
-echo "JMeter log:     $RESULTS_DIR/jmeter.log"
-echo "HTML dashboard: $REPORT_DIR/index.html"
+if [[ "$PROFILE" != stress ]]; then
+  run_step "$RESULTS_DIR" 1
+  exit "$LAST_GATE_STATUS"
+fi
+
+step_index=0
+for factor in "${SCALE_FACTORS[@]}"; do
+  step_index=$(( step_index + 1 ))
+  printf -v step_name 'step-%02d-x%s' "$step_index" "$factor"
+  run_step "$RESULTS_DIR/$step_name" "$factor"
+  if (( LAST_GATE_STATUS != 0 )); then
+    echo 'Stopping stress after the first failed step; inspect its summary for the cause.'
+    break
+  fi
+done
+"$PYTHON_CMD" check-performance.py --stress-summary "$RESULTS_DIR"

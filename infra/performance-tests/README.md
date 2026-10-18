@@ -3,12 +3,12 @@
 The JMeter plan exercises authenticated project creation, design upload,
 Client workflows and construction reporting against a running BuildNexus
 system. It records response times, throughput and request failures, and
-produces an HTML dashboard.
+produces an HTML dashboard and a machine-readable pass/fail summary.
 
-The current runner executes on demand; it has no automated performance
-threshold gate and is not connected to `ci.yml` yet. A successful JMeter
-process alone does not prove that its HTTP requests passed. Inspect the JTL
-results and dashboard as described below.
+The runner provides smoke, load and bounded stress profiles. It fails when
+JMeter fails, requests exceed their latency/error budgets, setup fails or the
+expected workload is incomplete. It runs on demand; connection to `ci.yml`
+is the next integration step.
 
 [RESULTS.md](RESULTS.md) and [AZURE-RESULTS.md](AZURE-RESULTS.md) contain
 historical local and Azure measurements. They do not cover the current
@@ -84,9 +84,10 @@ do not establish performance for large real-world drawings.
 - Install [Apache JMeter](https://jmeter.apache.org/download_jmeter.cgi) 5.6+
   and a compatible Java runtime. Put JMeter's `bin/` directory on `PATH` or set
   `JMETER_CMD` to its executable. JMeter is not vendored in the repository.
-- Install Python 3.10+ for `prepare-fixtures.py`; it uses only the Python
-  standard library. The runner finds `python3` or `python`; set `PYTHON_CMD`
-  to the executable if needed. Use Bash (Git Bash on Windows) for the runner.
+- Install Python 3.10+ for fixture preparation and result checking; both use
+  only the Python standard library. The runner finds `python3` or `python`;
+  set `PYTHON_CMD` to the executable if needed. Use Bash 4+ (Git Bash on
+  Windows) for the runner.
 - Use an active Admin account. Defaults target the local stack's seeded
   development Admin. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD`, or pass
   `-Jadmin_email=...` and `-Jadmin_password=...`; explicit properties take
@@ -102,17 +103,13 @@ Run this before collecting a performance baseline:
 ```bash
 cd infra/performance-tests
 ./run-performance-tests.sh -Jenv_label=validation \
-  -Jproject_threads=2 -Jproject_rampup=1 -Jproject_loops=2 \
-  -Jdesign_threads=1 -Jdesign_rampup=1 -Jdesign_loops=1 \
-  -Jjourney_threads=2 -Jjourney_rampup=1 -Jjourney_loops=2 \
-  -Jreport_threads=1 -Jreport_rampup=1 -Jreport_loops=2 \
-  -Jjourney_think_ms=100 -Jreport_think_ms=100
+  -Jprofile=smoke
 ```
 
 The runner prints the new run directory beneath `results/validation/`.
-Open its `report/index.html` and check that **every** sampler has 0% errors.
-Check its `results.jtl` for `success=true` on every row and the following
-sample counts:
+Read `summary.md` for the verdict and per-endpoint metrics, then open
+`report/index.html` for graphs. The checker requires **every** sampler to
+succeed in smoke and verifies these sample counts:
 
 | Sampler(s) | Expected count |
 |---|---|
@@ -124,8 +121,8 @@ sample counts:
 | All samples, including setup for project/design groups | **48** |
 
 `Create Project For Design Upload` is a separate setup sampler and does not
-count toward the four measured creates. Missing samples indicate an
-incomplete workflow even if JMeter itself exits successfully.
+count toward the four measured creates. Missing or extra samples fail the
+completeness check even if JMeter itself exits successfully.
 
 This small run verifies authentication, staff assignment, fixture correlation,
 file upload and populated reads across services. It is not evidence of
@@ -145,36 +142,140 @@ export JMETER_CMD="/c/Users/malit/Downloads/apache-jmeter-5.6.3/apache-jmeter-5.
 Then run the short validation command above. Other machines should substitute
 their own installation path.
 
-## Default workload and outputs
+## Profiles and performance gates
 
-From `infra/performance-tests`:
+From `infra/performance-tests`, choose a versioned profile. Running without
+arguments uses `smoke`:
 
 ```bash
-./run-performance-tests.sh
+./run-performance-tests.sh -Jprofile=smoke
+./run-performance-tests.sh -Jprofile=load
+./run-performance-tests.sh -Jprofile=stress
 ```
 
-The existing project/design workloads retain their defaults: 20 Client
-threads create 10 projects each, and 10 Architect threads upload 5 documents
-each, with a 10-second ramp-up per group. The Client journey adds 2 concurrent
-users with 5 loops each and a 2-second ramp-up. Construction reporting adds
-1 Admin thread with 5 loops and a 1-second ramp-up. These are configurable
-finite workloads; named smoke/load/stress profiles and pass/fail performance
-thresholds are not implemented yet. By default, a Client journey pauses
-500 ms before each of its seven requests, and the reporting group pauses
-1,000 ms before each measured report request. These pauses are configurable.
+| Setting | Smoke | Load | Stress |
+|---|---|---|---|
+| Concurrent users: project / design / journey / report | 2 / 1 / 2 / 1 (6 total) | 5 / 3 / 10 / 2 (20 total) | Load baseline multiplied by 1, 2, 4 and 8 (20 / 40 / 80 / 160 total) |
+| Loops per user: project / design / journey / report | 2 / 1 / 2 / 2 | 20 / 10 / 10 / 20 | Same as load for every step |
+| Ramp-up per group | 1 second | 10 seconds | 10 seconds per step |
+| Think time: project / design / journey / report | 100 / 100 / 100 / 100 ms | 250 / 500 / 250 / 500 ms | Same as load |
+| Allowed errors for each measured endpoint | 0% | 1% | 1% |
+| Total JTL samples including setup | 48 | 906 | 906 multiplied by the step multiplier |
+
+The 20-user load profile is an **assumed team demonstration baseline**, not
+a measured production traffic model. Users run finite loops; actual duration
+depends on response times, ramp-up and think time. Think time applies before
+each measured request; a Client journey has seven such pauses per loop.
+Record the target environment and measured results before drawing conclusions.
+
+Stress runs are separate bounded steps, each with fresh project/design setup.
+They increase concurrency and stop at the first failing step: a threshold
+breach, failed JMeter process, setup error or incomplete workload. The runner
+prepares the maximum Client journey fixture pool once (80 fixtures for the
+default steps) and reuses it across steps. You can shorten the sequence:
+
+```bash
+./run-performance-tests.sh -Jprofile=stress -Jstress_multipliers=1,2
+```
+
+If every step passes, the configured limit was not reached. This is not proof
+of production capacity. Compare per-step latency, throughput and errors, and
+use service logs or resource measurements to investigate any degradation.
+
+The checker applies these p95 limits individually to the measured endpoints
+in every profile:
+
+| Sampler label | Property override | p95 limit |
+|---|---|---|
+| `Create Project` | `p95_project_create_ms` | 1,500 ms |
+| `Upload Design Document` | `p95_design_upload_ms` | 3,000 ms |
+| `Login Under Load` | `p95_login_ms` | 2,000 ms |
+| `List Projects` | `p95_project_list_ms` | 1,000 ms |
+| `View Project` | `p95_project_detail_ms` | 1,000 ms |
+| `Client Invoices` | `p95_invoices_ms` | 1,000 ms |
+| `Payment History` | `p95_history_ms` | 1,000 ms |
+| `Payment Dashboard` | `p95_dashboard_ms` | 1,000 ms |
+| `Construction Progress` | `p95_progress_ms` | 1,000 ms |
+| `Construction Reports` | `p95_reports_ms` | 2,000 ms |
+
+These are explicit assessment budgets, not established service-level
+agreements. Each endpoint must satisfy its own latency and error budget, so
+a fast high-volume endpoint cannot hide a slow low-volume one. Any failed
+setup sample fails the run, regardless of the error budget. The checker also
+requires exact expected counts per sampler, catching threads stopped by
+response assertions. Setup latency is reported separately and is not subject
+to these endpoint p95 limits. API fixture preparation remains outside the JTL.
+The runner also requires the generated HTML dashboard to exist before a run
+can pass.
+
+For each endpoint, p95 uses the nearest-rank method: sort elapsed times and
+select rank `ceil(0.95 * sample_count)`. Endpoint throughput is its sample count
+divided by the time from its first request start to its last request end,
+including gaps between requests. A tiny smoke sample has limited statistical
+value even when its gate passes.
+
+To demonstrate a threshold failure without changing service code, deliberately
+set a 1 ms login budget:
+
+```bash
+./run-performance-tests.sh -Jprofile=smoke -Jenv_label=gate-demo -Jp95_login_ms=1
+```
+
+The checker evaluates the actual recorded responses against the stricter
+budget and returns a failing exit status when they exceed it. This changes
+the acceptance criterion; it does not inject faults or alter measurements.
+Use the normal budgets for the baseline run.
+
+## Outputs and exit statuses
 
 Each invocation gets a new directory beneath `results/<env_label>/`, named
 with a UTC timestamp and unique suffix. Without `-Jenv_label`, this is
-`results/local/<run-id>/`, containing:
+`results/local/<run-id>/`. A smoke/load run contains:
 
+- `effective.properties`: the resolved public configuration, including CLI
+  overrides; Admin credentials are excluded.
 - `results.jtl`: raw samples.
 - `report/index.html`: JMeter HTML dashboard.
 - `jmeter.log`: JMeter execution log.
+- `summary.json` and `summary.md`: overall verdict, failures and per-endpoint
+  sample counts, errors, p95 and throughput.
+
+A stress run has a root `effective.properties` and
+`stress-summary.json` / `stress-summary.md`. Each step has its own directory
+such as `step-01-x1/` or `step-02-x2/`, containing the same artifacts as a
+smoke/load run, including that step's effective configuration. Read the root
+summary to see where the bounded sequence stopped.
+
+The runner returns `0` only when its required checks pass, `1` for execution
+or quality-gate failure, and `2` for invalid configuration. A successful JMeter
+exit alone is insufficient. Inspect the summary's reason when a run fails;
+an early fixture failure may occur before JMeter artifacts exist.
+
+To recheck retained JTL evidence independently:
+
+```bash
+python3 check-performance.py --config results/local/<run-id>/effective.properties \
+  --results results/local/<run-id>/results.jtl \
+  --output-dir results/local/<run-id>
+```
+
+Replace `<run-id>` with the actual run directory, and include a step directory
+when checking stress evidence. When investigating a failed JMeter process,
+also pass its recorded exit code with `--jmeter-exit-code`; the standalone
+checker defaults to `0` because it cannot infer the old process status from
+the JTL. The runner supplies the actual status automatically.
 
 These outputs are ignored by Git. Runs with the same environment label retain
 separate evidence instead of replacing earlier reports. The runner prints
 the exact paths after completion. Use a simple environment label such as
 `validation`, `local` or `azure`.
+
+The quality-gate checker has isolated tests for threshold boundaries, failed
+setup, incomplete results and result parsing:
+
+```bash
+python3 -m unittest discover -s tests
+```
 
 ## Targets and workload settings
 
@@ -201,18 +302,23 @@ project/design groups; the Client journey and reports use `gateway_*`.
 
 | Property | Default | Meaning |
 |---|---|---|
+| `profile` | `smoke` | Load settings from `profiles/smoke.properties`, `profiles/load.properties` or `profiles/stress.properties`, then apply `-Jproperty=value` overrides. |
 | `env_label` | `local` | Parent directory: `results/<env_label>/`; every run gets its own timestamped subdirectory. |
 | `gateway_protocol` / `gateway_host` / `gateway_port` | `http` / `localhost` / `5000` | Fixture setup, Client journey and reporting target. |
 | `auth_protocol` / `auth_host` / `auth_port` | Gateway settings | Project/design setup: authentication and user-role updates. |
 | `project_protocol` / `project_host` / `project_port` | Gateway settings | Project/design setup: project creation and staff assignment. |
 | `design_protocol` / `design_host` / `design_port` | Gateway settings | Design-upload target. |
 | `admin_email` / `admin_password` | `ADMIN_EMAIL` / `ADMIN_PASSWORD`, falling back to local seeded Admin | Admin account for fixture preparation, promotion, assignment and reporting. |
-| `project_threads` / `project_rampup` / `project_loops` | `20` / `10` seconds / `10` | Concurrent Clients, ramp-up and projects per user. |
-| `design_threads` / `design_rampup` / `design_loops` | `10` / `10` seconds / `5` | Concurrent Architects, ramp-up and uploads per user. |
-| `journey_threads` / `journey_rampup` / `journey_loops` | `2` / `2` seconds / `5` | Concurrent Clients, ramp-up and seven-request journeys per user. |
-| `report_threads` / `report_rampup` / `report_loops` | `1` / `1` second / `5` | Concurrent Admin users, ramp-up and report requests per user. |
-| `journey_think_ms` | `500` | Pause before each of the seven Client journey requests, in milliseconds. |
-| `report_think_ms` | `1000` | Pause before each measured report request, in milliseconds; excludes Admin login. |
+| `project_threads` / `project_rampup` / `project_loops` | `2` / `1` second / `2` (smoke) | Concurrent Clients, ramp-up and projects per user. |
+| `design_threads` / `design_rampup` / `design_loops` | `1` / `1` second / `1` (smoke) | Concurrent Architects, ramp-up and uploads per user. |
+| `journey_threads` / `journey_rampup` / `journey_loops` | `2` / `1` second / `2` (smoke) | Concurrent Clients, ramp-up and seven-request journeys per user. |
+| `report_threads` / `report_rampup` / `report_loops` | `1` / `1` second / `2` (smoke) | Concurrent Admin users, ramp-up and report requests per user. |
+| `project_think_ms` / `design_think_ms` | `100` / `100` (smoke) | Pause in milliseconds before each measured create/upload request; excludes setup. |
+| `journey_think_ms` / `report_think_ms` | `100` / `100` (smoke) | Pause in milliseconds before each measured journey/report request; excludes setup. |
+| `stress_multipliers` | `1,2,4,8` | Bounded ascending concurrency multipliers for the stress profile. |
+| `max_error_rate_pct` | `0` (smoke), `1` (load/stress) | Maximum failed-sample percentage for each measured endpoint. |
+| `p95_*_ms` | See endpoint table above | Maximum endpoint p95 elapsed time in milliseconds. |
+| `connect_timeout_ms` / `response_timeout_ms` | `5000` / `10000` ms | JMeter HTTP connection and response timeouts. |
 | `fixture_timeout` | `60` seconds | Maximum wait for each Kafka-backed ownership or construction-plan projection during setup. |
 
 Set `journey_threads=0` and `report_threads=0` to run only the older
