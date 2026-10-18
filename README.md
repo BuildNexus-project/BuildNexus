@@ -172,8 +172,9 @@ SE3112 testing pipeline. One workflow, `.github/workflows/ci.yml`, runs every au
 | 5 | End-to-end tests | Selenium drives the real UI against the whole stack | By hand |
 | 6 | Test report | One summary page: verdict and test count per stage, coverage per service, links to the coverage reports | Every push and PR, always |
 | 7 | Static analysis | SonarCloud: bugs, smells, technical debt, duplication, coverage, quality gate | Every push and PR, after the tests |
+| 8 | Load testing | JMeter smoke through the gateway, endpoint latency/error gates and report artifacts | By hand, with `run_load` enabled |
 
-Static analysis (SonarCloud, with a quality gate) is stage 7; see [docs/code-quality.md](docs/code-quality.md) for the metrics and how to read the dashboard. Mutation testing and load testing are added to the same workflow by the individual branches listed below. Each has a marked insertion point in `ci.yml`, and mutation and load run by hand only.
+Static analysis (SonarCloud, with a quality gate) is stage 7; see [docs/code-quality.md](docs/code-quality.md) for the metrics and how to read the dashboard. Mutation testing and load testing attach to the same workflow in their own sections. The manual load job and combined performance reporting are implemented; see [the performance README](infra/performance-tests/README.md) for commands, [measured results](infra/performance-tests/RESULTS.md) and the [two-minute demo guide](infra/performance-tests/DEMO.md).
 
 ### Run it locally
 
@@ -197,6 +198,8 @@ Frontend tests               PASS   ...      796
 ```
 
 The frontend stages need the Node version in `.nvmrc`. On any other version the script stops with a message telling you to run `nvm use`, instead of reporting hundreds of confusing failures.
+
+To run the performance smoke locally against the running stack, use `bash infra/performance-tests/run-performance-tests.sh -Jprofile=smoke`. The performance profiles run through this separate runner; `run-all-tests.sh` selects the unit/integration/frontend stages shown above. See the [performance setup](infra/performance-tests/README.md) for JMeter and Python requirements.
 
 The integration stage starts the six databases and Kafka itself and stops them afterwards. If something on your machine already uses port 3306 (a local MySQL), it moves `user-db` to 3308 automatically.
 

@@ -1,0 +1,49 @@
+timeStamp,elapsed,label,success,responseCode,threadName,Latency,Connect,grpThreads,allThreads
+1792336247340,634,Register Client,true,201,Design Upload Load 2-1,624,302,1,6
+1792336247340,634,Register Client,true,201,Project Creation Load 1-1,626,302,2,6
+1792336247341,634,Register Client,true,201,Project Creation Load 1-2,623,302,2,6
+1792336252792,205,Admin Login For Reports,true,200,Construction Reports Load 4-1,205,4,1,6
+1792336247360,617,Login Under Load,true,200,Client Journey Load 3-2,605,283,2,6
+1792336247341,636,Login Under Load,true,200,Client Journey Load 3-1,623,302,2,6
+1792336253054,147,Login Client,true,200,Project Creation Load 1-2,147,0,2,6
+1792336253054,147,Login Client,true,200,Design Upload Load 2-1,147,0,1,6
+1792336253056,149,Login Client,true,200,Project Creation Load 1-1,149,0,2,6
+1792336253174,36,List Projects,true,200,Client Journey Load 3-1,36,0,2,6
+1792336253175,35,List Projects,true,200,Client Journey Load 3-2,35,0,2,6
+1792336253175,42,Construction Reports,true,200,Construction Reports Load 4-1,35,0,1,6
+1792336253317,58,Create Project,true,201,Project Creation Load 1-1,58,0,2,6
+1792336253208,167,Register Architect,true,201,Design Upload Load 2-1,167,0,1,6
+1792336253317,62,Create Project,true,201,Project Creation Load 1-2,61,0,2,6
+1792336253342,33,View Project,true,200,Client Journey Load 3-2,33,0,2,6
+1792336253342,33,View Project,true,200,Client Journey Load 3-1,33,0,2,6
+1792336253383,41,Create Project For Design Upload,true,201,Design Upload Load 2-1,41,0,1,6
+1792336253432,26,Construction Reports,true,200,Construction Reports Load 4-1,20,0,1,6
+1792336253495,32,Client Invoices,true,200,Client Journey Load 3-2,32,0,2,5
+1792336253496,32,Client Invoices,true,200,Client Journey Load 3-1,32,0,2,5
+1792336253495,56,Create Project,true,201,Project Creation Load 1-1,56,0,2,5
+1792336253495,56,Create Project,true,201,Project Creation Load 1-2,56,0,2,5
+1792336253434,139,Admin Login,true,200,Design Upload Load 2-1,139,0,1,3
+1792336253582,28,Promote Fixture To Architect,true,200,Design Upload Load 2-1,28,0,1,3
+1792336253666,21,Payment History,true,200,Client Journey Load 3-2,21,0,2,3
+1792336253666,21,Payment History,true,200,Client Journey Load 3-1,21,0,2,3
+1792336253614,104,Login Architect,true,200,Design Upload Load 2-1,104,0,1,3
+1792336253722,49,Assign Architect To Project,true,200,Design Upload Load 2-1,49,0,1,3
+1792336253795,29,Payment Dashboard,true,200,Client Journey Load 3-1,28,0,2,3
+1792336253795,29,Payment Dashboard,true,200,Client Journey Load 3-2,28,0,2,3
+1792336253934,27,Construction Progress,true,200,Client Journey Load 3-1,27,0,2,3
+1792336253934,27,Construction Progress,true,200,Client Journey Load 3-2,27,0,2,3
+1792336254082,118,Login Under Load,true,200,Client Journey Load 3-2,118,0,2,3
+1792336254074,126,Login Under Load,true,200,Client Journey Load 3-1,126,0,2,3
+1792336254307,35,List Projects,true,200,Client Journey Load 3-2,35,0,2,3
+1792336254307,35,List Projects,true,200,Client Journey Load 3-1,35,0,2,3
+1792336253885,505,Upload Design Document,true,201,Design Upload Load 2-1,505,0,1,3
+1792336254448,35,View Project,true,200,Client Journey Load 3-1,35,0,2,2
+1792336254448,38,View Project,true,200,Client Journey Load 3-2,37,0,2,2
+1792336254590,33,Client Invoices,true,200,Client Journey Load 3-1,33,0,2,2
+1792336254590,33,Client Invoices,true,200,Client Journey Load 3-2,33,0,2,2
+1792336254733,30,Payment History,true,200,Client Journey Load 3-2,30,0,2,2
+1792336254733,30,Payment History,true,200,Client Journey Load 3-1,30,0,2,2
+1792336254875,30,Payment Dashboard,true,200,Client Journey Load 3-1,30,0,2,2
+1792336254875,30,Payment Dashboard,true,200,Client Journey Load 3-2,30,0,2,2
+1792336255018,38,Construction Progress,true,200,Client Journey Load 3-2,38,0,2,2
+1792336255018,38,Construction Progress,true,200,Client Journey Load 3-1,38,0,2,2

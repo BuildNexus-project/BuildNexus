@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "profile": "stress",
+  "verdict": "FAIL",
+  "settings": {
+    "profile": "stress",
+    "multiplier": 1,
+    "project_threads": 5,
+    "project_loops": 20,
+    "project_rampup": 10,
+    "project_think_ms": 250,
+    "design_threads": 3,
+    "design_loops": 10,
+    "design_rampup": 10,
+    "design_think_ms": 500,
+    "journey_threads": 10,
+    "journey_loops": 10,
+    "journey_rampup": 10,
+    "journey_think_ms": 250,
+    "report_threads": 2,
+    "report_loops": 20,
+    "report_rampup": 10,
+    "report_think_ms": 500,
+    "connect_timeout_ms": 5000,
+    "response_timeout_ms": 10000,
+    "fixture_timeout": 60.0,
+    "p95_project_create_ms": 1500.0,
+    "p95_design_upload_ms": 3000.0,
+    "p95_login_ms": 2000.0,
+    "p95_project_list_ms": 1000.0,
+    "p95_project_detail_ms": 1000.0,
+    "p95_invoices_ms": 1000.0,
+    "p95_history_ms": 1000.0,
+    "p95_dashboard_ms": 1000.0,
+    "p95_progress_ms": 1000.0,
+    "p95_reports_ms": 2000.0,
+    "max_error_rate_pct": 1.0,
+    "stress_multipliers": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "auth_host": "localhost",
+    "auth_port": 5000,
+    "auth_protocol": "http",
+    "design_host": "localhost",
+    "design_port": 5000,
+    "design_protocol": "http",
+    "env_label": "assessment-stress",
+    "gateway_host": "localhost",
+    "gateway_port": 5000,
+    "gateway_protocol": "http",
+    "project_host": "localhost",
+    "project_port": 5000,
+    "project_protocol": "http"
+  },
+  "planned_multipliers": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "executed_steps": [
+    {
+      "multiplier": 1,
+      "virtual_users": 20,
+      "verdict": "PASS",
+      "total_samples": 906,
+      "errors": 0,
+      "summary": "step-01-x1/summary.json"
+    },
+    {
+      "multiplier": 2,
+      "virtual_users": 40,
+      "verdict": "PASS",
+      "total_samples": 1812,
+      "errors": 0,
+      "summary": "step-02-x2/summary.json"
+    },
+    {
+      "multiplier": 4,
+      "virtual_users": 80,
+      "verdict": "PASS",
+      "total_samples": 3624,
+      "errors": 0,
+      "summary": "step-03-x4/summary.json"
+    },
+    {
+      "multiplier": 8,
+      "virtual_users": 160,
+      "verdict": "FAIL",
+      "total_samples": 7239,
+      "errors": 1,
+      "summary": "step-04-x8/summary.json"
+    }
+  ],
+  "first_breach_multiplier": null,
+  "first_breach_users": null,
+  "last_completed_multiplier": 8,
+  "last_completed_users": 160,
+  "capacity_limit_found": false,
+  "conclusion": "Execution was incomplete or failed without an established capacity limit. No capacity limit was found; passing tested loads does not prove maximum capacity.",
+  "failures": [
+    "Stress multiplier 8 failed; inspect its summary"
+  ]
+}

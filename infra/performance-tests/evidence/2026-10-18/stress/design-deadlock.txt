@@ -1,0 +1,23 @@
+Local stress observation, 2026-10-18, multiplier 8 (160 configured users).
+Container: buildnexus-design-service.
+Source: docker logs --since 2026-10-18T15:07:40Z buildnexus-design-service
+
+JTL observation:
+timeStamp=1792336084993 (Unix milliseconds)
+label=Upload Design Document
+threadName=Design Upload Load 2-5
+elapsed=2395 ms
+responseCode=500
+success=false
+failureMessage=Test failed: code expected to contain /201/
+
+Selected server exception lines from the same test interval:
+MySqlConnector.MySqlException (0x80004005): Deadlock found when trying to get lock; try restarting transaction
+at BuildNexus.DesignService.Data.DesignDocumentRepository.InsertDocumentAsync(DbConnection connection, DbTransaction transaction, DesignUpload upload) in /src/Data/DesignDocumentRepository.cs:line 262
+at BuildNexus.DesignService.Data.DesignDocumentRepository.TryAddVersionAsync(DesignUpload upload, Func`3 buildOutboxEvents) in /src/Data/DesignDocumentRepository.cs:line 72
+at BuildNexus.DesignService.Data.DesignDocumentRepository.AddVersionAsync(DesignUpload upload, Func`3 buildOutboxEvents) in /src/Data/DesignDocumentRepository.cs:line 49
+
+These lines establish an observed database deadlock on the design write path.
+They do not identify the exact lock cycle or prove a particular index or outbox
+statement caused it. Full diagnostic output remains in the ignored local
+results/assessment-evidence/stress/design-service-diagnostics.log file.

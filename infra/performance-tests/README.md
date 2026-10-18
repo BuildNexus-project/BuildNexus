@@ -10,9 +10,11 @@ JMeter fails, requests exceed their latency/error budgets, setup fails or the
 expected workload is incomplete. The same smoke runner is integrated into
 the shared GitHub Actions workflow and its combined test report.
 
-[RESULTS.md](RESULTS.md) and [AZURE-RESULTS.md](AZURE-RESULTS.md) contain
-historical local and Azure measurements. They do not cover the current
-cross-service workloads; record a fresh run before comparing performance.
+[RESULTS.md](RESULTS.md) records the current SE3112 smoke/load/stress
+measurements. [DEMO.md](DEMO.md) provides the two-minute walkthrough,
+contribution scope and VIVA questions. Earlier two-workload measurements
+remain in [LEGACY-RESULTS.md](LEGACY-RESULTS.md) and
+[AZURE-RESULTS.md](AZURE-RESULTS.md); their defaults and paths are historical.
 
 ## What the plan covers
 
