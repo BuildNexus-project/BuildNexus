@@ -61,6 +61,12 @@ on:
         description: 'Run load testing (JMeter)'
         type: boolean
         default: false
+  # Once a week (Monday 02:00 UTC, on the default branch) so the mutation score is
+  # measured even when nobody remembers to tick the box. The other jobs run on this
+  # trigger too, which doubles as a weekly health check of main; end-to-end, load
+  # testing and deploy stay off because they only accept their own triggers.
+  schedule:
+    - cron: '0 2 * * 1'
 
 # A second push to the same branch makes the run in progress obsolete.
 concurrency:
@@ -672,11 +678,61 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
 
   # ---------------------------------------------------- mutation testing ----
-  # INSERTION POINT for the mutation-testing job (branch feature/SE3112-04-mutation-testing).
-  # Add the job here as `mutation-tests:` with
-  #   if: github.event_name == 'workflow_dispatch' && inputs.run_mutation
-  # It is slow, so it runs by hand only. Then add `mutation-tests` to the `needs`
-  # list of `test-report` below and a row for it in scripts/ci-test-summary.sh.
+  # Stryker.NET (SE3112-04). Changes the service's code one small step at a time
+  # (a > becomes >=, a true becomes false, ...) and runs the unit tests against each
+  # change. A test that fails has "killed" the mutant; a change no test notices has
+  # "survived" and points at a gap in the tests. docs/mutation-testing.md explains it.
+  #
+  # Slow (one test run per mutant), so it runs only when asked for (the run_mutation
+  # box on a manual run) or on the weekly schedule above, never on a push.
+  #
+  # The settings for each service (what to mutate, thresholds, reporters) are in
+  # services/<service>-tests/stryker-config.json. Only unit tests run, the same
+  # "Category!=Integration" filter as the unit test job, so no database is started.
+  # A score under the "break" threshold (50%) fails the job.
+  mutation-tests:
+    name: Mutation tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: backend-build
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_mutation)
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [payment-service, user-service]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Installs dotnet-stryker at the version pinned in .config/dotnet-tools.json.
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Run Stryker
+        working-directory: services/${{ matrix.service }}-tests
+        run: dotnet stryker --output ${{ github.workspace }}/mutation-report/${{ matrix.service }}
+
+      # Uploaded even when the score broke the threshold: that is when the report,
+      # which lists every surviving mutant line by line, is most needed.
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report-${{ matrix.service }}
+          path: mutation-report/${{ matrix.service }}/reports/
+          if-no-files-found: ignore
 
   # ------------------------------------------------------- load testing ----
   # INSERTION POINT for the load-testing job (branch feature/SE3112-05-load-testing).
@@ -801,7 +857,7 @@ jobs:
   test-report:
     name: Test report
     runs-on: ubuntu-latest
-    needs: [backend-unit-tests, backend-integration-tests, frontend-unit-tests, docker-build, static-analysis]
+    needs: [backend-unit-tests, backend-integration-tests, frontend-unit-tests, docker-build, static-analysis, mutation-tests]
     if: always()
 
     steps:
@@ -847,6 +903,7 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-build.result }}
           STATIC_RESULT: ${{ needs.static-analysis.result }}
           STATIC_RAN: ${{ needs.static-analysis.outputs.ran }}
+          MUTATION_RESULT: ${{ needs.mutation-tests.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash scripts/ci-test-summary.sh reports >> "$GITHUB_STEP_SUMMARY"
 
