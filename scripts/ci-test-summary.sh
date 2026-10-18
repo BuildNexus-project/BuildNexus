@@ -9,6 +9,7 @@
 #               because the SONAR_TOKEN secret is not set
 #   MUTATION_RESULT  needs.mutation-tests.result; "skipped" on every ordinary push,
 #               because mutation testing only runs by hand or on the weekly schedule
+#   LOAD_RESULT needs.load-tests.result; "skipped" unless explicitly requested
 #   RUN_URL     link to this workflow run, where the artifacts are listed
 # Arguments:
 #   $1  folder the artifacts were downloaded into (default: reports)
@@ -16,9 +17,11 @@
 #         reports/integration/*.trx   backend integration test results
 #         reports/frontend/test-results.json   vitest results
 #         reports/coverage/Summary.json        ReportGenerator's per-service coverage
+#         reports/load/<run-id>/summary.json   default JMeter smoke gate results
 
 set -u
 REPORTS="${1:-reports}"
+PYTHON_CMD="${PYTHON_CMD:-python3}"
 
 # success -> "PASS", failure -> "FAIL", anything else is shown as it came.
 verdict() {
@@ -84,6 +87,19 @@ read -r ut up uf <<< "$(backend_counts "$REPORTS/unit")"
 read -r it ip if_ <<< "$(backend_counts "$REPORTS/integration")"
 read -r ft fp ff <<< "$(frontend_counts "$REPORTS/frontend")"
 
+# Keep request metrics separate from test counts. A successful job needs a valid
+# passing smoke report; report metrics must never override a failed job result.
+load_helper="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../infra/performance-tests" && pwd)/ci-summary.py"
+if load_row=$("$PYTHON_CMD" "$load_helper" --reports-dir "$REPORTS/load" \
+  --job-result "${LOAD_RESULT:-skipped}" --part row); then
+  load_exit=0
+else
+  load_exit=1
+fi
+if [ -z "$load_row" ]; then
+  load_row="| Load tests (JMeter smoke) | FAIL, summary unavailable | - | - | - |"
+fi
+
 echo "# Test pipeline summary"
 echo
 echo "| Stage | Result | Tests | Passed | Failed |"
@@ -102,6 +118,11 @@ if [ "${MUTATION_RESULT:-skipped}" = "skipped" ]; then
 else
   row "Mutation tests (Stryker)" "${MUTATION_RESULT:-}" "-" "-" "-"
 fi
+echo "$load_row"
+echo
+
+"$PYTHON_CMD" "$load_helper" --reports-dir "$REPORTS/load" \
+  --job-result "${LOAD_RESULT:-skipped}" --part details
 echo
 
 per_service="$(coverage_table "$REPORTS/coverage")"
@@ -126,6 +147,9 @@ echo "- \`frontend-coverage-report\`: frontend coverage, HTML"
 if [ "${MUTATION_RESULT:-skipped}" != "skipped" ]; then
   echo "- \`mutation-report-<service>\`: Stryker mutation report, HTML"
 fi
+if [ "${LOAD_RESULT:-skipped}" != "skipped" ]; then
+  echo "- [\`load-testing-report\`](${RUN_URL:-#}): JMeter dashboard, raw samples, configuration and JSON/Markdown gates"
+fi
 
 # Overall verdict: the job fails if any stage did.
 for result in "${UNIT_RESULT:-}" "${INTEGRATION_RESULT:-}" "${FRONTEND_RESULT:-}" "${DOCKER_RESULT:-}" "${STATIC_RESULT:-}"; do
@@ -133,7 +157,10 @@ for result in "${UNIT_RESULT:-}" "${INTEGRATION_RESULT:-}" "${FRONTEND_RESULT:-}
     exit 1
   fi
 done
-# Mutation testing is the one stage allowed to be skipped, since it does not run on a push.
+# Optional mutation and load tests may be skipped on ordinary runs.
 if [ "${MUTATION_RESULT:-skipped}" != "skipped" ] && [ "$MUTATION_RESULT" != "success" ]; then
+  exit 1
+fi
+if [ "$load_exit" -ne 0 ]; then
   exit 1
 fi

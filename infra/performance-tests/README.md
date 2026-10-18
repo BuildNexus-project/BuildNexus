@@ -7,8 +7,8 @@ produces an HTML dashboard and a machine-readable pass/fail summary.
 
 The runner provides smoke, load and bounded stress profiles. It fails when
 JMeter fails, requests exceed their latency/error budgets, setup fails or the
-expected workload is incomplete. It runs on demand; connection to `ci.yml`
-is the next integration step.
+expected workload is incomplete. The same smoke runner is integrated into
+the shared GitHub Actions workflow and its combined test report.
 
 [RESULTS.md](RESULTS.md) and [AZURE-RESULTS.md](AZURE-RESULTS.md) contain
 historical local and Azure measurements. They do not cover the current
@@ -275,6 +275,58 @@ setup, incomplete results and result parsing:
 
 ```bash
 python3 -m unittest discover -s tests
+```
+
+## Run in GitHub Actions
+
+After pushing the committed branch, open **Actions → CI → Run workflow**,
+select the branch, enable **Run load testing (JMeter)** and start the workflow.
+For a load-focused demonstration, disable the optional Selenium and mutation
+checks. The existing build, unit, integration, Docker and static-analysis
+jobs retain their own trigger rules.
+
+The `load-tests` job runs only for an explicit manual dispatch with `run_load`
+enabled. Pushes, pull requests and the weekly schedule skip it. It installs
+Python 3.12, Java 17 and checksum-verified JMeter 5.6.3, runs the gate/report
+tests, then builds and starts the Compose stack on the isolated runner.
+Database credentials are disposable test values; JWT and internal service
+keys are randomly generated for that job. No deployment secrets are needed.
+
+The job waits for all five service health endpoints and the Gateway, then
+calls the same local command:
+
+```bash
+bash infra/performance-tests/run-performance-tests.sh -Jprofile=smoke -Jenv_label=ci-load
+```
+
+The default profile requires 48 samples across six concurrent users, zero
+request errors, complete setup and passing endpoint latency gates. An early
+fixture failure stops execution; a failed gate or JMeter process fails the
+job. CI smoke verifies the pipeline on its runner; collect load/stress
+measurements on a documented target environment for performance conclusions.
+
+The load job publishes its Markdown summary and retains a
+`load-testing-report` artifact for 14 days, including available
+`<run-id>/summary.json`, `summary.md`, `effective.properties`, `results.jtl`
+and `report/`. The upload allowlist excludes the temporary credential CSV.
+On failure, container status and recent logs appear in the job console.
+Cleanup always removes the disposable runner's stack and volumes.
+
+The shared **Test report** job downloads the artifact and adds endpoint p95,
+throughput and error metrics separately from unit-test counts.
+`ci-summary.py` checks the default smoke configuration and report consistency
+before displaying measurements. A failed/cancelled load job stays failed
+even with passing measurements. A requested run with missing or invalid
+metrics fails the combined report and says measurements are unavailable;
+a skipped run is explicitly marked skipped. Reports are never fabricated
+from missing artifacts.
+
+To preview reporting locally after copying a retained smoke summary into
+`reports/load/<run-id>/summary.json`:
+
+```bash
+python3 infra/performance-tests/ci-summary.py --reports-dir reports/load \
+  --job-result success --part details
 ```
 
 ## Targets and workload settings
