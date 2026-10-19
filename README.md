@@ -206,7 +206,7 @@ The integration stage starts the six databases and Kafka itself and stops them a
 ### Run it in CI
 
 - **Automatically:** every push and pull request runs stages 1 to 4 and 6.
-- **By hand:** Actions tab, then CI, then **Run workflow**. Tick the slow stages you want: end-to-end, mutation testing, load testing.
+- **By hand:** Actions tab, then **CI/CD**, then **Run workflow**. Tick the slow stages you want: end-to-end, mutation testing, load testing.
 - **Reading the result:** open the run. The **Test report** job's summary shows every stage side by side, and the coverage reports (`backend-coverage-report`, `backend-combined-coverage-report`, `frontend-coverage-report`) are under **Artifacts**.
 
 ### Who did which feature

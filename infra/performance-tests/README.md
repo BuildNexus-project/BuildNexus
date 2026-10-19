@@ -281,7 +281,7 @@ python3 -m unittest discover -s tests
 
 ## Run in GitHub Actions
 
-After pushing the committed branch, open **Actions → CI → Run workflow**,
+After pushing the committed branch, open **Actions → CI/CD → Run workflow**,
 select the branch, enable **Run load testing (JMeter)** and start the workflow.
 For a load-focused demonstration, disable the optional Selenium and mutation
 checks. The existing build, unit, integration, Docker and static-analysis
@@ -291,8 +291,10 @@ The `load-tests` job runs only for an explicit manual dispatch with `run_load`
 enabled. Pushes, pull requests and the weekly schedule skip it. It installs
 Python 3.12, Java 17 and checksum-verified JMeter 5.6.3, runs the gate/report
 tests, then builds and starts the Compose stack on the isolated runner.
-Database credentials are disposable test values; JWT and internal service
-keys are randomly generated for that job. No deployment secrets are needed.
+Database passwords, JWT signing keys and internal service keys are randomly
+generated for each job, masked in its log and passed through the job's
+environment. The JMeter download and its redirects require HTTPS, in addition
+to checksum verification. No deployment secrets are needed.
 
 The job waits for all five service health endpoints and the Gateway, then
 calls the same local command:

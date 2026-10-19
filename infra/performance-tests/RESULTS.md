@@ -235,6 +235,6 @@ part of the retained evidence.
 
 The CI smoke job is implemented and locally linted/tested. These measurements
 were made locally; a successful remote GitHub execution is not claimed here.
-After pushing, dispatch `CI` with `run_load` enabled and verify the load
+After pushing, dispatch `CI/CD` with `run_load` enabled and verify the load
 artifact and combined report before the group demonstration. Use
 [DEMO.md](DEMO.md) for the live walkthrough and VIVA preparation.

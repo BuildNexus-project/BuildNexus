@@ -32,7 +32,7 @@
 # dependency with an install script is fsevents (macOS only), so nothing is lost, and
 # a compromised package can no longer run code while it is being installed.
 
-name: CI
+name: CI/CD
 
 on:
   # Every branch, so a broken commit is caught where it was pushed rather than
@@ -42,7 +42,7 @@ on:
   # And again on the way in, in case the target has moved since the last push.
   pull_request:
     branches: [develop, main]
-  # Starts the slow stages by hand (Actions tab -> CI -> Run workflow) and lets you
+  # Starts the slow stages by hand (Actions tab -> CI/CD -> Run workflow) and lets you
   # pick which ones. They are slow enough that running them on every push would
   # waste minutes, so each has a checkbox here instead. The end-to-end job reads
   # run_e2e; the mutation and load jobs, added by their own stories, read the
@@ -746,17 +746,6 @@ jobs:
     permissions:
       contents: read
     env:
-      # Disposable test databases only. No deployment credentials are used.
-      USER_DB_ROOT_PASSWORD: buildnexus-root-ci
-      USER_DB_PASSWORD: buildnexus-ci
-      PROJECT_DB_ROOT_PASSWORD: buildnexus-root-ci
-      PROJECT_DB_PASSWORD: buildnexus-ci
-      DESIGN_DB_ROOT_PASSWORD: buildnexus-root-ci
-      DESIGN_DB_PASSWORD: buildnexus-ci
-      CONSTRUCTION_DB_ROOT_PASSWORD: buildnexus-root-ci
-      CONSTRUCTION_DB_PASSWORD: buildnexus-ci
-      PAYMENT_DB_ROOT_PASSWORD: buildnexus-root-ci
-      PAYMENT_DB_PASSWORD: buildnexus-ci
       Jwt__Issuer: BuildNexusAuth
       Jwt__Audience: BuildNexusServices
 
@@ -778,7 +767,8 @@ jobs:
       - name: Install pinned JMeter
         run: |
           archive="$RUNNER_TEMP/apache-jmeter-5.6.3.tgz"
-          curl --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 180 \
+          curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 180 \
             https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz -o "$archive"
           # Published at the same Apache URL with the .sha512 suffix.
           checksum=5978a1a35edb5a7d428e270564ff49d2b1b257a65e17a759d259a9283fc17093e522fe46f474a043864aea6910683486340706d745fcdf3db1505fd71e689083
@@ -786,9 +776,16 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP"
           echo "JMETER_CMD=$RUNNER_TEMP/apache-jmeter-5.6.3/bin/jmeter" >> "$GITHUB_ENV"
 
-      - name: Generate temporary service keys
+      - name: Generate temporary database passwords and service keys
         run: |
-          for key in Jwt__SigningKey InternalService__ApiKey; do
+          # Each disposable database gets fresh root and application credentials.
+          # Compose reads these values from subsequent steps' environments.
+          for key in Jwt__SigningKey InternalService__ApiKey \
+            USER_DB_ROOT_PASSWORD USER_DB_PASSWORD \
+            PROJECT_DB_ROOT_PASSWORD PROJECT_DB_PASSWORD \
+            DESIGN_DB_ROOT_PASSWORD DESIGN_DB_PASSWORD \
+            CONSTRUCTION_DB_ROOT_PASSWORD CONSTRUCTION_DB_PASSWORD \
+            PAYMENT_DB_ROOT_PASSWORD PAYMENT_DB_PASSWORD; do
             value=$(openssl rand -hex 32)
             echo "::add-mask::$value"
             printf '%s=%s\n' "$key" "$value" >> "$GITHUB_ENV"
