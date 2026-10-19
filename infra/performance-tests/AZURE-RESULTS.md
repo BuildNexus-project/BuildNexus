@@ -1,8 +1,14 @@
 # Performance test results — Azure (SCRUM-45 / US-32)
 
+> Historical snapshot from 2026-09-29, with the dated deployment note below.
+> These are not current deployment or capacity claims. The old reproduction
+> command uses properties/paths that have changed; see [README.md](README.md)
+> for supported commands. Current SE3112 local evidence is in
+> [RESULTS.md](RESULTS.md).
+
 Captured from a real run of `project-performance-test-plan.jmx` against the
 services deployed to Azure — see [README.md](README.md) for what the plan
-does and how to reproduce this, and [RESULTS.md](RESULTS.md) for the
+does and how to reproduce this, and [LEGACY-RESULTS.md](LEGACY-RESULTS.md) for the
 equivalent run against the local `docker compose` stack. The two are kept as
 separate files, each transcribed only from its own `results/<env_label>/`
 directory, so a local run and an Azure run never overwrite each other's
@@ -75,7 +81,7 @@ No Application Insights is wired into Design Service yet (only User Service
 has it, per SCRUM-47's proof of concept in `infra/terraform/main.tf`), so
 there's no trace to pull for this specific request after the fact. This is
 consistent in shape with the deadlock finding in
-[RESULTS.md](RESULTS.md#note-the-deadlock-finding-from-earlier-runs-is-not-reproducing)
+[LEGACY-RESULTS.md](LEGACY-RESULTS.md#note-the-deadlock-finding-from-earlier-runs-is-not-reproducing)
 — a slow failure rather than a fast one — but n=1 isn't enough to call it
 the same root cause; worth watching for a repeat on a larger Azure run once
 the capacity issue below is addressed.
@@ -96,7 +102,7 @@ whole reason this run's load had to be turned down — see the note below.
 | Assign Architect To Project | 3 | 1,283 ms | 2,854 ms |
 
 Seconds, not milliseconds — two to three orders of magnitude slower than the
-same calls locally (see [RESULTS.md](RESULTS.md)'s setup-call table, all
+same calls locally (see [LEGACY-RESULTS.md](LEGACY-RESULTS.md)'s setup-call table, all
 under 120 ms). This is B1's single small instance under real network
 latency and TLS overhead, not a bug; see the comparison note below.
 
@@ -117,7 +123,7 @@ downstream. Dropping to 5/3 concurrent threads, as used for the run recorded
 above, cleared all of it except the one `500` noted above.
 
 This is itself a real finding, not just a workaround: **the current Azure
-deployment cannot handle the load profile RESULTS.md documents comfortably
+deployment cannot handle the load profile LEGACY-RESULTS.md documents comfortably
 locally.** B1 is a single small instance with no autoscale, shared across
 all three App Services, versus a 16-CPU Docker host locally. Worth a
 follow-up story if this deployment is meant to demonstrate realistic
@@ -128,7 +134,7 @@ supported concurrency as the deployment's actual capacity.
 
 Every request against Azure crosses the public internet to a B1 App Service
 plan rather than a warm container on the same Docker host, so higher latency
-here than in [RESULTS.md](RESULTS.md) is expected on its own. What's notable
+here than in [LEGACY-RESULTS.md](LEGACY-RESULTS.md) is expected on its own. What's notable
 here isn't just that Azure is slower — it's that the *default test load*,
 which the local stack handles at 0 errors and single-digit-millisecond
 latency, isn't sustainable against this deployment at all. The 5/3-thread

@@ -1,0 +1,2 @@
+# Retained sample hashes must survive Windows/Linux checkouts unchanged.
+evidence/**/samples.csv text eol=lf

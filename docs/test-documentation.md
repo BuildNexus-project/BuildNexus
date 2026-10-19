@@ -16,7 +16,7 @@ For how the system is put together, see [architecture.md](architecture.md).
 | Backend coverage (unit tests only) | 47.1% lines, 37.1% branches | 2026-10-04, this branch |
 | Frontend tests | **796 passing, 0 failing** | 2026-10-04, this branch |
 | Frontend coverage | **90.2% lines, 83.0% branches, 91.5% functions** | 2026-10-04, this branch |
-| Performance (JMeter), local stack | 0 errors; project create p95 28 ms, design upload p95 35 ms | 2026-09-29 ([RESULTS.md](../infra/performance-tests/RESULTS.md)) |
+| Performance (JMeter), local stack | Historical: 0 errors; project create p95 28 ms, design upload p95 35 ms | 2026-09-29 ([LEGACY-RESULTS.md](../infra/performance-tests/LEGACY-RESULTS.md)); current cross-service measurements: [RESULTS.md](../infra/performance-tests/RESULTS.md) |
 | Performance (JMeter), Azure | Reduced load only; 1 error in 65 samples; p95 1.7 s on project create | 2026-09-29 ([AZURE-RESULTS.md](../infra/performance-tests/AZURE-RESULTS.md)) |
 | End-to-end (Selenium) | **2 flows passing** (sign-up to payment; approved design to handover), 2 runs in a row, 0 failing | 2026-10-07, this branch, freshly built images on local Docker Compose; see [below](#end-to-end-tests-selenium) |
 
@@ -122,8 +122,18 @@ CI runner it could fail intermittently.
 ## Performance tests (JMeter)
 
 Plan: [`infra/performance-tests/project-performance-test-plan.jmx`](../infra/performance-tests/project-performance-test-plan.jmx),
-run by `run-performance-tests.sh` (JMeter 5.6.3, non-GUI). Two thread groups hit the two
-write-heavy endpoints with real JWTs minted through the real register and login calls.
+run by `run-performance-tests.sh` (JMeter 5.6.3, non-GUI). The current SE3112 plan has
+four groups: project creation, design upload, Client journeys across User/Project/Payment/
+Construction, and construction reports, all through the gateway. Smoke, load and bounded
+stress profiles enforce endpoint latency/error budgets and workload completeness.
+See [current results](../infra/performance-tests/RESULTS.md) and the
+[performance README](../infra/performance-tests/README.md) for the measured evidence,
+commands, CI job and combined reporting.
+
+The tables and findings below preserve the **2026-09-29 historical experiment**, which
+used an earlier two-workload plan. Its local source is now
+[LEGACY-RESULTS.md](../infra/performance-tests/LEGACY-RESULTS.md); its deployment
+descriptions and defaults do not establish the current environment's performance.
 
 ### Local stack (`docker compose`, 16 CPUs), 2026-09-29: 360 samples, 0 errors
 
@@ -145,7 +155,7 @@ run uses a reduced load.
 ### What the results say
 
 - Locally both endpoints are fast and stable at the default load.
-- The current Azure deployment cannot sustain that load: one small shared instance with
+- The Azure deployment tested on that date could not sustain that load: one small shared instance with
   no autoscale. That is a capacity finding, not a code defect, and is documented rather
   than hidden.
 - An earlier local run (2026-09-27) saw 2 deadlocks in 50 design uploads. It did not
@@ -209,8 +219,9 @@ through a real browser.
 
 1. **End-to-end coverage is two happy-path flows, on Chrome only.** See what they leave out in the section above. They ran against the local stack; they have not been run against Azure, which has no Construction or Payment Service deployed.
 2. **Coverage is a reported number, not an enforced one.** CI does not fail below 70%.
-3. **Performance is measured on two endpoints only**, not on Construction, Payment, the
-   dashboards or the gateway, and the Azure run is at reduced load.
+3. **Performance experiments are bounded and local.** The current plan includes the
+   gateway, Payment and Construction, but is not a production traffic model or a soak
+   test. The historical Azure measurements cover only two endpoints at reduced load.
 4. **Construction Service and Payment Service are not deployed to Azure**, so they have
    local test and performance coverage only.
 5. **One frontend test is close to its time limit** (see above).
